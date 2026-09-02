@@ -1,0 +1,23 @@
+workflows:
+  android-release-workflow:
+    name: Native Android Release
+    instance_type: mac_mini_m2
+    environment:
+      groups:
+        - keystore_credentials
+        - api_credentials
+    scripts:
+      - name: Decode Keystore
+        script: |
+          echo $CM_KEYSTORE | base64 --decode > $CM_KEYSTORE_PATH
+      - name: Build Release APK
+        script: |
+          ./gradlew assembleProdRelease
+      # If you plan to upload to Google Play, uncomment the line below to build an App Bundle instead
+      # - name: Build Release AAB
+      #   script: |
+      #     ./gradlew bundleProdRelease
+    artifacts:
+      - app/build/outputs/apk/**/*.apk
+      - app/build/outputs/bundle/**/*.aab
+
