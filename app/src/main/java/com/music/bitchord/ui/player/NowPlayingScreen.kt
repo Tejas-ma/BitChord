@@ -32,6 +32,7 @@ import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.awaitVerticalTouchSlopOrCancellation
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.verticalDrag
 import androidx.compose.foundation.interaction.DragInteraction
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -142,6 +143,8 @@ import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -769,6 +772,14 @@ fun NowPlayingScreen(
     // follows the finger so the gesture has something to hold on to.
     val swipeThreshold = with(density) { 72.dp.toPx() }
     var swipeOffset by remember { mutableFloatStateOf(0f) }
+    var seekOverlayText by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(seekOverlayText) {
+        if (seekOverlayText != null) {
+            delay(600)
+            seekOverlayText = null
+        }
+    }
+    val hapticFeedback = LocalHapticFeedback.current
     val swipeSettle by animateFloatAsState(
         targetValue = swipeOffset,
         animationSpec = spring(stiffness = Spring.StiffnessMediumLow),
@@ -1145,6 +1156,20 @@ fun NowPlayingScreen(
                 .statusBarsPadding()
                 .navigationBarsPadding()
                 .pointerInput(Unit) {
+                    detectTapGestures(
+                        onDoubleTap = { offset ->
+                            hapticFeedback.performHapticFeedback(HapticFeedbackType.LongPress)
+                            if (offset.x < size.width / 2) {
+                                onSeek(maxOf(0L, positionMs - 10000L))
+                                seekOverlayText = "-10s"
+                            } else {
+                                onSeek(minOf(durationMs, positionMs + 10000L))
+                                seekOverlayText = "+10s"
+                            }
+                        }
+                    )
+                }
+                .pointerInput(Unit) {
                     var total = 0f
                     detectHorizontalDragGestures(
                         onDragStart = { total = 0f },
@@ -1309,6 +1334,21 @@ fun NowPlayingScreen(
                     .fillMaxWidth()
                     .padding(top = ART_BOX_TOP_PAD, bottom = 18.dp),
             ) {
+                seekOverlayText?.let { text ->
+                    Box(
+                        modifier = Modifier
+                            .align(Alignment.Center)
+                            .background(Color.Black.copy(alpha = 0.6f), RoundedCornerShape(16.dp))
+                            .padding(horizontal = 24.dp, vertical = 12.dp)
+                            .zIndex(10f)
+                    ) {
+                        Text(
+                            text = text,
+                            color = Color.White,
+                            style = MaterialTheme.typography.titleLarge
+                        )
+                    }
+                }
                 // The height this box would have if the controls at the foot of
                 // the screen were at their natural size. They aren't: they are
                 // holding [controlSpread] of extra gap, which came out of here,
