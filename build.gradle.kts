@@ -5,6 +5,27 @@ buildscript {
     }
     dependencies {
         /*
+val keystoreProps = Properties()
+val keystoreFile = rootProject.file("keystore.properties")
+if (keystoreFile.exists()) {
+    keystoreProps.load(keystoreFile.inputStream())
+}
+
+android {
+    signingConfigs {
+        create("release") {
+            storeFile = file(keystoreProps["storeFile"] ?: "")
+            storePassword = keystoreProps["storePassword"] as String?
+            keyAlias = keystoreProps["keyAlias"] as String?
+            keyPassword = keystoreProps["keyPassword"] as String?
+        }
+    }
+    buildTypes {
+        release {
+            signingConfig = signingConfigs.getByName("release")
+        }
+    }
+}
          * Overrides the D8/R8 that AGP 8.10.1 bundles (8.10.9). Gradle's conflict
          * resolution picks the higher version, so this is the whole mechanism.
          *
