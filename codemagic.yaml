@@ -14,7 +14,7 @@ workflows:
         - keystore_credentials
         - api_credentials
       vars:
-  CM_KEYSTORE_PATH: /tmp/bitchord.p12
+            CM_KEYSTORE_PATH: /tmp/bitchord.p12
     scripts:
       - name: Decode Keystore
         script: |
