@@ -151,6 +151,17 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.material.icons.rounded.Share
+import androidx.core.app.ShareCompat
+import androidx.core.content.FileProvider
+import com.music.bitchord.ui.player.ShareCardGenerator
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import coil3.imageLoader
+import coil3.request.SuccessResult
+import androidx.core.graphics.drawable.toBitmap
+import coil3.asDrawable
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
@@ -1775,6 +1786,56 @@ fun NowPlayingScreen(
                         )
                         Spacer(Modifier.width(8.dp))
                     }
+
+                    val scope = rememberCoroutineScope()
+                    val context = LocalContext.current
+
+                    CircleGlyph(
+                        icon = Icons.Rounded.Share,
+                        contentDescription = "Share",
+                        onClick = {
+                            scope.launch {
+                                try {
+                                    val request = ImageRequest.Builder(context)
+                                        .data(song.artworkAt(1200))
+                                        .size(1200)
+
+                                        .build()
+                                    val result = context.imageLoader.execute(request)
+                                    val bitmap = if (result is SuccessResult) {
+                                        result.image.asDrawable(context.resources).toBitmap()
+                                    } else null
+
+                                    val file = withContext(Dispatchers.IO) {
+                                        ShareCardGenerator.generateShareCard(
+                                            context = context,
+                                            artwork = bitmap,
+                                            title = song.title,
+                                            artist = song.artist
+                                        )
+                                    }
+
+                                    if (file != null) {
+                                        val uri = FileProvider.getUriForFile(
+                                            context,
+                                            "${context.packageName}.fileprovider",
+                                            file
+                                        )
+
+                                        val intent = ShareCompat.IntentBuilder(context)
+                                            .setType("image/png")
+                                            .setStream(uri)
+                                            .createChooserIntent()
+
+                                        context.startActivity(intent)
+                                    }
+                                } catch (e: Exception) {
+                                    e.printStackTrace()
+                                }
+                            }
+                        },
+                    )
+                    Spacer(Modifier.width(8.dp))
                     CircleGlyph(
                         icon = Icons.Rounded.MoreHoriz,
                         contentDescription = "More",
