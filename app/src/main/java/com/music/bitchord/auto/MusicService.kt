@@ -1,53 +1,94 @@
 package com.music.bitchord.auto
 
 import android.os.Bundle
-import android.support.v4.media.MediaBrowserCompat
-import android.support.v4.media.MediaDescriptionCompat
-import androidx.media.MediaBrowserServiceCompat
+import androidx.media3.common.MediaItem
+import androidx.media3.common.MediaMetadata
+import androidx.media3.session.LibraryResult
+import androidx.media3.session.MediaLibraryService
+import androidx.media3.session.MediaSession
 import com.music.bitchord.playback.PlaybackService
+import com.google.common.util.concurrent.Futures
+import com.google.common.util.concurrent.ListenableFuture
 
-class MusicService : MediaBrowserServiceCompat() {
+class MusicService : MediaLibraryService() {
+
+    private var librarySession: MediaLibrarySession? = null
+
     override fun onCreate() {
         super.onCreate()
-        val token = PlaybackService.getCompatToken()
-        if (token != null) {
-            sessionToken = token as android.support.v4.media.session.MediaSessionCompat.Token
+        val player = PlaybackService.globalPlayer
+        if (player != null) {
+            librarySession = MediaLibrarySession.Builder(this, player, CustomMediaLibrarySessionCallback()).build()
         }
     }
 
-    override fun onGetRoot(
-        clientPackageName: String,
-        clientUid: Int,
-        rootHints: Bundle?
-    ): BrowserRoot? {
-        return BrowserRoot("root", null)
+    override fun onGetSession(controllerInfo: MediaSession.ControllerInfo): MediaLibrarySession? {
+        return librarySession
     }
 
-    override fun onLoadChildren(
-        parentId: String,
-        result: Result<MutableList<MediaBrowserCompat.MediaItem>>
-    ) {
-        val items = mutableListOf<MediaBrowserCompat.MediaItem>()
-        if (parentId == "root") {
-            items.add(
-                MediaBrowserCompat.MediaItem(
-                    MediaDescriptionCompat.Builder()
-                        .setMediaId("recent")
-                        .setTitle("Recent")
-                        .build(),
-                    MediaBrowserCompat.MediaItem.FLAG_BROWSABLE
+    override fun onDestroy() {
+        librarySession?.release()
+        librarySession = null
+        super.onDestroy()
+    }
+
+    private inner class CustomMediaLibrarySessionCallback : MediaLibrarySession.Callback {
+        override fun onGetLibraryRoot(
+            session: MediaLibrarySession,
+            browser: MediaSession.ControllerInfo,
+            params: LibraryParams?
+        ): ListenableFuture<LibraryResult<MediaItem>> {
+            val rootItem = MediaItem.Builder()
+                .setMediaId("root")
+                .setMediaMetadata(
+                    MediaMetadata.Builder()
+                        .setIsBrowsable(true)
+                        .setIsPlayable(false)
+                        .build()
                 )
-            )
-            items.add(
-                MediaBrowserCompat.MediaItem(
-                    MediaDescriptionCompat.Builder()
-                        .setMediaId("library")
-                        .setTitle("Library")
-                        .build(),
-                    MediaBrowserCompat.MediaItem.FLAG_BROWSABLE
-                )
-            )
+                .build()
+            return Futures.immediateFuture(LibraryResult.ofItem(rootItem, params))
         }
-        result.sendResult(items)
+
+        override fun onGetChildren(
+            session: MediaLibrarySession,
+            browser: MediaSession.ControllerInfo,
+            parentId: String,
+            page: Int,
+            pageSize: Int,
+            params: LibraryParams?
+        ): ListenableFuture<LibraryResult<com.google.common.collect.ImmutableList<MediaItem>>> {
+            if (parentId == "root") {
+                val recentItem = MediaItem.Builder()
+                    .setMediaId("recent")
+                    .setMediaMetadata(
+                        MediaMetadata.Builder()
+                            .setTitle("Recent")
+                            .setIsBrowsable(true)
+                            .setIsPlayable(false)
+                            .build()
+                    )
+                    .build()
+
+                val libraryItem = MediaItem.Builder()
+                    .setMediaId("library")
+                    .setMediaMetadata(
+                        MediaMetadata.Builder()
+                            .setTitle("Library")
+                            .setIsBrowsable(true)
+                            .setIsPlayable(false)
+                            .build()
+                    )
+                    .build()
+
+                return Futures.immediateFuture(
+                    LibraryResult.ofItemList(
+                        listOf(recentItem, libraryItem),
+                        params
+                    )
+                )
+            }
+            return Futures.immediateFuture(LibraryResult.ofItemList(emptyList(), params))
+        }
     }
 }
