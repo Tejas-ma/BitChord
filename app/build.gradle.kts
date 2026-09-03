@@ -100,7 +100,7 @@ android {
     val storeFilePath = cmKeystorePath ?: localStorePath
     val store = storeFilePath?.let { file(it) }
 
-    if (store != null) {
+    if (store != null && store.exists()) {
         create("release") {
             storeFile = store
             storePassword = System.getenv("CM_KEYSTORE_PASSWORD") ?: signing.getProperty("storePassword")
@@ -213,6 +213,7 @@ dependencies {
     // ---- Media playback: Media3 / ExoPlayer ----
     implementation("androidx.media3:media3-exoplayer:1.11.0")
     implementation("androidx.media3:media3-session:1.11.0")
+    implementation("androidx.car.app:app-automotive:1.4.0")
     implementation("androidx.media3:media3-common:1.11.0")
     implementation("androidx.media3:media3-datasource-okhttp:1.11.0")
     // Audio is progressive, but Apple serves its motion artwork as HLS — this
