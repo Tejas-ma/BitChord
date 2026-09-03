@@ -1319,64 +1319,6 @@ fun NowPlayingScreen(
                     .fillMaxWidth()
                     .padding(top = ART_BOX_TOP_PAD, bottom = 18.dp),
             ) {
-                Box(modifier = Modifier
-                    .matchParentSize()
-                    .zIndex(10f)
-                    .pointerInput(Unit) {
-                        var lastTapTime = 0L
-                        var lastTapPos = androidx.compose.ui.geometry.Offset.Zero
-                        var tapJob: kotlinx.coroutines.Job? = null
-                        awaitPointerEventScope {
-                            while (true) {
-                                val down = awaitFirstDown(requireUnconsumed = false)
-                                val up = waitForUpOrCancellation()
-                                if (up != null) {
-                                    val now = System.currentTimeMillis()
-                                    if (now - lastTapTime < 300) {
-                                        val dx = kotlin.math.abs(up.position.x - lastTapPos.x)
-                                        if (dx < with(density) { 10.dp.toPx() }) {
-                                            tapJob?.cancel()
-                                            lastTapTime = 0L
-                                            val offset = up.position
-                                            val currentPos = currentPositionProvider()
-                                            val target = if (offset.x < size.width / 2) currentPos - 10000 else currentPos + 10000
-                                            onSeek(target.coerceIn(0L, durationMs))
-                                            hapticFeedback.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
-                                            seekOverlayText = if (offset.x < size.width / 2) "-10s" else "+10s"
-                                        } else {
-                                            lastTapTime = now
-                                            lastTapPos = up.position
-                                            tapJob = scope.launch {
-                                                kotlinx.coroutines.delay(300)
-                                            }
-                                        }
-                                    } else {
-                                        lastTapTime = now
-                                        lastTapPos = up.position
-                                        tapJob = scope.launch {
-                                            kotlinx.coroutines.delay(300)
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                ) {
-                    seekOverlayText?.let { text ->
-                        Box(
-                            modifier = Modifier
-                                .align(Alignment.Center)
-                                .background(Color.Black.copy(alpha = 0.6f), RoundedCornerShape(16.dp))
-                                .padding(horizontal = 24.dp, vertical = 12.dp)
-                        ) {
-                            Text(
-                                text = text,
-                                color = Color.White,
-                                style = MaterialTheme.typography.titleLarge
-                            )
-                        }
-                    }
-                }
                 // The height this box would have if the controls at the foot of
                 // the screen were at their natural size. They aren't: they are
                 // holding [controlSpread] of extra gap, which came out of here,
@@ -1628,6 +1570,65 @@ fun NowPlayingScreen(
                     // evidence, and the two no longer swap for each other on a
                     // tap. Fades out with the sleeve as it collapses to a
                     // thumbnail, where there's no room to read it anyway.
+                                    Box(modifier = Modifier
+                    .matchParentSize()
+                    .zIndex(10f)
+                    .pointerInput(Unit) {
+                        var lastTapTime = 0L
+                        var lastTapPos = androidx.compose.ui.geometry.Offset.Zero
+                        var tapJob: kotlinx.coroutines.Job? = null
+                        awaitPointerEventScope {
+                            while (true) {
+                                val down = awaitFirstDown(requireUnconsumed = false)
+                                val up = waitForUpOrCancellation()
+                                if (up != null) {
+                                    val now = System.currentTimeMillis()
+                                    if (now - lastTapTime < 300) {
+                                        val dx = kotlin.math.abs(up.position.x - lastTapPos.x)
+                                        if (dx < with(density) { 10.dp.toPx() }) {
+                                            tapJob?.cancel()
+                                            lastTapTime = 0L
+                                            val offset = up.position
+                                            val currentPos = currentPositionProvider()
+                                            val target = if (offset.x < size.width / 2) currentPos - 10000 else currentPos + 10000
+                                            onSeek(target.coerceIn(0L, durationMs))
+                                            hapticFeedback.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
+                                            seekOverlayText = if (offset.x < size.width / 2) "-10s" else "+10s"
+                                        } else {
+                                            lastTapTime = now
+                                            lastTapPos = up.position
+                                            tapJob = scope.launch {
+                                                kotlinx.coroutines.delay(300)
+                                            }
+                                        }
+                                    } else {
+                                        lastTapTime = now
+                                        lastTapPos = up.position
+                                        tapJob = scope.launch {
+                                            kotlinx.coroutines.delay(300)
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                ) {
+                    seekOverlayText?.let { text ->
+                        Box(
+                            modifier = Modifier
+                                .align(Alignment.Center)
+                                .background(Color.Black.copy(alpha = 0.6f), RoundedCornerShape(16.dp))
+                                .padding(horizontal = 24.dp, vertical = 12.dp)
+                        ) {
+                            Text(
+                                text = text,
+                                color = Color.White,
+                                style = MaterialTheme.typography.titleLarge
+                            )
+                        }
+                    }
+                }
+
                     if (showNerdStats && p < 0.5f) {
                         // A plain white line reads fine over the usual dark
                         // tile, but a light stretch of an animated cover — sky,
