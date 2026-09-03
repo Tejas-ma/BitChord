@@ -95,23 +95,20 @@ android {
     }
 
     signingConfigs {
-        // Both halves have to be there, not just the properties file: it *names*
-        // the keystore rather than containing it, and both are gitignored
-        // separately, so a checkout can easily end up with the one and not the
-        // other. A signing config pointing at a keystore that is not on disk
-        // fails the release build outright at validateSigningRelease — which is
-        // exactly the failure the unsigned fallback above exists to avoid, so
-        // the keystore has to be looked for rather than assumed.
-        val store = signing.getProperty("storeFile")?.let { rootProject.file(it) }
-        if (store != null && store.exists()) {
-            create("release") {
-                storeFile = store
-                storePassword = signing.getProperty("storePassword")
-                keyAlias = signing.getProperty("keyAlias")
-                keyPassword = signing.getProperty("keyPassword")
-            }
+    val cmKeystorePath = System.getenv("CM_KEYSTORE_PATH")
+    val localStorePath = signing.getProperty("storeFile")
+    val storeFilePath = cmKeystorePath ?: localStorePath
+    val store = storeFilePath?.let { file(it) }
+
+    if (store != null) {
+        create("release") {
+            storeFile = store
+            storePassword = System.getenv("CM_KEYSTORE_PASSWORD") ?: signing.getProperty("storePassword")
+            keyAlias = System.getenv("CM_KEY_ALIAS") ?: signing.getProperty("keyAlias")
+            keyPassword = System.getenv("CM_KEY_PASSWORD") ?: signing.getProperty("keyPassword")
         }
     }
+}
 
     buildTypes {
         release {
