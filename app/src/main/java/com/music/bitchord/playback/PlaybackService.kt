@@ -1170,6 +1170,12 @@ class PlaybackService : MediaSessionService() {
      * the song you are listening to, which is whichever one the session is on.
      */
     private fun setSessionOwner(target: ExoPlayer, owns: Boolean) {
+        // Resetting to an empty builder first forces ExoPlayer to completely release
+        // the existing audio focus and audio session, so the subsequent request for
+        // AUDIO_ATTRIBUTES is seen as a new session. Without this, Media3 can
+        // mistakenly retain the previous track's focus state across the gap,
+        // leaving the new track playing with no audible output.
+        target.setAudioAttributes(androidx.media3.common.AudioAttributes.Builder().build(), false)
         target.setAudioAttributes(AUDIO_ATTRIBUTES, /* handleAudioFocus = */ owns)
         target.setHandleAudioBecomingNoisy(owns)
     }
