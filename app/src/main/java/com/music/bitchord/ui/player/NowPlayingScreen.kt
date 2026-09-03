@@ -28,11 +28,11 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.awaitEachGesture
-import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.awaitVerticalTouchSlopOrCancellation
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
-import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.waitForUpOrCancellation
 import androidx.compose.foundation.gestures.verticalDrag
 import androidx.compose.foundation.interaction.DragInteraction
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -143,8 +143,6 @@ import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.platform.LocalHapticFeedback
-import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -580,6 +578,7 @@ fun NowPlayingScreen(
     isPlaying: Boolean,
     isLoading: Boolean,
     positionMs: Long,
+    currentPositionProvider: () -> Long = { positionMs },
     durationMs: Long,
     queue: List<Song>,
     queueIndex: Int,
@@ -775,11 +774,11 @@ fun NowPlayingScreen(
     var seekOverlayText by remember { mutableStateOf<String?>(null) }
     LaunchedEffect(seekOverlayText) {
         if (seekOverlayText != null) {
-            delay(600)
+            kotlinx.coroutines.delay(600)
             seekOverlayText = null
         }
     }
-    val hapticFeedback = LocalHapticFeedback.current
+    val hapticFeedback = androidx.compose.ui.platform.LocalHapticFeedback.current
     val swipeSettle by animateFloatAsState(
         targetValue = swipeOffset,
         animationSpec = spring(stiffness = Spring.StiffnessMediumLow),
@@ -1156,20 +1155,6 @@ fun NowPlayingScreen(
                 .statusBarsPadding()
                 .navigationBarsPadding()
                 .pointerInput(Unit) {
-                    detectTapGestures(
-                        onDoubleTap = { offset ->
-                            hapticFeedback.performHapticFeedback(HapticFeedbackType.LongPress)
-                            if (offset.x < size.width / 2) {
-                                onSeek(maxOf(0L, positionMs - 10000L))
-                                seekOverlayText = "-10s"
-                            } else {
-                                onSeek(minOf(durationMs, positionMs + 10000L))
-                                seekOverlayText = "+10s"
-                            }
-                        }
-                    )
-                }
-                .pointerInput(Unit) {
                     var total = 0f
                     detectHorizontalDragGestures(
                         onDragStart = { total = 0f },
@@ -1334,19 +1319,62 @@ fun NowPlayingScreen(
                     .fillMaxWidth()
                     .padding(top = ART_BOX_TOP_PAD, bottom = 18.dp),
             ) {
-                seekOverlayText?.let { text ->
-                    Box(
-                        modifier = Modifier
-                            .align(Alignment.Center)
-                            .background(Color.Black.copy(alpha = 0.6f), RoundedCornerShape(16.dp))
-                            .padding(horizontal = 24.dp, vertical = 12.dp)
-                            .zIndex(10f)
-                    ) {
-                        Text(
-                            text = text,
-                            color = Color.White,
-                            style = MaterialTheme.typography.titleLarge
-                        )
+                Box(modifier = Modifier
+                    .matchParentSize()
+                    .zIndex(10f)
+                    .pointerInput(Unit) {
+                        var lastTapTime = 0L
+                        var lastTapPos = androidx.compose.ui.geometry.Offset.Zero
+                        var tapJob: kotlinx.coroutines.Job? = null
+                        awaitPointerEventScope {
+                            while (true) {
+                                val down = awaitFirstDown(requireUnconsumed = false)
+                                val up = waitForUpOrCancellation()
+                                if (up != null) {
+                                    val now = System.currentTimeMillis()
+                                    if (now - lastTapTime < 300) {
+                                        val dx = kotlin.math.abs(up.position.x - lastTapPos.x)
+                                        if (dx < with(density) { 10.dp.toPx() }) {
+                                            tapJob?.cancel()
+                                            lastTapTime = 0L
+                                            val offset = up.position
+                                            val currentPos = currentPositionProvider()
+                                            val target = if (offset.x < size.width / 2) currentPos - 10000 else currentPos + 10000
+                                            onSeek(target.coerceIn(0L, durationMs))
+                                            hapticFeedback.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
+                                            seekOverlayText = if (offset.x < size.width / 2) "-10s" else "+10s"
+                                        } else {
+                                            lastTapTime = now
+                                            lastTapPos = up.position
+                                            tapJob = scope.launch {
+                                                kotlinx.coroutines.delay(300)
+                                            }
+                                        }
+                                    } else {
+                                        lastTapTime = now
+                                        lastTapPos = up.position
+                                        tapJob = scope.launch {
+                                            kotlinx.coroutines.delay(300)
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                ) {
+                    seekOverlayText?.let { text ->
+                        Box(
+                            modifier = Modifier
+                                .align(Alignment.Center)
+                                .background(Color.Black.copy(alpha = 0.6f), RoundedCornerShape(16.dp))
+                                .padding(horizontal = 24.dp, vertical = 12.dp)
+                        ) {
+                            Text(
+                                text = text,
+                                color = Color.White,
+                                style = MaterialTheme.typography.titleLarge
+                            )
+                        }
                     }
                 }
                 // The height this box would have if the controls at the foot of

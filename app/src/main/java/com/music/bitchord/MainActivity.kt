@@ -1113,6 +1113,7 @@ private fun BitChordApp(
             isPlaying = player.isPlaying,
             isLoading = player.isLoading,
             positionMs = player.position.positionMs,
+            currentPositionProvider = { controller?.currentPosition ?: player.position.positionMs },
             durationMs = player.durationMs,
             onPlayPause = {
                 controller?.let { if (it.isPlaying) it.pause() else it.play() }
@@ -1426,6 +1427,7 @@ private fun BitChordApp(
                         DiscordScreen(
                             song = player.song,
                             positionMs = player.position.positionMs,
+            currentPositionProvider = { controller?.currentPosition ?: player.position.positionMs },
                             durationMs = player.durationMs,
                             onOpenLogin = { showDiscordLogin = true },
                             onOpenDialog = { discordDialog = it },
