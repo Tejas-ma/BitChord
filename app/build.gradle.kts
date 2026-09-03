@@ -1,4 +1,4 @@
-import java.util.Properties
+import java.io.File
 import java.io.FileInputStream
 
 plugins {
@@ -94,24 +94,22 @@ android {
         }
     }
 
-    signingConfigs {
-        // Look for Codemagic environment variables first, fallback to local signing properties
-        val cmKeystorePath = System.getenv("CM_KEYSTORE_PATH")
-        val localKeystorePath = signing.getProperty("storeFile")
-        val storeFilePath = cmKeystorePath ?: localKeystorePath
-        
-        val store = storeFilePath?.let { rootProject.file(it) }
-        
-        // Create the release config if we have a keystore path from either source
-        if (store != null) {
-            create("release") {
-                storeFile = store
-                storePassword = System.getenv("CM_KEYSTORE_PASSWORD") ?: signing.getProperty("storePassword")
-                keyAlias = System.getenv("CM_KEY_ALIAS") ?: signing.getProperty("keyAlias")
-                keyPassword = System.getenv("CM_KEY_PASSWORD") ?: signing.getProperty("keyPassword")
-            }
+   signingConfigs {
+    val cmKeystorePath = System.getenv("CM_KEYSTORE_PATH")
+    val localStorePath = signing.getProperty("storeFile")
+    val storeFilePath = cmKeystorePath ?: localStorePath
+    val store = storeFilePath?.let {
+        if (it.startsWith("/")) File(it) else rootProject.file(it)
+    }
+    if (store != null) {
+        create("release") {
+            storeFile = store
+            storePassword = System.getenv("CM_KEYSTORE_PASSWORD") ?: signing.getProperty("storePassword")
+            keyAlias = System.getenv("CM_KEY_ALIAS") ?: signing.getProperty("keyAlias")
+            keyPassword = System.getenv("CM_KEY_PASSWORD") ?: signing.getProperty("keyPassword")
         }
     }
+}
 
     buildTypes {
         release {
