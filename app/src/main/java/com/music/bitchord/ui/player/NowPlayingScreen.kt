@@ -1324,6 +1324,7 @@ fun NowPlayingScreen(
                     .zIndex(10f)
                     .pointerInput(Unit) {
                         var lastTapTime = 0L
+                        var lastTapPos = androidx.compose.ui.geometry.Offset.Zero
                         var tapJob: kotlinx.coroutines.Job? = null
                         awaitPointerEventScope {
                             while (true) {
@@ -1332,16 +1333,26 @@ fun NowPlayingScreen(
                                 if (up != null) {
                                     val now = System.currentTimeMillis()
                                     if (now - lastTapTime < 300) {
-                                        tapJob?.cancel()
-                                        lastTapTime = 0L
-                                        val offset = up.position
-                                        val currentPos = currentPositionProvider()
-                                        val target = if (offset.x < size.width / 2) currentPos - 10000 else currentPos + 10000
-                                        onSeek(target.coerceIn(0L, durationMs))
-                                        hapticFeedback.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
-                                        seekOverlayText = if (offset.x < size.width / 2) "-10s" else "+10s"
+                                        val dx = kotlin.math.abs(up.position.x - lastTapPos.x)
+                                        if (dx < with(density) { 10.dp.toPx() }) {
+                                            tapJob?.cancel()
+                                            lastTapTime = 0L
+                                            val offset = up.position
+                                            val currentPos = currentPositionProvider()
+                                            val target = if (offset.x < size.width / 2) currentPos - 10000 else currentPos + 10000
+                                            onSeek(target.coerceIn(0L, durationMs))
+                                            hapticFeedback.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
+                                            seekOverlayText = if (offset.x < size.width / 2) "-10s" else "+10s"
+                                        } else {
+                                            lastTapTime = now
+                                            lastTapPos = up.position
+                                            tapJob = scope.launch {
+                                                kotlinx.coroutines.delay(300)
+                                            }
+                                        }
                                     } else {
                                         lastTapTime = now
+                                        lastTapPos = up.position
                                         tapJob = scope.launch {
                                             kotlinx.coroutines.delay(300)
                                         }
