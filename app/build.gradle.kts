@@ -105,7 +105,7 @@ android {
         val store = signing.getProperty("storeFile")?.let { rootProject.file(it) }
         if (store != null && store.exists()) {
             create("release") {
-                storeFile = store
+                storeFile = file(store.absolutePath)
                 storePassword = signing.getProperty("storePassword")
                 keyAlias = signing.getProperty("keyAlias")
                 keyPassword = signing.getProperty("keyPassword")
