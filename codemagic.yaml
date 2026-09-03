@@ -13,7 +13,7 @@ workflows:
       groups:
         - keystore_credentials
       vars:
-        CM_KEYSTORE_PATH: /tmp/bitchord.jks
+            CM_KEYSTORE_PATH: /tmp/bitchord.jks
     scripts:
       - name: Decode Keystore
         script: |
