@@ -95,23 +95,20 @@ android {
     }
 
     signingConfigs {
-        // Look for Codemagic environment variables first, fallback to local signing properties
-        val cmKeystorePath = System.getenv("CM_KEYSTORE_PATH")
-        val localKeystorePath = signing.getProperty("storeFile")
-        val storeFilePath = cmKeystorePath ?: localKeystorePath
-        
-        val store = storeFilePath?.let { rootProject.file(it) }
-        
-        // Create the release config if we have a keystore path from either source
-        if (store != null) {
-            create("release") {
-                storeFile = store
-                storePassword = System.getenv("CM_KEYSTORE_PASSWORD") ?: signing.getProperty("storePassword")
-                keyAlias = System.getenv("CM_KEY_ALIAS") ?: signing.getProperty("keyAlias")
-                keyPassword = System.getenv("CM_KEY_PASSWORD") ?: signing.getProperty("keyPassword")
-            }
+    val cmKeystorePath = System.getenv("CM_KEYSTORE_PATH")
+    val localStorePath = signing.getProperty("storeFile")
+    val storeFilePath = cmKeystorePath ?: localStorePath
+    val store = storeFilePath?.let { file(it) }
+
+    if (store != null && store.exists()) {
+        create("release") {
+            storeFile = store
+            storePassword = System.getenv("CM_KEYSTORE_PASSWORD") ?: signing.getProperty("storePassword")
+            keyAlias = System.getenv("CM_KEY_ALIAS") ?: signing.getProperty("keyAlias")
+            keyPassword = System.getenv("CM_KEY_PASSWORD") ?: signing.getProperty("keyPassword")
         }
     }
+}
 
     buildTypes {
         release {
@@ -216,6 +213,7 @@ dependencies {
     // ---- Media playback: Media3 / ExoPlayer ----
     implementation("androidx.media3:media3-exoplayer:1.11.0")
     implementation("androidx.media3:media3-session:1.11.0")
+    implementation("androidx.car.app:app-automotive:1.4.0")
     implementation("androidx.media3:media3-common:1.11.0")
     implementation("androidx.media3:media3-datasource-okhttp:1.11.0")
     // Audio is progressive, but Apple serves its motion artwork as HLS — this
