@@ -100,7 +100,7 @@ android {
     val storeFilePath = cmKeystorePath ?: localStorePath
     val store = storeFilePath?.let { file(it) }
 
-    if (store != null && store.exists()) {
+    if (store != null && store.exists() && store.length() > 0L) {
         create("release") {
             storeFile = store
             storePassword = System.getenv("CM_KEYSTORE_PASSWORD") ?: signing.getProperty("storePassword")
