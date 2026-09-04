@@ -39,6 +39,9 @@
         android:name="android.permission.WRITE_EXTERNAL_STORAGE"
         android:maxSdkVersion="28" />
 
+    <uses-feature android:name="android.hardware.type.automotive" android:required="false" />
+    <uses-sdk tools:overrideLibrary="androidx.car.app.automotive" />
+
     <application
         android:name=".BitChordApplication"
         android:allowBackup="true"
@@ -52,6 +55,10 @@
         android:supportsRtl="true"
         android:theme="@style/Theme.BitChord"
         tools:targetApi="34">
+
+        <meta-data
+            android:name="com.google.android.gms.car.application"
+            android:resource="@xml/automotive_app_desc" />
 
         <!--
           One UI 7+ only routes an app's ongoing notification to Live
@@ -262,6 +269,15 @@
                 android:name="android.support.FILE_PROVIDER_PATHS"
                 android:resource="@xml/file_paths" />
         </provider>
+
+        <service
+            android:name=".auto.MusicService"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="androidx.media3.session.MediaLibraryService" />
+                <action android:name="android.media.browse.MediaBrowserService" />
+            </intent-filter>
+        </service>
     </application>
 
 </manifest>

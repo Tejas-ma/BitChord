@@ -12,9 +12,8 @@ workflows:
       java: 17
       groups:
         - keystore_credentials
-        - api_credentials
       vars:
-        CM_KEYSTORE_PATH: /tmp/bitchord.jks
+            CM_KEYSTORE_PATH: /tmp/bitchord.jks
     scripts:
       - name: Decode Keystore
         script: |
