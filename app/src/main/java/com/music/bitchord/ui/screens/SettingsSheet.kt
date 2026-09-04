@@ -66,7 +66,7 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.ModalBottomSheet
+import com.music.bitchord.ui.components.AppModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
@@ -795,7 +795,7 @@ fun SettingsScreen(
     }
 
     picking?.let { target ->
-        ModalBottomSheet(
+        AppModalBottomSheet(
             onDismissRequest = { picking = null },
             containerColor = MaterialTheme.colorScheme.background,
         ) {
@@ -817,7 +817,7 @@ fun SettingsScreen(
     }
 
     if (pickingDownloadQuality) {
-        ModalBottomSheet(
+        AppModalBottomSheet(
             onDismissRequest = { pickingDownloadQuality = false },
             containerColor = MaterialTheme.colorScheme.background,
         ) {

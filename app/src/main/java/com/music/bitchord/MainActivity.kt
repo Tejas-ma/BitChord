@@ -55,12 +55,12 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.ModalBottomSheet
+import com.music.bitchord.ui.components.AppModalBottomSheet
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.pulltorefresh.rememberPullToRefreshState
-import androidx.compose.material3.rememberModalBottomSheetState
+import com.music.bitchord.ui.components.rememberAppModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.LaunchedEffect
@@ -1952,9 +1952,9 @@ private fun BitChordApp(
         // ---- Now Playing ----
         // Only raised where it isn't already open beside the page.
         if (!playerDocked && showNowPlaying && playerSong != null) {
-            ModalBottomSheet(
+            AppModalBottomSheet(
                 onDismissRequest = { showNowPlaying = false },
-                sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+                sheetState = rememberAppModalBottomSheetState(skipPartiallyExpanded = true),
                 // The player fills the screen and paints its own background to
                 // the very top, so the sheet's default 28.dp top corners would
                 // only cut two notches out of the artwork behind the status bar.
@@ -1990,13 +1990,13 @@ private fun BitChordApp(
         // ---- Share the Replay ----
         if (showReplayShare) {
             replay.summary?.takeUnless { it.isEmpty }?.let { summary ->
-                ModalBottomSheet(
+                AppModalBottomSheet(
                     onDismissRequest = { showReplayShare = false },
                     // Straight to full height. The sheet is a picture and two
                     // buttons, and half-open it showed the picture with both
                     // buttons below the fold — a sheet whose only two controls
                     // need a drag to reach.
-                    sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+                    sheetState = rememberAppModalBottomSheetState(skipPartiallyExpanded = true),
                     containerColor = MaterialTheme.colorScheme.background,
                 ) {
                     ReplayShareSheet(
@@ -2044,7 +2044,7 @@ private fun BitChordApp(
             // carries the per-entry id a removal is expressed in.
             val editable = viewModel.editablePlaylist(detail?.browseId)
                 ?.takeIf { !fromPlayer && song.setVideoId != null }
-            ModalBottomSheet(
+            AppModalBottomSheet(
                 onDismissRequest = { songActions = null },
                 // The sheet paints itself in the track's own colours, corners
                 // and drag handle included — see SongActionsSheet.
@@ -2132,7 +2132,7 @@ private fun BitChordApp(
                 DownloadSession.markSeen()
             }
             BackHandler(onBack = closeDownloadManager)
-            ModalBottomSheet(
+            AppModalBottomSheet(
                 onDismissRequest = closeDownloadManager,
                 containerColor = MaterialTheme.colorScheme.background,
             ) {
@@ -2150,7 +2150,7 @@ private fun BitChordApp(
                 playlistTarget = null
                 creatingPlaylist = false
             }
-            ModalBottomSheet(
+            AppModalBottomSheet(
                 onDismissRequest = dismiss,
                 containerColor = MaterialTheme.colorScheme.background,
             ) {
@@ -2210,7 +2210,7 @@ private fun BitChordApp(
             val remote = target.browseId?.startsWith("local:") == false
             val pinnedPlaylists by AppSettings.pinnedPlaylists.collectAsStateWithLifecycle()
             val pinnableId = target.browseId?.takeIf { target.type == BrowseType.PLAYLIST }
-            ModalBottomSheet(
+            AppModalBottomSheet(
                 onDismissRequest = { browseActions = null },
                 containerColor = MaterialTheme.colorScheme.background,
             ) {
