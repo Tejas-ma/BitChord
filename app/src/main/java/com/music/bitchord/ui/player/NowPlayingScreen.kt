@@ -1,5 +1,7 @@
 package com.music.bitchord.ui.player
 
+import android.widget.Toast
+import android.content.Intent
 import android.database.ContentObserver
 import android.graphics.Bitmap
 import android.media.AudioManager
@@ -1794,19 +1796,19 @@ fun NowPlayingScreen(
                         icon = Icons.Rounded.Share,
                         contentDescription = "Share",
                         onClick = {
+                            Toast.makeText(context, "Preparing card...", Toast.LENGTH_SHORT).show()
                             scope.launch {
                                 try {
-                                    val request = ImageRequest.Builder(context)
-                                        .data(song.artworkAt(1200))
-                                        .size(1200)
-
-                                        .build()
-                                    val result = context.imageLoader.execute(request)
-                                    val bitmap = if (result is SuccessResult) {
-                                        result.image.asDrawable(context.resources).toBitmap()
-                                    } else null
-
                                     val file = withContext(Dispatchers.IO) {
+                                        val request = ImageRequest.Builder(context)
+                                            .data(song.artworkAt(1200))
+                                            .size(1200)
+                                            .build()
+                                        val result = context.imageLoader.execute(request)
+                                        val bitmap = if (result is SuccessResult) {
+                                            result.image.asDrawable(context.resources).toBitmap()
+                                        } else null
+
                                         ShareCardGenerator.generateShareCard(
                                             context = context,
                                             artwork = bitmap,
@@ -1822,15 +1824,20 @@ fun NowPlayingScreen(
                                             file
                                         )
 
-                                        val intent = ShareCompat.IntentBuilder(context)
-                                            .setType("image/png")
-                                            .setStream(uri)
-                                            .createChooserIntent()
-
-                                        context.startActivity(intent)
+                                        withContext(Dispatchers.Main) {
+                                            val intent = ShareCompat.IntentBuilder(context)
+                                                .setType("image/png")
+                                                .setStream(uri)
+                                                .createChooserIntent()
+                                            intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                                            context.startActivity(intent)
+                                        }
                                     }
                                 } catch (e: Exception) {
                                     e.printStackTrace()
+                                    withContext(Dispatchers.Main) {
+                                        Toast.makeText(context, "Failed to share", Toast.LENGTH_SHORT).show()
+                                    }
                                 }
                             }
                         },
