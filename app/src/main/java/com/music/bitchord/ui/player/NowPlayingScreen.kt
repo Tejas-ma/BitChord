@@ -3135,6 +3135,7 @@ private fun CircleGlyph(
     active: Boolean = false,
     haptic: Haptic = Haptic.Tap,
 ) {
+    val hapticFeedback = androidx.compose.ui.platform.LocalHapticFeedback.current
     val haptics = rememberHaptics()
     val discAlpha by animateFloatAsState(
         targetValue = if (active) 0.34f else 0.18f,
