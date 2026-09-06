@@ -1,4 +1,4 @@
-import java.util.Properties
+import java.io.File
 import java.io.FileInputStream
 
 plugins {
@@ -94,13 +94,14 @@ android {
         }
     }
 
-    signingConfigs {
+   signingConfigs {
     val cmKeystorePath = System.getenv("CM_KEYSTORE_PATH")
     val localStorePath = signing.getProperty("storeFile")
     val storeFilePath = cmKeystorePath ?: localStorePath
-    val store = storeFilePath?.let { file(it) }
-
-    if (store != null && store.exists()) {
+    val store = storeFilePath?.let {
+        if (it.startsWith("/")) File(it) else rootProject.file(it)
+    }
+    if (store != null) {
         create("release") {
             storeFile = store
             storePassword = System.getenv("CM_KEYSTORE_PASSWORD") ?: signing.getProperty("storePassword")
