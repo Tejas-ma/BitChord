@@ -7,13 +7,14 @@ workflows:
         - push
         - pull_request
       branch_patterns:
-        - pattern: development
+        - pattern: Devlopment
     environment:
       java: 17
       groups:
         - keystore_credentials
+        - supabase_credentials
       vars:
-            CM_KEYSTORE_PATH: /tmp/bitchord.jks
+        CM_KEYSTORE_PATH: /tmp/bitchord.jks
     scripts:
       - name: Decode Keystore
         script: |
