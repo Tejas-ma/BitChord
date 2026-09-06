@@ -34,10 +34,11 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.awaitEachGesture
-import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.awaitVerticalTouchSlopOrCancellation
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.waitForUpOrCancellation
 import androidx.compose.foundation.gestures.verticalDrag
 import androidx.compose.foundation.interaction.DragInteraction
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -536,6 +537,7 @@ fun NowPlayingScreen(
     isPlaying: Boolean,
     isLoading: Boolean,
     positionMs: Long,
+    currentPositionProvider: () -> Long = { positionMs },
     durationMs: Long,
     /** True only while this current item is the manual catalogue-audio match. */
     isAudioVersion: Boolean,
@@ -809,6 +811,14 @@ fun NowPlayingScreen(
     // follows the finger so the gesture has something to hold on to.
     val swipeThreshold = with(density) { 72.dp.toPx() }
     var swipeOffset by remember { mutableFloatStateOf(0f) }
+    var seekOverlayText by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(seekOverlayText) {
+        if (seekOverlayText != null) {
+            kotlinx.coroutines.delay(600)
+            seekOverlayText = null
+        }
+    }
+    val hapticFeedback = androidx.compose.ui.platform.LocalHapticFeedback.current
     val swipeSettle by animateFloatAsState(
         targetValue = swipeOffset,
         animationSpec = spring(stiffness = Spring.StiffnessMediumLow),
@@ -1759,6 +1769,65 @@ fun NowPlayingScreen(
                     // evidence, and the two no longer swap for each other on a
                     // tap. Fades out with the sleeve as it collapses to a
                     // thumbnail, where there's no room to read it anyway.
+                                    Box(modifier = Modifier
+                    .matchParentSize()
+                    .zIndex(10f)
+                    .pointerInput(Unit) {
+                        var lastTapTime = 0L
+                        var lastTapPos = androidx.compose.ui.geometry.Offset.Zero
+                        var tapJob: kotlinx.coroutines.Job? = null
+                        awaitPointerEventScope {
+                            while (true) {
+                                val down = awaitFirstDown(requireUnconsumed = false)
+                                val up = waitForUpOrCancellation()
+                                if (up != null) {
+                                    val now = System.currentTimeMillis()
+                                    if (now - lastTapTime < 300) {
+                                        val dx = kotlin.math.abs(up.position.x - lastTapPos.x)
+                                        if (dx < with(density) { 10.dp.toPx() }) {
+                                            tapJob?.cancel()
+                                            lastTapTime = 0L
+                                            val offset = up.position
+                                            val currentPos = currentPositionProvider()
+                                            val target = if (offset.x < size.width / 2) currentPos - 10000 else currentPos + 10000
+                                            onSeek(target.coerceIn(0L, durationMs))
+                                            hapticFeedback.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
+                                            seekOverlayText = if (offset.x < size.width / 2) "-10s" else "+10s"
+                                        } else {
+                                            lastTapTime = now
+                                            lastTapPos = up.position
+                                            tapJob = scope.launch {
+                                                kotlinx.coroutines.delay(300)
+                                            }
+                                        }
+                                    } else {
+                                        lastTapTime = now
+                                        lastTapPos = up.position
+                                        tapJob = scope.launch {
+                                            kotlinx.coroutines.delay(300)
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                ) {
+                    seekOverlayText?.let { text ->
+                        Box(
+                            modifier = Modifier
+                                .align(Alignment.Center)
+                                .background(Color.Black.copy(alpha = 0.6f), RoundedCornerShape(16.dp))
+                                .padding(horizontal = 24.dp, vertical = 12.dp)
+                        ) {
+                            Text(
+                                text = text,
+                                color = Color.White,
+                                style = MaterialTheme.typography.titleLarge
+                            )
+                        }
+                    }
+                }
+
                     if (showNerdStats && p < 0.5f) {
                         // A plain white line reads fine over the usual dark
                         // tile, but a light stretch of an animated cover — sky,
@@ -1946,6 +2015,61 @@ fun NowPlayingScreen(
                         )
                         Spacer(Modifier.width(8.dp))
                     }
+
+                    val scope = rememberCoroutineScope()
+                    val context = LocalContext.current
+
+                    CircleGlyph(
+                        icon = Icons.Rounded.Share,
+                        contentDescription = "Share",
+                        onClick = {
+                            Toast.makeText(context, "Preparing card...", Toast.LENGTH_SHORT).show()
+                            scope.launch {
+                                try {
+                                    val file = withContext(Dispatchers.IO) {
+                                        val request = ImageRequest.Builder(context)
+                                            .data(song.artworkAt(1200))
+                                            .size(1200)
+                                            .build()
+                                        val result = context.imageLoader.execute(request)
+                                        val bitmap = if (result is SuccessResult) {
+                                            result.image.asDrawable(context.resources).toBitmap()
+                                        } else null
+
+                                        ShareCardGenerator.generateShareCard(
+                                            context = context,
+                                            artwork = bitmap,
+                                            title = song.title,
+                                            artist = song.artist
+                                        )
+                                    }
+
+                                    if (file != null) {
+                                        val uri = FileProvider.getUriForFile(
+                                            context,
+                                            "${context.packageName}.fileprovider",
+                                            file
+                                        )
+
+                                        withContext(Dispatchers.Main) {
+                                            val intent = ShareCompat.IntentBuilder(context)
+                                                .setType("image/png")
+                                                .setStream(uri)
+                                                .createChooserIntent()
+                                            intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                                            context.startActivity(intent)
+                                        }
+                                    }
+                                } catch (e: Exception) {
+                                    e.printStackTrace()
+                                    withContext(Dispatchers.Main) {
+                                        Toast.makeText(context, "Failed to share", Toast.LENGTH_SHORT).show()
+                                    }
+                                }
+                            }
+                        },
+                    )
+                    Spacer(Modifier.width(8.dp))
                     CircleGlyph(
                         icon = if (showRevertCue) Icons.AutoMirrored.Rounded.Undo else Icons.Rounded.MoreHoriz,
                         contentDescription = stringResource(R.string.more),
@@ -3436,6 +3560,7 @@ private fun CircleGlyph(
     active: Boolean = false,
     haptic: Haptic = Haptic.Tap,
 ) {
+    val hapticFeedback = androidx.compose.ui.platform.LocalHapticFeedback.current
     val haptics = rememberHaptics()
     val discAlpha by animateFloatAsState(
         targetValue = if (active) 0.34f else 0.18f,
