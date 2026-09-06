@@ -1404,6 +1404,7 @@ private fun BitChordApp(
             isPlaying = player.isPlaying,
             isLoading = player.isLoading,
             positionMs = player.position.positionMs,
+            currentPositionProvider = { controller?.currentPosition ?: player.position.positionMs },
             durationMs = player.durationMs,
             isAudioVersion = convertedAudioId == song.videoId,
             audioVersionSwitching = switchingAudioVersion,
@@ -1795,6 +1796,7 @@ private fun BitChordApp(
                         DiscordScreen(
                             song = player.song,
                             positionMs = player.position.positionMs,
+            currentPositionProvider = { controller?.currentPosition ?: player.position.positionMs },
                             durationMs = player.durationMs,
                             onOpenLogin = { showDiscordLogin = true },
                             onOpenDialog = { discordDialog = it },
