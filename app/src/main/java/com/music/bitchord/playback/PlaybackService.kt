@@ -1611,6 +1611,13 @@ class PlaybackService : MediaLibraryService() {
 
         }
 
+        if (mediaItem != null) {
+            val genre = mediaItem.mediaMetadata.genre?.toString()
+            val bpm = mediaItem.mediaMetadata.extras?.getInt("bpm") ?: 120
+            MoodDetector.onTrackPlayed(genre, bpm, this@PlaybackService)
+        }
+
+
         // A crossfade handoff never fires [formatListener] for the entering
         // track — [CrossfadeController] starts its decoder during ARMING,
         // while the listener is still on the outgoing player, and it isn't
