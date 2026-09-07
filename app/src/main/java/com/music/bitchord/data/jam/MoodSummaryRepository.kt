@@ -8,4 +8,8 @@ class MoodSummaryRepository(private val context: Context) {
     fun getWeeklyMoods(): Flow<List<FriendActivity>> {
         return flowOf(emptyList())
     }
+
+    fun saveDailyMood(mood: String) {
+        // mock
+    }
 }
