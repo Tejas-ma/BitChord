@@ -1,5 +1,15 @@
 package com.music.bitchord.ui.player
 
+import android.widget.Toast
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.Dispatchers
+import androidx.core.app.ShareCompat
+import android.content.Intent
+import androidx.core.content.FileProvider
+import coil3.imageLoader
+import coil3.request.SuccessResult
+import coil3.request.ImageRequest
+
 import com.music.bitchord.R
 import com.music.bitchord.ui.components.ExplicitSongTitle
 
