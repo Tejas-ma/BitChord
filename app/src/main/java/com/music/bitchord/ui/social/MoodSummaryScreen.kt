@@ -8,6 +8,14 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.ArrowBack
 import androidx.compose.material3.*
+
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
+
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -27,6 +35,7 @@ import java.util.Locale
 fun MoodSummaryScreen(
     onBack: () -> Unit
 ) {
+    var showYearRecap by remember { mutableStateOf(false) }
     Scaffold(
         topBar = {
             TopAppBar(
@@ -60,6 +69,25 @@ fun MoodSummaryScreen(
             Spacer(modifier = Modifier.height(32.dp))
             YearInMoodsSection()
             Spacer(modifier = Modifier.height(32.dp))
+
+            Button(
+                onClick = { showYearRecap = true },
+                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text("View Year Recap")
+            }
+            Spacer(modifier = Modifier.height(32.dp))
+
+        }
+    }
+
+    if (showYearRecap) {
+        Dialog(
+            onDismissRequest = { showYearRecap = false },
+            properties = DialogProperties(usePlatformDefaultWidth = false)
+        ) {
+            YearRecapScreen(onBack = { showYearRecap = false })
         }
     }
 }
