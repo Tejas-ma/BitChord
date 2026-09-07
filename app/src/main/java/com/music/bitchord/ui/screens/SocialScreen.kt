@@ -9,6 +9,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.music.bitchord.ui.social.JamViewModel
+
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
+import com.music.bitchord.ui.social.MoodSummaryScreen
 import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -26,6 +30,9 @@ fun SocialScreen(
     val snackbarHostState = remember { SnackbarHostState() }
     val coroutineScope = rememberCoroutineScope()
     var showCreateRoom by remember { mutableStateOf(false) }
+
+    var showMoodSummary by remember { mutableStateOf(false) }
+
 
     LaunchedEffect(error) {
         error?.let {
@@ -48,7 +55,33 @@ fun SocialScreen(
     ) { padding ->
         Box(modifier = Modifier.fillMaxSize().padding(padding).background(MaterialTheme.colorScheme.background)) {
             Column(modifier = Modifier.fillMaxSize().padding(16.dp)) {
-                Text(
+                
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        "😎",
+                        modifier = Modifier.padding(end = 8.dp),
+                        style = MaterialTheme.typography.titleLarge
+                    )
+                    Text(
+                        "You",
+                        style = MaterialTheme.typography.titleLarge,
+                        color = MaterialTheme.colorScheme.onBackground
+                    )
+                }
+                Button(
+                    onClick = { showMoodSummary = true },
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
+                ) {
+                    Text("My Mood")
+                }
+            }
+            
+            Text(
                     "Active Rooms", 
                     style = MaterialTheme.typography.titleLarge,
                     color = MaterialTheme.colorScheme.onBackground
@@ -108,10 +141,18 @@ fun SocialScreen(
                             colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
                         ) {
                             Column(modifier = Modifier.padding(16.dp)) {
-                                Text(
-                                    friend.username,
-                                    color = MaterialTheme.colorScheme.onBackground
-                                )
+                                
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Text(
+                                        "🔥",
+                                        modifier = Modifier.padding(end = 8.dp)
+                                    )
+                                    Text(
+                                        friend.username,
+                                        color = MaterialTheme.colorScheme.onBackground
+                                    )
+                                }
+
                                 Text(
                                     "is listening to ${friend.song}",
                                     color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
@@ -175,4 +216,14 @@ fun SocialScreen(
             }
         }
     }
+
+    if (showMoodSummary) {
+        Dialog(
+            onDismissRequest = { showMoodSummary = false },
+            properties = DialogProperties(usePlatformDefaultWidth = false)
+        ) {
+            MoodSummaryScreen(onBack = { showMoodSummary = false })
+        }
+    }
 }
+
