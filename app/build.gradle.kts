@@ -34,6 +34,18 @@ val lastfmSecret: String = (
         ?: ""
     ).trim()
 
+
+val supabaseUrl: String = (
+    localProps.getProperty("SUPABASE_URL")
+        ?: System.getenv("SUPABASE_URL")
+        ?: ""
+    ).trim()
+val supabaseAnonKey: String = (
+    localProps.getProperty("SUPABASE_ANON_KEY")
+        ?: System.getenv("SUPABASE_ANON_KEY")
+        ?: ""
+    ).trim()
+
 android {
     namespace = "com.music.bitchord"
     compileSdk = 36
@@ -52,6 +64,9 @@ android {
         // Last.fm credentials are supplied locally and never committed.
         buildConfigField("String", "LASTFM_API_KEY", "\"${lastfmApiKey.replace("\\", "\\\\").replace("\"", "\\\"")}\"")
         buildConfigField("String", "LASTFM_SECRET", "\"${lastfmSecret.replace("\\", "\\\\").replace("\"", "\\\"")}\"")
+        buildConfigField("String", "SUPABASE_URL", "\"${supabaseUrl.replace("\\", "\\\\").replace("\"", "\\\"")}\"")
+        buildConfigField("String", "SUPABASE_ANON_KEY", "\"${supabaseAnonKey.replace("\\", "\\\\").replace("\"", "\\\"")}\"")
+
     }
 
     splits {
@@ -281,6 +296,10 @@ dependencies {
 
     // ---- JS module execution: QuickJS VM for style source plugins ----
     implementation("io.github.dokar3:quickjs-kt-android:1.0.5")
+
+    // ---- Supabase ----
+    implementation("io.github.jan-tennert.supabase:postgrest-kt:3.0.2")
+    implementation("io.github.jan-tennert.supabase:realtime-kt:3.0.2")
 
     // ---- Automix: on-device beat/downbeat model (Beat This!, MIT-licensed) ----
     // The full android artifact, not onnxruntime-mobile: mobile only loads .ort
