@@ -2,6 +2,10 @@ package com.music.bitchord.data.jam
 
 import com.music.bitchord.supabase
 import io.github.jan.supabase.postgrest.postgrest
+import io.github.jan.supabase.postgrest.query.filter.FilterOperator
+import io.github.jan.supabase.postgrest.query.filter.FilterOperation
+import io.github.jan.supabase.postgrest.query.Columns
+import io.github.jan.supabase.postgrest.query.Order
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
 
@@ -17,7 +21,7 @@ class JamRepository {
         return try {
             supabase.postgrest["rooms"].update({
                 set("members", arrayOf(userId))
-            }) { eq("id", roomId) }
+            }) { FilterOperation("id", FilterOperator.EQ, roomId) }
             true
         } catch (e: Exception) { false }
     }
@@ -25,7 +29,7 @@ class JamRepository {
     suspend fun leaveRoom(roomId: String, userId: String) {
         supabase.postgrest["rooms"].update({
             set("members", emptyArray<String>())
-        }) { eq("id", roomId) }
+        }) { FilterOperation("id", FilterOperator.EQ, roomId) }
     }
 
     fun getRooms(): Flow<List<Room>> = flow {
@@ -47,7 +51,7 @@ class JamRepository {
 
     fun observeQueue(roomId: String): Flow<List<String>> = flow {
         val queue = supabase.postgrest["queue"]
-            .select { eq("room_id", roomId) }
+            .select { FilterOperation("room_id", FilterOperator.EQ, roomId) }
             .decodeList<Map<String, String>>()
         emit(queue.mapNotNull { it["song"] })
     }
@@ -60,7 +64,7 @@ class JamRepository {
 
     fun observePlayback(roomId: String): Flow<PlaybackState> = flow {
         val state = supabase.postgrest["playback_state"]
-            .select { eq("room_id", roomId) }
+            .select { FilterOperation("room_id", FilterOperator.EQ, roomId) }
             .decodeSingle<PlaybackState>()
         emit(state)
     }
@@ -74,12 +78,12 @@ class JamRepository {
     suspend fun updateRoomPrivacy(roomId: String, privacy: String) {
         supabase.postgrest["rooms"].update({
             set("privacy", privacy)
-        }) { eq("id", roomId) }
+        }) { FilterOperation("id", FilterOperator.EQ, roomId) }
     }
 
     suspend fun updateFriendMood(userId: String, mood: String) {
         supabase.postgrest["friend_activity"].update({
             set("mood", mood)
-        }) { eq("user_id", userId) }
+        }) { FilterOperation("user_id", FilterOperator.EQ, userId) }
     }
 }

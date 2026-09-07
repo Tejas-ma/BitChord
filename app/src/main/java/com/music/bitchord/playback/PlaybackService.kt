@@ -1312,8 +1312,7 @@ class PlaybackService : MediaLibraryService() {
      * in again.
      */
     private fun dropAutoplayTracksFromQueue(): List<MediaItem> {
-        val exoPlayer = player ?: return
- emptyList()
+        val exoPlayer = player ?: return emptyList()
         val dropped = mutableListOf<MediaItem>()
         for (index in exoPlayer.mediaItemCount - 1 downTo exoPlayer.currentMediaItemIndex + 1) {
             val item = exoPlayer.getMediaItemAt(index)
@@ -5142,7 +5141,7 @@ class PlaybackService : MediaLibraryService() {
             )
             .build()
 
-    private companion object {
+    companion object {
         const val MEDIA_ROOT_ID = "root"
         const val MEDIA_RECENTS_ID = "recents"
         const val MEDIA_QUICK_PICKS_ID = "quick_picks"
