@@ -23,6 +23,23 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+
+import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.rememberModalBottomSheetState
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
+import androidx.compose.material.icons.rounded.People
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.height
+import com.music.bitchord.ui.social.JamRoomScreen
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
@@ -108,7 +125,7 @@ private val ROW_PADDING_HORIZONTAL = 12.dp
 private val ART_CORNER = 8.dp
 
 /** Frosted mini player that rides just above the floating tab bar. */
-@OptIn(ExperimentalHazeMaterialsApi::class)
+@OptIn(ExperimentalHazeMaterialsApi::class, ExperimentalMaterial3Api::class)
 @Composable
 fun MiniPlayer(
     song: Song,
@@ -126,6 +143,13 @@ fun MiniPlayer(
     // height if the row's contents ever change it — which is what keeps a pill
     // a pill instead of a rounded rectangle. Same idiom as [FloatingBottomBar]
     // directly below it, so the two shapes are the same family.
+    
+    var showCreateRoom by remember { mutableStateOf(false) }
+    var roomName by remember { mutableStateOf(song.title) }
+    var selectedPrivacy by remember { mutableStateOf("Everyone") }
+    var inJamRoom by remember { mutableStateOf(false) }
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+
     val shape = RoundedCornerShape(percent = 50)
     Box(
         modifier = modifier
@@ -219,6 +243,78 @@ fun MiniPlayer(
                     modifier = Modifier.size(GLYPH_SIZE),
                 )
             }
+            Spacer(Modifier.width(TRANSPORT_GAP))
+            IconButton(
+                onClick = {
+                    showCreateRoom = true
+                },
+                modifier = Modifier.size(GLYPH_SLOT),
+            ) {
+                Icon(
+                    Icons.Rounded.People,
+                    contentDescription = "Quick Jam",
+                    tint = MaterialTheme.colorScheme.onBackground,
+                    modifier = Modifier.size(GLYPH_SIZE),
+                )
+            }
+
+        }
+    }
+
+    if (showCreateRoom) {
+        ModalBottomSheet(
+            onDismissRequest = { showCreateRoom = false },
+            sheetState = sheetState
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(16.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                Text("Start a Quick Jam", style = MaterialTheme.typography.titleLarge)
+                Spacer(Modifier.height(16.dp))
+                OutlinedTextField(
+                    value = roomName,
+                    onValueChange = { roomName = it },
+                    label = { Text("Room Name") },
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Spacer(Modifier.height(16.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceEvenly
+                ) {
+                    listOf("Everyone", "Friends", "Invite Only").forEach { privacy ->
+                        FilterChip(
+                            selected = selectedPrivacy == privacy,
+                            onClick = { selectedPrivacy = privacy },
+                            label = { Text(privacy) }
+                        )
+                    }
+                }
+                Spacer(Modifier.height(24.dp))
+                Button(
+                    onClick = {
+                        showCreateRoom = false
+                        inJamRoom = true
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text("Start Jam")
+                }
+                Spacer(Modifier.height(16.dp))
+            }
+        }
+    }
+
+    if (inJamRoom) {
+        Dialog(
+            onDismissRequest = { inJamRoom = false },
+            properties = DialogProperties(usePlatformDefaultWidth = false)
+        ) {
+            JamRoomScreen(roomName = roomName, onBack = { inJamRoom = false })
         }
     }
 }
