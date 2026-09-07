@@ -10,6 +10,9 @@ import coil3.disk.DiskCache
 import coil3.disk.directory
 import coil3.memory.MemoryCache
 import coil3.request.crossfade
+
+import com.music.bitchord.data.jam.WeeklySummaryWorker
+import com.music.bitchord.data.jam.MoodSummaryRepository
 import com.music.bitchord.auth.AuthStore
 import com.music.bitchord.data.canvas.CanvasCache
 import com.music.bitchord.data.canvas.SpotifyToken
@@ -33,6 +36,9 @@ class BitChordApplication : Application(), SingletonImageLoader.Factory {
     @OptIn(UnstableApi::class)
     override fun onCreate() {
         super.onCreate()
+        WeeklySummaryWorker.schedule(this)
+        MoodSummaryRepository(this).saveDailyMood("Vibing 🎵")
+
         // PlaybackService shares this process, so seeding the cookie here means
         // stream resolution is authenticated from the first play onwards.
         authStore = AuthStore(this)
