@@ -36,6 +36,7 @@ import androidx.compose.material.icons.rounded.NorthWest
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.automirrored.rounded.PlaylistAdd
 import androidx.compose.material.icons.rounded.Search
+import androidx.compose.material.icons.rounded.Mic
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -755,7 +756,7 @@ private fun SearchField(
                 contentAlignment = Alignment.Center,
             ) {
                 Icon(
-                    Icons.Rounded.MicNone,
+                    Icons.Rounded.Mic,
                     contentDescription = stringResource(R.string.voice_search),
                     tint = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.size(18.dp),
