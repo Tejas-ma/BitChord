@@ -1,5 +1,6 @@
 package com.music.bitchord.ui.screens
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -34,28 +35,54 @@ fun SocialScreen(
     }
 
     Scaffold(
+        containerColor = MaterialTheme.colorScheme.background,
         snackbarHost = { SnackbarHost(snackbarHostState) },
         floatingActionButton = {
-            FloatingActionButton(onClick = { showCreateRoom = true }) {
-                Text("+")
+            FloatingActionButton(
+                onClick = { showCreateRoom = true },
+                containerColor = MaterialTheme.colorScheme.primary
+            ) {
+                Text("+", color = MaterialTheme.colorScheme.onBackground)
             }
         }
     ) { padding ->
-        Box(modifier = Modifier.fillMaxSize().padding(padding)) {
+        Box(modifier = Modifier.fillMaxSize().padding(padding).background(MaterialTheme.colorScheme.background)) {
             Column(modifier = Modifier.fillMaxSize().padding(16.dp)) {
-                Text("Active Rooms", style = MaterialTheme.typography.titleLarge)
+                Text(
+                    "Active Rooms", 
+                    style = MaterialTheme.typography.titleLarge,
+                    color = MaterialTheme.colorScheme.onBackground
+                )
                 Spacer(modifier = Modifier.height(8.dp))
                 if (rooms.isEmpty()) {
-                    Text("No active rooms")
+                    Text(
+                        "No active rooms",
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
+                    )
                 } else {
                     rooms.forEach { room ->
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Text(room.name, modifier = Modifier.weight(1f))
-                            Button(onClick = { 
-                                viewModel.joinRoom(room.id, "my_user_id") // Should use real user id
-                                onNavigateToJamRoom(room.id) 
-                            }) {
-                                Text("Join")
+                        Card(
+                            modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(16.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    room.name, 
+                                    modifier = Modifier.weight(1f),
+                                    color = MaterialTheme.colorScheme.onBackground
+                                )
+                                Button(
+                                    onClick = { 
+                                        viewModel.joinRoom(room.id, "my_user_id") // Should use real user id
+                                        onNavigateToJamRoom(room.id) 
+                                    },
+                                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
+                                ) {
+                                    Text("Join", color = MaterialTheme.colorScheme.onBackground)
+                                }
                             }
                         }
                     }
@@ -63,13 +90,34 @@ fun SocialScreen(
 
                 Spacer(modifier = Modifier.height(24.dp))
 
-                Text("Friends Listening", style = MaterialTheme.typography.titleLarge)
+                Text(
+                    "Friends Listening", 
+                    style = MaterialTheme.typography.titleLarge,
+                    color = MaterialTheme.colorScheme.onBackground
+                )
                 Spacer(modifier = Modifier.height(8.dp))
                 if (friendsListening.isEmpty()) {
-                    Text("No friends listening")
+                    Text(
+                        "No friends listening",
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
+                    )
                 } else {
                     friendsListening.forEach { friend ->
-                        Text("${friend.username} is listening to ${friend.song}")
+                        Card(
+                            modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+                        ) {
+                            Column(modifier = Modifier.padding(16.dp)) {
+                                Text(
+                                    friend.username,
+                                    color = MaterialTheme.colorScheme.onBackground
+                                )
+                                Text(
+                                    "is listening to ${friend.song}",
+                                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
+                                )
+                            }
+                        }
                     }
                 }
             }
@@ -81,7 +129,10 @@ fun SocialScreen(
     }
 
     if (showCreateRoom) {
-        ModalBottomSheet(onDismissRequest = { showCreateRoom = false }) {
+        ModalBottomSheet(
+            onDismissRequest = { showCreateRoom = false },
+            containerColor = MaterialTheme.colorScheme.surface
+        ) {
             var roomName by remember { mutableStateOf("") }
             var privacy by remember { mutableStateOf("everyone") }
             
@@ -89,20 +140,24 @@ fun SocialScreen(
                 OutlinedTextField(
                     value = roomName,
                     onValueChange = { roomName = it },
-                    label = { Text("Room Name") },
-                    modifier = Modifier.fillMaxWidth()
+                    label = { Text("Room Name", color = MaterialTheme.colorScheme.onBackground) },
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedTextColor = MaterialTheme.colorScheme.onBackground,
+                        unfocusedTextColor = MaterialTheme.colorScheme.onBackground
+                    )
                 )
                 Spacer(modifier = Modifier.height(16.dp))
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     FilterChip(
                         selected = privacy == "everyone",
                         onClick = { privacy = "everyone" },
-                        label = { Text("Everyone") }
+                        label = { Text("Everyone", color = MaterialTheme.colorScheme.onBackground) }
                     )
                     FilterChip(
                         selected = privacy == "friends",
                         onClick = { privacy = "friends" },
-                        label = { Text("Friends") }
+                        label = { Text("Friends", color = MaterialTheme.colorScheme.onBackground) }
                     )
                 }
                 Spacer(modifier = Modifier.height(16.dp))
@@ -111,9 +166,10 @@ fun SocialScreen(
                         viewModel.createRoom(roomName, "my_user_id", privacy)
                         showCreateRoom = false
                     },
-                    modifier = Modifier.fillMaxWidth()
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
                 ) {
-                    Text("Start Jam")
+                    Text("Start Jam", color = MaterialTheme.colorScheme.onBackground)
                 }
                 Spacer(modifier = Modifier.height(32.dp))
             }
