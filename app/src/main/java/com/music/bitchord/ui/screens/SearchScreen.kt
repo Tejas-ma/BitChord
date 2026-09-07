@@ -755,7 +755,7 @@ private fun SearchField(
                 contentAlignment = Alignment.Center,
             ) {
                 Icon(
-                    Icons.Rounded.Mic,
+                    Icons.Rounded.MicNone,
                     contentDescription = stringResource(R.string.voice_search),
                     tint = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.size(18.dp),
