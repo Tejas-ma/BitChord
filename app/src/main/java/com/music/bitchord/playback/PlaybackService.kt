@@ -460,13 +460,7 @@ class PlaybackService : MediaLibraryService() {
             // The player this fired on, which is by definition the one the
             // session is currently pointed at.
             val exoPlayer = player ?: return
-        if (mediaItem != null) {
 
-        val genre = mediaItem.mediaMetadata.genre?.toString()
-        val bpm = mediaItem.mediaMetadata.extras?.getInt("bpm") ?: 120
-        MoodDetector.onTrackPlayed(genre, bpm, this)
-
-        }
             // The only number that describes what a listener actually
             // waits through. Every other timing in this app measures one
             // leg of getting a track started — a resolve, a client walk, an
@@ -565,13 +559,7 @@ class PlaybackService : MediaLibraryService() {
             reason: Int,
         ) {
             val exoPlayer = player ?: return
-        if (mediaItem != null) {
 
-        val genre = mediaItem.mediaMetadata.genre?.toString()
-        val bpm = mediaItem.mediaMetadata.extras?.getInt("bpm") ?: 120
-        MoodDetector.onTrackPlayed(genre, bpm, this)
-
-        }
             if (reason == Player.DISCONTINUITY_REASON_SEEK) {
                 if (exoPlayer.isPlaying) pushDiscordPresence(exoPlayer)
                 updateLyricSubtitle()
@@ -582,13 +570,7 @@ class PlaybackService : MediaLibraryService() {
             // The player this fired on, which is by definition the one the
             // session is currently pointed at.
             val exoPlayer = player ?: return
-        if (mediaItem != null) {
 
-        val genre = mediaItem.mediaMetadata.genre?.toString()
-        val bpm = mediaItem.mediaMetadata.extras?.getInt("bpm") ?: 120
-        MoodDetector.onTrackPlayed(genre, bpm, this)
-
-        }
             // A quality swap replaces the playing item, which Media3
             // reports here as a playlist change — indistinguishable, from
             // this callback's point of view, from the queue moving on. It
@@ -638,13 +620,7 @@ class PlaybackService : MediaLibraryService() {
             // The player this fired on, which is by definition the one the
             // session is currently pointed at.
             val exoPlayer = player ?: return
-        if (mediaItem != null) {
 
-        val genre = mediaItem.mediaMetadata.genre?.toString()
-        val bpm = mediaItem.mediaMetadata.extras?.getInt("bpm") ?: 120
-        MoodDetector.onTrackPlayed(genre, bpm, this)
-
-        }
             recoverFrom(error, exoPlayer)
         }
 
@@ -654,13 +630,7 @@ class PlaybackService : MediaLibraryService() {
             // The player this fired on, which is by definition the one the
             // session is currently pointed at.
             val exoPlayer = player ?: return
-        if (mediaItem != null) {
 
-        val genre = mediaItem.mediaMetadata.genre?.toString()
-        val bpm = mediaItem.mediaMetadata.extras?.getInt("bpm") ?: 120
-        MoodDetector.onTrackPlayed(genre, bpm, this)
-
-        }
             if (state == Player.STATE_ENDED) {
                 SleepTimer.cancel()
                 // The queue ran dry, so no transition will ever close the last
@@ -718,13 +688,7 @@ class PlaybackService : MediaLibraryService() {
             // The player this fired on, which is by definition the one the
             // session is currently pointed at.
             val exoPlayer = player ?: return
-        if (mediaItem != null) {
 
-        val genre = mediaItem.mediaMetadata.genre?.toString()
-        val bpm = mediaItem.mediaMetadata.extras?.getInt("bpm") ?: 120
-        MoodDetector.onTrackPlayed(genre, bpm, this)
-
-        }
             if (exoPlayer.isPlaying) prefetchAround(exoPlayer)
             if (reason == Player.TIMELINE_CHANGE_REASON_PLAYLIST_CHANGED) {
                 saveQueueSnapshot(exoPlayer)
@@ -1303,13 +1267,7 @@ class PlaybackService : MediaLibraryService() {
      */
     private fun loadAutoplayForCurrentTrack() {
         val exoPlayer = player ?: return
-        if (mediaItem != null) {
 
-        val genre = mediaItem.mediaMetadata.genre?.toString()
-        val bpm = mediaItem.mediaMetadata.extras?.getInt("bpm") ?: 120
-        MoodDetector.onTrackPlayed(genre, bpm, this)
-
-        }
         if (!AppSettings.autoplay.value || exoPlayer.repeatMode == Player.REPEAT_MODE_ALL) {
             return
         }
@@ -1355,13 +1313,7 @@ class PlaybackService : MediaLibraryService() {
      */
     private fun dropAutoplayTracksFromQueue(): List<MediaItem> {
         val exoPlayer = player ?: return
-        if (mediaItem != null) {
-
-        val genre = mediaItem.mediaMetadata.genre?.toString()
-        val bpm = mediaItem.mediaMetadata.extras?.getInt("bpm") ?: 120
-        MoodDetector.onTrackPlayed(genre, bpm, this)
-
-        } emptyList()
+ emptyList()
         val dropped = mutableListOf<MediaItem>()
         for (index in exoPlayer.mediaItemCount - 1 downTo exoPlayer.currentMediaItemIndex + 1) {
             val item = exoPlayer.getMediaItemAt(index)
@@ -1375,13 +1327,7 @@ class PlaybackService : MediaLibraryService() {
     /** Clears the queue's AutoPlay tail for the duration of repeat-all, keeping it to put back. */
     private fun stashAutoplayTracks() {
         val exoPlayer = player ?: return
-        if (mediaItem != null) {
 
-        val genre = mediaItem.mediaMetadata.genre?.toString()
-        val bpm = mediaItem.mediaMetadata.extras?.getInt("bpm") ?: 120
-        MoodDetector.onTrackPlayed(genre, bpm, this)
-
-        }
         // Only ever taken once per stretch of repeat-all: cycling
         // OFF -> ALL -> ONE -> OFF sets the mode three times, and the second
         // and third of those must not overwrite a full stash with the empty
@@ -1403,13 +1349,7 @@ class PlaybackService : MediaLibraryService() {
      */
     private fun restoreAutoplayTracks() {
         val exoPlayer = player ?: return
-        if (mediaItem != null) {
 
-        val genre = mediaItem.mediaMetadata.genre?.toString()
-        val bpm = mediaItem.mediaMetadata.extras?.getInt("bpm") ?: 120
-        MoodDetector.onTrackPlayed(genre, bpm, this)
-
-        }
         val stashed = repeatAllStash
         val seed = repeatAllStashSeed
         repeatAllStash = emptyList()
@@ -1603,13 +1543,7 @@ class PlaybackService : MediaLibraryService() {
         alreadyAudible: Boolean = false,
     ) {
         val exoPlayer = player ?: return
-        if (mediaItem != null) {
 
-        val genre = mediaItem.mediaMetadata.genre?.toString()
-        val bpm = mediaItem.mediaMetadata.extras?.getInt("bpm") ?: 120
-        MoodDetector.onTrackPlayed(genre, bpm, this)
-
-        }
 
         if (mediaItem != null) {
             val genre = mediaItem.mediaMetadata.genre?.toString()
@@ -2228,13 +2162,7 @@ class PlaybackService : MediaLibraryService() {
      */
     private fun skipPastUnplayable(mediaId: String, reason: String) {
         val exoPlayer = player ?: return
-        if (mediaItem != null) {
 
-        val genre = mediaItem.mediaMetadata.genre?.toString()
-        val bpm = mediaItem.mediaMetadata.extras?.getInt("bpm") ?: 120
-        MoodDetector.onTrackPlayed(genre, bpm, this)
-
-        }
         if (exoPlayer.currentMediaItem?.mediaId != mediaId) return
         if (!exoPlayer.hasNextMediaItem()) {
             TrackLog.w("BitChord", "$reason — and nothing after it in the queue", about = mediaId)
@@ -3569,13 +3497,7 @@ class PlaybackService : MediaLibraryService() {
      */
     private fun publishWidgetState(playing: Boolean? = null) {
         val exoPlayer = player ?: return
-        if (mediaItem != null) {
 
-        val genre = mediaItem.mediaMetadata.genre?.toString()
-        val bpm = mediaItem.mediaMetadata.extras?.getInt("bpm") ?: 120
-        MoodDetector.onTrackPlayed(genre, bpm, this)
-
-        }
         val song = exoPlayer.currentMediaItem?.toSong() ?: return
         MediaWidgetSnapshot.save(
             this,
@@ -4432,13 +4354,7 @@ class PlaybackService : MediaLibraryService() {
 
     private fun updateLyricSubtitle() {
         val exoPlayer = player ?: return
-        if (mediaItem != null) {
 
-        val genre = mediaItem.mediaMetadata.genre?.toString()
-        val bpm = mediaItem.mediaMetadata.extras?.getInt("bpm") ?: 120
-        MoodDetector.onTrackPlayed(genre, bpm, this)
-
-        }
         val currentSong = exoPlayer.currentMediaItem?.toSong() ?: return
         val lines = serviceLyrics
         val pos = exoPlayer.currentPosition
