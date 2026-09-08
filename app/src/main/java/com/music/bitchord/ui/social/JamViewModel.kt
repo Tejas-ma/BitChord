@@ -100,4 +100,10 @@ class JamViewModel : ViewModel() {
     }
 
     fun clearError() { _error.value = null }
+
+
+
+    fun observeQueue(roomId: String) = repository.observeQueue(roomId)
+    fun observePlayback(roomId: String) = repository.observePlayback(roomId)
+
 }
