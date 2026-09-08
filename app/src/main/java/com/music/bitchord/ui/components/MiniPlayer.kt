@@ -314,7 +314,7 @@ fun MiniPlayer(
             onDismissRequest = { inJamRoom = false },
             properties = DialogProperties(usePlatformDefaultWidth = false)
         ) {
-            JamRoomScreen(roomId = roomName, viewModel = androidx.lifecycle.viewmodel.compose.viewModel(), roomName = roomName, onBack = { inJamRoom = false })
+            JamRoomScreen(roomId = "jam-" + roomName, viewModel = androidx.lifecycle.viewmodel.compose.viewModel(), roomName = roomName, onBack = { inJamRoom = false })
         }
     }
 }
