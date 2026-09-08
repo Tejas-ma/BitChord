@@ -1,6 +1,12 @@
 package com.music.bitchord.ui.social
 
 import android.widget.Toast
+
+import android.content.Intent
+import android.content.ClipboardManager
+import android.content.ClipData
+import androidx.compose.material.icons.rounded.Share
+import androidx.compose.material.icons.rounded.PersonAdd
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -17,11 +23,14 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.foundation.clickable
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.music.bitchord.data.jam.JamUserManager
 import com.music.bitchord.data.jam.Room
+
+import com.music.bitchord.data.jam.JamInvite
 import com.music.bitchord.data.jam.PlaybackState
 import com.music.bitchord.data.model.Song
 import coil3.compose.AsyncImage
@@ -48,17 +57,21 @@ fun JamRoomScreen(
 
     val queueJsonStringsState = viewModel.observeQueue(roomId).collectAsState(initial = emptyList())
     val queueJsonStrings = queueJsonStringsState.value
-    val queue = queueJsonStrings.mapNotNull {
-        try {
-            val json = JSONObject(it)
-            Song(
-                videoId = json.optString("videoId"),
-                title = json.optString("title"),
-                artist = json.optString("artist"),
-                thumbnailUrl = json.optString("thumbnailUrl", null)
-            )
-        } catch (e: Exception) {
-            null
+    val queue by remember(queueJsonStrings) {
+        derivedStateOf {
+            queueJsonStrings.mapNotNull {
+                try {
+                    val json = JSONObject(it)
+                    Song(
+                        videoId = json.optString("videoId"),
+                        title = json.optString("title"),
+                        artist = json.optString("artist"),
+                        thumbnailUrl = json.optString("thumbnailUrl", null)
+                    )
+                } catch (e: Exception) {
+                    null
+                }
+            }
         }
     }
 
@@ -68,6 +81,7 @@ fun JamRoomScreen(
     var showAddSheet by remember { mutableStateOf(false) }
 
     var showSettingsSheet by remember { mutableStateOf(false) }
+    var showInviteSheet by remember { mutableStateOf(false) }
 
     Scaffold(
         topBar = {
@@ -93,6 +107,9 @@ fun JamRoomScreen(
                                     .size(32.dp)
                                     .clip(CircleShape)
                             )
+                        }
+                        IconButton(onClick = { showInviteSheet = true }) {
+                            Icon(Icons.Rounded.PersonAdd, contentDescription = "Invite")
                         }
                         if (isHost) {
                             IconButton(onClick = { showSettingsSheet = true }) {
@@ -215,6 +232,60 @@ fun JamRoomScreen(
             }
         }
 
+        if (showInviteSheet) {
+            ModalBottomSheet(onDismissRequest = { showInviteSheet = false }) {
+                Column(modifier = Modifier.fillMaxWidth().padding(16.dp)) {
+                    Text("Invite Friends", fontWeight = FontWeight.Bold, fontSize = 20.sp)
+                    Spacer(Modifier.height(16.dp))
+
+                    val link = "https://bitchord.app/jam/${room.id}"
+
+                    ListItem(
+                        headlineContent = { Text("Share Link") },
+                        leadingContent = { Icon(Icons.Rounded.Share, contentDescription = null) },
+                        modifier = Modifier.clickable {
+                            val intent = Intent(Intent.ACTION_SEND).apply {
+                                type = "text/plain"
+                                putExtra(Intent.EXTRA_TEXT, "Join my Jam on BitChord: $link")
+                            }
+                            context.startActivity(Intent.createChooser(intent, "Share Jam Link"))
+                            showInviteSheet = false
+                        }
+                    )
+
+                    ListItem(
+                        headlineContent = { Text("Share via WhatsApp") },
+                        leadingContent = { Text("💬", fontSize = 24.sp) }, // Placeholder for WhatsApp icon
+                        modifier = Modifier.clickable {
+                            val intent = Intent(Intent.ACTION_SEND).apply {
+                                type = "text/plain"
+                                setPackage("com.whatsapp")
+                                putExtra(Intent.EXTRA_TEXT, "Join my Jam on BitChord: $link")
+                            }
+                            try {
+                                context.startActivity(intent)
+                            } catch (e: Exception) {
+                                Toast.makeText(context, "WhatsApp not installed", Toast.LENGTH_SHORT).show()
+                            }
+                            showInviteSheet = false
+                        }
+                    )
+
+                    ListItem(
+                        headlineContent = { Text("Copy Link") },
+                        leadingContent = { Text("🔗", fontSize = 24.sp) },
+                        modifier = Modifier.clickable {
+                            val clipboard = context.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as ClipboardManager
+                            clipboard.setPrimaryClip(ClipData.newPlainText("Jam Link", link))
+                            Toast.makeText(context, "Link copied", Toast.LENGTH_SHORT).show()
+                            showInviteSheet = false
+                        }
+                    )
+                    Spacer(Modifier.height(32.dp))
+                }
+            }
+        }
+
         if (showAddSheet) {
             ModalBottomSheet(
                 onDismissRequest = { showAddSheet = false }
@@ -233,6 +304,28 @@ fun JamRoomScreen(
             }
         }
 
+
+        val joinRequestsState = viewModel.observeJoinRequests(roomId).collectAsState(initial = emptyList())
+        val joinRequests = joinRequestsState.value
+
+        if (isHost && joinRequests.isNotEmpty()) {
+            AlertDialog(
+                onDismissRequest = { },
+                title = { Text("Join Requests") },
+                text = {
+                    Column {
+                        joinRequests.forEach { req ->
+                            Text("${req.fromUserId} wants to join your Jam")
+                            Row {
+                                TextButton(onClick = { viewModel.handleJoinRequest(req.id, roomId, req.fromUserId, false) }) { Text("Decline") }
+                                TextButton(onClick = { viewModel.handleJoinRequest(req.id, roomId, req.fromUserId, true) }) { Text("Accept") }
+                            }
+                        }
+                    }
+                },
+                confirmButton = { }
+            )
+        }
 
         if (showSettingsSheet && isHost) {
             var showEndConfirm by remember { mutableStateOf(false) }

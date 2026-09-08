@@ -5,6 +5,9 @@ import androidx.lifecycle.viewModelScope
 import com.music.bitchord.data.jam.FriendActivity
 import com.music.bitchord.data.jam.JamRepository
 import com.music.bitchord.data.jam.Room
+
+import com.music.bitchord.data.jam.JamInvite
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -123,6 +126,34 @@ class JamViewModel : ViewModel() {
             try {
                 repository.endRoom(roomId)
                 loadRooms()
+            } catch (e: Exception) {
+                _error.value = e.message
+            }
+        }
+    }
+
+    fun requestToJoin(roomId: String, userId: String) {
+        viewModelScope.launch {
+            try {
+                repository.sendInvite(roomId, userId, "") // Using sendInvite for requests where toUserId is empty/host
+            } catch (e: Exception) {
+                _error.value = e.message
+            }
+        }
+    }
+
+    fun observeJoinRequests(roomId: String): Flow<List<JamInvite>> {
+        return repository.observeJoinRequests(roomId)
+    }
+
+    fun handleJoinRequest(requestId: String, roomId: String, userId: String, accept: Boolean) {
+        viewModelScope.launch {
+            try {
+                repository.updateInviteStatus(requestId, if (accept) "accepted" else "declined")
+                if (accept) {
+                    repository.joinRoom(roomId, userId)
+                    loadRooms()
+                }
             } catch (e: Exception) {
                 _error.value = e.message
             }
