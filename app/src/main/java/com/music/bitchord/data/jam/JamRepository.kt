@@ -86,4 +86,15 @@ class JamRepository {
             set("mood", mood)
         }) { FilterOperation("user_id", FilterOperator.EQ, userId) }
     }
+
+    suspend fun updateRoomPermissions(roomId: String, canGuestsAdd: Boolean, canGuestsSkip: Boolean) {
+        supabase.postgrest["rooms"].update({
+            set("can_guests_add", canGuestsAdd)
+            set("can_guests_skip", canGuestsSkip)
+        }) { FilterOperation("id", FilterOperator.EQ, roomId) }
+    }
+
+    suspend fun endRoom(roomId: String) {
+        supabase.postgrest["rooms"].delete { FilterOperation("id", FilterOperator.EQ, roomId) }
+    }
 }

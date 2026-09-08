@@ -106,4 +106,26 @@ class JamViewModel : ViewModel() {
     fun observeQueue(roomId: String) = repository.observeQueue(roomId)
     fun observePlayback(roomId: String) = repository.observePlayback(roomId)
 
+
+    fun updateRoomPermissions(roomId: String, canGuestsAdd: Boolean, canGuestsSkip: Boolean) {
+        viewModelScope.launch {
+            try {
+                repository.updateRoomPermissions(roomId, canGuestsAdd, canGuestsSkip)
+                loadRooms()
+            } catch (e: Exception) {
+                _error.value = e.message
+            }
+        }
+    }
+
+    fun endRoom(roomId: String) {
+        viewModelScope.launch {
+            try {
+                repository.endRoom(roomId)
+                loadRooms()
+            } catch (e: Exception) {
+                _error.value = e.message
+            }
+        }
+    }
 }
