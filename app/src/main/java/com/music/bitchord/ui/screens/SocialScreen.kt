@@ -2,6 +2,19 @@ package com.music.bitchord.ui.screens
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
+
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.ui.draw.scale
+
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -156,14 +169,35 @@ fun SocialScreen(
                     color = MaterialTheme.colorScheme.onBackground
                 )
                 Spacer(modifier = Modifier.height(8.dp))
-                if (rooms.isEmpty()) {
+                AnimatedVisibility(
+                    visible = rooms.isEmpty(),
+                    enter = fadeIn() + slideInVertically(),
+                    exit = fadeOut() + slideOutVertically()
+                ) {
                     Text(
                         "No active rooms",
                         color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
                     )
-                } else {
-                    rooms.forEach { room ->
-                        Card(
+                }
+
+                AnimatedVisibility(
+                    visible = rooms.isNotEmpty(),
+                    enter = fadeIn() + slideInVertically(),
+                    exit = fadeOut() + slideOutVertically()
+                ) {
+                    Column {
+                        rooms.forEach { room ->
+                            // Pulse animation for Join button
+                            val infiniteTransition = rememberInfiniteTransition()
+                            val scale by infiniteTransition.animateFloat(
+                                initialValue = 1f,
+                                targetValue = 1.05f,
+                                animationSpec = infiniteRepeatable(
+                                    animation = tween(1000),
+                                    repeatMode = RepeatMode.Reverse
+                                ), label = ""
+                            )
+                            Card(
                             modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
                             colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
                         ) {
@@ -192,13 +226,15 @@ fun SocialScreen(
                                             viewModel.joinRoom(room.id, currentUserId)
                                             onNavigateToJamRoom(room.id)
                                         },
-                                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
+                                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
+                                        modifier = Modifier.scale(scale)
                                     ) {
                                         Text("Join", color = MaterialTheme.colorScheme.onBackground)
                                     }
                                 }
                             }
                         }
+                    }
                     }
                 }
 
@@ -210,13 +246,24 @@ fun SocialScreen(
                     color = MaterialTheme.colorScheme.onBackground
                 )
                 Spacer(modifier = Modifier.height(8.dp))
-                if (friendsListening.isEmpty()) {
+                AnimatedVisibility(
+                    visible = friendsListening.isEmpty(),
+                    enter = fadeIn() + slideInVertically(),
+                    exit = fadeOut() + slideOutVertically()
+                ) {
                     Text(
                         "No friends listening",
                         color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
                     )
-                } else {
-                    friendsListening.forEach { friend ->
+                }
+
+                AnimatedVisibility(
+                    visible = friendsListening.isNotEmpty(),
+                    enter = fadeIn() + slideInVertically(),
+                    exit = fadeOut() + slideOutVertically()
+                ) {
+                    Column {
+                        friendsListening.forEach { friend ->
                         Card(
                             modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
                             colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
@@ -240,6 +287,7 @@ fun SocialScreen(
                                 )
                             }
                         }
+                    }
                     }
                 }
             }

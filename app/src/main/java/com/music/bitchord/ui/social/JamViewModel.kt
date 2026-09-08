@@ -36,14 +36,22 @@ class JamViewModel : ViewModel() {
 
     private fun loadRooms() {
         viewModelScope.launch {
-            repository.getRooms().collect { _rooms.value = it }
+            try {
+                repository.getRooms().collect { _rooms.value = it }
+            } catch (e: Exception) {
+                _error.value = e.message
+            }
         }
     }
 
     private fun loadFriendsListening() {
         viewModelScope.launch {
-            repository.getFriendsListening().collect {
-                _friendsListening.value = it
+            try {
+                repository.getFriendsListening().collect {
+                    _friendsListening.value = it
+                }
+            } catch (e: Exception) {
+                _error.value = e.message
             }
         }
     }
