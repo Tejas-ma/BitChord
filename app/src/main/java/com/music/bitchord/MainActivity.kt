@@ -51,6 +51,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.LocalOverscrollFactory
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.People
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.History
@@ -125,6 +126,7 @@ import com.music.bitchord.ui.screens.DiscordDialogHost
 import com.music.bitchord.ui.screens.DiscordScreen
 import com.music.bitchord.ui.screens.HistoryScreen
 import com.music.bitchord.ui.screens.SettingsScreen
+import com.music.bitchord.ui.screens.SocialScreen
 import com.music.bitchord.ui.screens.SourceEditorAlert
 import com.music.bitchord.ui.screens.SourcesScreen
 import com.music.bitchord.ui.screens.SpotifyCanvasAuthScreen
@@ -636,7 +638,7 @@ private fun BitChordApp(
     val searchListState = rememberLazyListState()
     val currentListState = when (selectedTab) {
         TAB_HOME -> homeListState
-        TAB_EXPLORE -> if (selectedMoodGenre == null) exploreListState else moodGenreListState
+        TAB_SOCIAL -> exploreListState
         TAB_LIBRARY -> libraryListState
         else -> searchListState
     }
@@ -650,7 +652,7 @@ private fun BitChordApp(
     val currentFeed = when {
         showSettings || showAccountScrobbling || detail != null -> null
         selectedTab == TAB_HOME -> MainViewModel.Feed.HOME
-        selectedTab == TAB_EXPLORE -> MainViewModel.Feed.EXPLORE
+        selectedTab == TAB_SOCIAL -> null
         selectedTab == TAB_LIBRARY -> MainViewModel.Feed.LIBRARY
         else -> null
     }
@@ -665,7 +667,7 @@ private fun BitChordApp(
 
     val currentPull = when (currentFeed) {
         MainViewModel.Feed.HOME -> homePull
-        MainViewModel.Feed.EXPLORE -> explorePull
+        MainViewModel.Feed.EXPLORE -> null
         MainViewModel.Feed.LIBRARY -> libraryPull
         null -> null
     }
@@ -710,13 +712,13 @@ private fun BitChordApp(
     // and every glass surface on them recompose once per frame for the length of
     // a fold. Keyed on the labels so a locale change still rebuilds it.
     val playLabel = stringResource(R.string.play)
-    val exploreLabel = stringResource(R.string.explore)
+    val socialLabel = stringResource(R.string.social)
     val libraryLabel = stringResource(R.string.library)
     val searchLabel = stringResource(R.string.search)
-    val tabs = remember(playLabel, exploreLabel, libraryLabel, searchLabel) {
+    val tabs = remember(playLabel, socialLabel, libraryLabel, searchLabel) {
         listOf(
             BottomTab(playLabel, BitChordIcons.Play),
-            BottomTab(exploreLabel, BitChordIcons.Explore),
+            BottomTab(socialLabel, Icons.Rounded.People),
             BottomTab(libraryLabel, BitChordIcons.Library),
             BottomTab(searchLabel, BitChordIcons.Search),
         )
@@ -2029,7 +2031,7 @@ private fun BitChordApp(
                             loadingMore = homeLoadingMore,
                             recentlyPlayedLoading = homeRecentlyPlayedLoading,
                         )
-                        TAB_EXPLORE -> selectedMoodGenre?.let { category ->
+                        TAB_SOCIAL -> selectedMoodGenre?.let { category ->
                             MoodGenrePlaylistsScreen(
                                 title = category.title,
                                 state = moodGenreShelves,
@@ -3273,7 +3275,7 @@ private const val SEEK_END_GUARD_MS = 1_000L
 private val DETAIL_TITLE_DROP = 320.dp
 
 private const val TAB_HOME = 0
-private const val TAB_EXPLORE = 1
+private const val TAB_SOCIAL = 1
 private const val TAB_LIBRARY = 2
 private const val TAB_SEARCH = 3
 
