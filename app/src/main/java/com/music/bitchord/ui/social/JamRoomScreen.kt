@@ -11,6 +11,7 @@ import androidx.compose.material.icons.rounded.Pause
 import androidx.compose.material.icons.rounded.SkipNext
 import androidx.compose.material.icons.rounded.SkipPrevious
 import androidx.compose.material.icons.rounded.Clear
+import androidx.compose.material.icons.rounded.Settings
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -66,6 +67,8 @@ fun JamRoomScreen(
     
     var showAddSheet by remember { mutableStateOf(false) }
 
+    var showSettingsSheet by remember { mutableStateOf(false) }
+
     Scaffold(
         topBar = {
             TopAppBar(
@@ -90,6 +93,11 @@ fun JamRoomScreen(
                                     .size(32.dp)
                                     .clip(CircleShape)
                             )
+                        }
+                        if (isHost) {
+                            IconButton(onClick = { showSettingsSheet = true }) {
+                                Icon(Icons.Rounded.Settings, contentDescription = "Settings")
+                            }
                         }
                     }
                 }
@@ -222,6 +230,106 @@ fun JamRoomScreen(
                     Text("Search functionality coming soon...")
                     Spacer(Modifier.height(32.dp))
                 }
+            }
+        }
+
+
+        if (showSettingsSheet && isHost) {
+            var showEndConfirm by remember { mutableStateOf(false) }
+            ModalBottomSheet(
+                onDismissRequest = { showSettingsSheet = false }
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(16.dp)
+                ) {
+                    Text("Jam Settings", fontWeight = FontWeight.Bold, fontSize = 20.sp)
+                    Spacer(Modifier.height(16.dp))
+
+                    Text("Who can join", fontWeight = FontWeight.Bold)
+                    var privacyOption by remember { mutableStateOf(room.privacy) }
+                    val privacyOptions = listOf("everyone", "friends", "invite_only")
+                    Row(horizontalArrangement = Arrangement.SpaceEvenly, modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
+                        privacyOptions.forEach { option ->
+                            FilterChip(
+                                selected = privacyOption == option,
+                                onClick = {
+                                    privacyOption = option
+                                    viewModel.updatePrivacy(room.id, option)
+                                },
+                                label = { Text(option.replace("_", " ").replaceFirstChar { it.uppercase() }) }
+                            )
+                        }
+                    }
+                    Spacer(Modifier.height(16.dp))
+
+                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text("Who can add tracks", fontWeight = FontWeight.Bold)
+                            Text(if (room.canGuestsAdd) "Everyone" else "Host only", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                        Switch(
+                            checked = room.canGuestsAdd,
+                            onCheckedChange = { 
+                                viewModel.updateRoomPermissions(room.id, it, room.canGuestsSkip) 
+                            }
+                        )
+                    }
+                    Spacer(Modifier.height(16.dp))
+
+                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text("Who can skip", fontWeight = FontWeight.Bold)
+                            Text(if (room.canGuestsSkip) "Everyone" else "Host only", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                        Switch(
+                            checked = room.canGuestsSkip,
+                            onCheckedChange = { 
+                                viewModel.updateRoomPermissions(room.id, room.canGuestsAdd, it) 
+                            }
+                        )
+                    }
+                    Spacer(Modifier.height(32.dp))
+
+                    Button(
+                        onClick = { showEndConfirm = true },
+                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text("End Jam")
+                    }
+                    Spacer(Modifier.height(32.dp))
+                }
+            }
+
+            if (showEndConfirm) {
+                AlertDialog(
+                    onDismissRequest = { showEndConfirm = false },
+                    title = { Text("End Jam?") },
+                    text = { Text("Are you sure you want to end this jam session for everyone?") },
+                    confirmButton = { TextButton(onClick = { viewModel.endRoom(room.id); onBack() }) { Text("End Jam") } },
+                    dismissButton = { TextButton(onClick = { showEndConfirm = false }) { Text("Cancel") } }
+                )
+            }
+        }
+
+        if (isHost) {
+            var showAutoEndDialog by remember { mutableStateOf(false) }
+            LaunchedEffect(queue.isEmpty(), playbackState?.isPlaying) {
+                if (queue.isEmpty() && playbackState?.isPlaying != true) {
+                    kotlinx.coroutines.delay(10 * 60 * 1000L) // 10 minutes
+                    showAutoEndDialog = true
+                }
+            }
+            if (showAutoEndDialog) {
+                AlertDialog(
+                    onDismissRequest = { showAutoEndDialog = false },
+                    title = { Text("Jam Inactive") },
+                    text = { Text("Your Jam seems inactive — End it or keep it going?") },
+                    confirmButton = { TextButton(onClick = { viewModel.endRoom(room.id); onBack() }) { Text("End") } },
+                    dismissButton = { TextButton(onClick = { showAutoEndDialog = false }) { Text("Continue") } }
+                )
             }
         }
     }
