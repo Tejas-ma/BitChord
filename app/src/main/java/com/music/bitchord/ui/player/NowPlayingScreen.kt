@@ -8,7 +8,6 @@ import android.content.Intent
 import androidx.core.content.FileProvider
 import coil3.imageLoader
 import coil3.request.SuccessResult
-import coil3.request.ImageRequest
 
 import com.music.bitchord.R
 import com.music.bitchord.ui.components.ExplicitSongTitle
@@ -104,6 +103,7 @@ import androidx.compose.material.icons.rounded.History
 import androidx.compose.material.icons.rounded.MoreHoriz
 import androidx.compose.material.icons.rounded.Pause
 import androidx.compose.material.icons.rounded.PlayArrow
+import androidx.compose.material.icons.rounded.Share
 import androidx.compose.material.icons.rounded.Videocam
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
@@ -190,6 +190,7 @@ import androidx.compose.ui.zIndex
 import androidx.media3.common.Player
 import coil3.compose.AsyncImage
 import coil3.compose.AsyncImagePainter
+import coil3.toBitmap
 import coil3.request.ImageRequest
 import com.music.bitchord.ui.rememberIsForeground
 import com.music.bitchord.ui.components.thumbnailBorder
@@ -2043,7 +2044,7 @@ fun NowPlayingScreen(
                                             .build()
                                         val result = context.imageLoader.execute(request)
                                         val bitmap = if (result is SuccessResult) {
-                                            result.image.asDrawable(context.resources).toBitmap()
+                                            result.image.toBitmap()
                                         } else null
 
                                         ShareCardGenerator.generateShareCard(
