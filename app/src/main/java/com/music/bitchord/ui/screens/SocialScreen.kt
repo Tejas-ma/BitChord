@@ -10,6 +10,12 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.music.bitchord.ui.social.JamViewModel
 
+import com.music.bitchord.data.jam.JamUserManager
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.SnackbarDuration
+import androidx.compose.material3.SnackbarResult
+
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.music.bitchord.ui.social.MoodSummaryScreen
@@ -21,13 +27,43 @@ fun SocialScreen(
     onNavigateToJamRoom: (String) -> Unit
 ) {
     val viewModel: JamViewModel = viewModel()
+    val context = LocalContext.current
+    val currentUserId = JamUserManager.getCurrentUserId(context)
+
     
+
     val rooms by viewModel.rooms.collectAsState()
     val friendsListening by viewModel.friendsListening.collectAsState()
+
+    val snackbarHostState = remember { SnackbarHostState() }
+    // Detect if a friend started a new Jam
+    LaunchedEffect(rooms) {
+        val newRooms = rooms.filter { room -> 
+            val isHostFriend = friendsListening.any { it.userId == room.hostId }
+            val isRecent = true // simplified check for new room
+            isHostFriend && isRecent
+        }
+        newRooms.forEach { room ->
+            val friendName = friendsListening.find { it.userId == room.hostId }?.username ?: "A friend"
+            val result = snackbarHostState.showSnackbar(
+                message = "$friendName started a Jam 🎵 — Tap to join",
+                actionLabel = "Join",
+                duration = SnackbarDuration.Short
+            )
+            if (result == SnackbarResult.ActionPerformed) {
+                if (room.privacy == "invite_only") {
+                    viewModel.requestToJoin(room.id, currentUserId)
+                } else {
+                    viewModel.joinRoom(room.id, currentUserId)
+                    onNavigateToJamRoom(room.id)
+                }
+            }
+        }
+    }
+
     val isLoading by viewModel.isLoading.collectAsState()
     val error by viewModel.error.collectAsState()
 
-    val snackbarHostState = remember { SnackbarHostState() }
     val coroutineScope = rememberCoroutineScope()
     var showCreateRoom by remember { mutableStateOf(false) }
 
@@ -107,14 +143,26 @@ fun SocialScreen(
                                     modifier = Modifier.weight(1f),
                                     color = MaterialTheme.colorScheme.onBackground
                                 )
-                                Button(
-                                    onClick = { 
-                                        viewModel.joinRoom(room.id, "my_user_id") // Should use real user id
-                                        onNavigateToJamRoom(room.id) 
-                                    },
-                                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
-                                ) {
-                                    Text("Join", color = MaterialTheme.colorScheme.onBackground)
+                                val isMember = room.members.contains(currentUserId)
+                                if (room.privacy == "invite_only" && !isMember && room.hostId != currentUserId) {
+                                    Button(
+                                        onClick = { 
+                                            viewModel.requestToJoin(room.id, currentUserId)
+                                        },
+                                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.secondary)
+                                    ) {
+                                        Text("Request to Join", color = MaterialTheme.colorScheme.onSecondary)
+                                    }
+                                } else {
+                                    Button(
+                                        onClick = { 
+                                            viewModel.joinRoom(room.id, currentUserId)
+                                            onNavigateToJamRoom(room.id) 
+                                        },
+                                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
+                                    ) {
+                                        Text("Join", color = MaterialTheme.colorScheme.onBackground)
+                                    }
                                 }
                             }
                         }
