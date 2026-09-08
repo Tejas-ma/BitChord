@@ -57,18 +57,22 @@ fun JamRoomScreen(
 
     val queueJsonStringsState = viewModel.observeQueue(roomId).collectAsState(initial = emptyList())
     val queueJsonStrings = queueJsonStringsState.value
-    val queue = queueJsonStrings.mapNotNull {
-        try {
-            val json = JSONObject(it)
-            Song(
-                videoId = json.optString("videoId"),
-                title = json.optString("title"),
-                artist = json.optString("artist"),
-                thumbnailUrl = json.optString("thumbnailUrl", null)
-            )
-        } catch (e: Exception) {
-            null
-        }
+    val queue by remember(queueJsonStrings) { 
+        derivedStateOf { 
+            queueJsonStrings.mapNotNull {
+                try {
+                    val json = JSONObject(it)
+                    Song(
+                        videoId = json.optString("videoId"),
+                        title = json.optString("title"),
+                        artist = json.optString("artist"),
+                        thumbnailUrl = json.optString("thumbnailUrl", null)
+                    )
+                } catch (e: Exception) {
+                    null
+                }
+            } 
+        } 
     }
     
     val playbackStateState = viewModel.observePlayback(roomId).collectAsState(initial = null)
