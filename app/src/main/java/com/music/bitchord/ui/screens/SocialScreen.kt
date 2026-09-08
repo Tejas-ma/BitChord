@@ -91,8 +91,39 @@ fun SocialScreen(
             }
         }
     ) { padding ->
+                
+        val isGuest = JamUserManager.isGuest(context)
+
+        if (isGuest) {
+            Box(modifier = Modifier.fillMaxSize().padding(padding).background(MaterialTheme.colorScheme.background), contentAlignment = Alignment.Center) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Text("Sign in to use Social features", style = MaterialTheme.typography.titleLarge)
+                    Spacer(modifier = Modifier.height(16.dp))
+                    Button(onClick = { /* Navigate to existing login */ }) {
+                        Text("Sign In")
+                    }
+                    Spacer(modifier = Modifier.height(32.dp))
+                    Text("Guest View (Read-Only)", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
+        }
+        
         Box(modifier = Modifier.fillMaxSize().padding(padding).background(MaterialTheme.colorScheme.background)) {
+
             Column(modifier = Modifier.fillMaxSize().padding(16.dp)) {
+                if (error != null && error!!.contains("network", ignoreCase = true)) {
+                    Card(
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer),
+                        modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp)
+                    ) {
+                        Row(modifier = Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Text("No connection", color = MaterialTheme.colorScheme.onErrorContainer, modifier = Modifier.weight(1f))
+                            TextButton(onClick = { viewModel.clearError(); /* retry load */ }) {
+                                Text("Retry", color = MaterialTheme.colorScheme.onErrorContainer)
+                            }
+                        }
+                    }
+                }
                 
             Row(
                 modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp),
