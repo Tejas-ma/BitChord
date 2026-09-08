@@ -37,13 +37,15 @@ fun SocialScreen(
 
     val snackbarHostState = remember { SnackbarHostState() }
     // Detect if a friend started a new Jam
+    var notifiedRooms by remember { mutableStateOf(setOf<String>()) }
     LaunchedEffect(rooms) {
         val newRooms = rooms.filter { room -> 
             val isHostFriend = friendsListening.any { it.userId == room.hostId }
-            val isRecent = true // simplified check for new room
-            isHostFriend && isRecent
+            val isNotNotified = !notifiedRooms.contains(room.id)
+            isHostFriend && isNotNotified
         }
         newRooms.forEach { room ->
+            notifiedRooms = notifiedRooms + room.id
             val friendName = friendsListening.find { it.userId == room.hostId }?.username ?: "A friend"
             val result = snackbarHostState.showSnackbar(
                 message = "$friendName started a Jam 🎵 — Tap to join",
