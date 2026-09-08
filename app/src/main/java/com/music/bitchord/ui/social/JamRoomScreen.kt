@@ -135,19 +135,6 @@ fun JamRoomScreen(
                     }
                 }
             )
-        },
-        floatingActionButton = {
-            ExtendedFloatingActionButton(
-                onClick = {
-                    if (isGuest) {
-                        Toast.makeText(context, "Login to add songs", Toast.LENGTH_SHORT).show()
-                    } else {
-                        showAddSheet = true
-                    }
-                },
-                icon = { Text("🎵") },
-                text = { Text("Add to Queue") }
-            )
         }
     ) { padding ->
         Column(
