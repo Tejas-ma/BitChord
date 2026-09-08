@@ -1041,6 +1041,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     init {
+        loadCharts()
         startSearchPipeline()
         startSuggestPipeline()
         loadHome()

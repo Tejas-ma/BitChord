@@ -169,33 +169,51 @@ private fun BrowseContent(
         
         if (charts is UiState.Success) {
             Spacer(Modifier.height(24.dp))
-            Text(
-                text = "Charts",
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.Bold,
-                color = MaterialTheme.colorScheme.onSurface,
-                modifier = Modifier.padding(bottom = 8.dp)
-            )
-            LazyRow(
-                horizontalArrangement = Arrangement.spacedBy(16.dp),
-                contentPadding = PaddingValues(end = PAGE_GUTTER)
-            ) {
-                items(charts.data) { shelf ->
-                    // Just simple cards for charts
-                    Box(
-                        modifier = Modifier
-                            .width(160.dp)
-                            .height(160.dp)
-                            .clip(RoundedCornerShape(8.dp))
-                            .background(MaterialTheme.colorScheme.surfaceVariant)
-                            .padding(12.dp)
-                    ) {
-                        Text(
-                            text = shelf.title,
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
+            // Iterate shelves since FEmusic_charts gives multiple shelves
+            charts.data.forEach { shelf ->
+                Text(
+                    text = shelf.title,
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    modifier = Modifier.padding(bottom = 8.dp)
+                )
+                LazyRow(
+                    horizontalArrangement = Arrangement.spacedBy(16.dp),
+                    contentPadding = PaddingValues(end = PAGE_GUTTER),
+                    modifier = Modifier.padding(bottom = 24.dp)
+                ) {
+                    items(shelf.items) { item ->
+                        Column(
+                            modifier = Modifier
+                                .width(160.dp)
+                                .clickable { /* We do not have BrowseItem click wired here directly for chart shelf items, 
+                                             but the user asked for cards. Let's make it clickable if needed */ }
+                        ) {
+                            AsyncImage(
+                                model = item.thumbnailUrl,
+                                contentDescription = null,
+                                modifier = Modifier
+                                    .size(160.dp)
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .background(MaterialTheme.colorScheme.surfaceVariant)
+                            )
+                            Spacer(Modifier.height(8.dp))
+                            Text(
+                                text = item.title,
+                                style = MaterialTheme.typography.titleMedium,
+                                color = MaterialTheme.colorScheme.onBackground,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                            Text(
+                                text = item.subtitle.ifBlank { "Chart" },
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
                     }
                 }
             }
@@ -324,10 +342,11 @@ fun SearchScreen(
         AnimatedVisibility(
             visible = query.isEmpty(),
             enter = fadeIn() + expandVertically(),
-            exit = fadeOut() + shrinkVertically()
+            exit = fadeOut() + shrinkVertically(),
+            modifier = Modifier.weight(1f).fillMaxWidth()
         ) {
             LazyColumn(
-                modifier = Modifier.weight(1f).fillMaxWidth(),
+                modifier = Modifier.fillMaxHeight(),
                 contentPadding = PaddingValues(bottom = contentPadding.calculateBottomPadding())
             ) {
                 item {
