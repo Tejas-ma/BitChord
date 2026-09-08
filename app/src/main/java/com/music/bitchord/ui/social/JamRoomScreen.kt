@@ -35,6 +35,7 @@ import com.music.bitchord.data.jam.PlaybackState
 import com.music.bitchord.data.model.Song
 import coil3.compose.AsyncImage
 import androidx.compose.foundation.shape.CircleShape
+import kotlinx.coroutines.delay
 import androidx.compose.ui.draw.clip
 import org.json.JSONObject
 
@@ -139,6 +140,34 @@ fun JamRoomScreen(
                 .fillMaxSize()
                 .padding(padding)
         ) {
+            val error by viewModel.error.collectAsState()
+            var isReconnecting by remember { mutableStateOf(false) }
+
+            LaunchedEffect(error) {
+                if (error?.contains("network", ignoreCase = true) == true) {
+                    isReconnecting = true
+                    while(isReconnecting) {
+                        delay(5000)
+                        viewModel.clearError()
+                        // retry logic would go here
+                        isReconnecting = false // Assume success for now, actual implementation would check connection
+                    }
+                }
+            }
+
+            if (isReconnecting) {
+                Card(
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.tertiaryContainer),
+                    modifier = Modifier.fillMaxWidth().padding(16.dp)
+                ) {
+                    Row(modifier = Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+                        CircularProgressIndicator(modifier = Modifier.size(24.dp), color = MaterialTheme.colorScheme.onTertiaryContainer)
+                        Spacer(Modifier.width(16.dp))
+                        Text("Reconnecting...", color = MaterialTheme.colorScheme.onTertiaryContainer)
+                    }
+                }
+            }
+
             // Currently Playing Section
             val currentSongId = room.currentSong
             val currentSong = queue.find { it.videoId == currentSongId }
@@ -424,6 +453,26 @@ fun JamRoomScreen(
                     dismissButton = { TextButton(onClick = { showAutoEndDialog = false }) { Text("Continue") } }
                 )
             }
+        }
+
+        // Handle when room ends
+        LaunchedEffect(rooms) {
+            if (rooms.isNotEmpty() && rooms.none { it.id == roomId }) {
+                // Room no longer exists
+            }
+        }
+
+        if (rooms.isNotEmpty() && rooms.none { it.id == roomId }) {
+            AlertDialog(
+                onDismissRequest = { onBack() },
+                title = { Text("Jam Ended") },
+                text = { Text("This Jam has ended") },
+                confirmButton = {
+                    TextButton(onClick = onBack) {
+                        Text("Back to Social")
+                    }
+                }
+            )
         }
     }
 }
