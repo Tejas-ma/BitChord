@@ -8,6 +8,15 @@ import android.content.ClipData
 import androidx.compose.material.icons.rounded.Share
 import androidx.compose.material.icons.rounded.PersonAdd
 import androidx.compose.foundation.layout.*
+
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.ExperimentalFoundationApi
+
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
@@ -101,13 +110,19 @@ fun JamRoomScreen(
                 actions = {
                     Row(modifier = Modifier.padding(end = 8.dp)) {
                         room.members.take(3).forEach { memberId ->
-                            AsyncImage(
-                                model = "https://ui-avatars.com/api/?name=${memberId}&background=random",
-                                contentDescription = "Member",
-                                modifier = Modifier
-                                    .size(32.dp)
-                                    .clip(CircleShape)
-                            )
+                            AnimatedVisibility(
+                                visible = true,
+                                enter = scaleIn() + fadeIn(),
+                                exit = scaleOut() + fadeOut()
+                            ) {
+                                AsyncImage(
+                                    model = "https://ui-avatars.com/api/?name=${memberId}&background=random",
+                                    contentDescription = "Member",
+                                    modifier = Modifier
+                                        .size(32.dp)
+                                        .clip(CircleShape)
+                                )
+                            }
                         }
                         IconButton(onClick = { showInviteSheet = true }) {
                             Icon(Icons.Rounded.PersonAdd, contentDescription = "Invite")
@@ -232,9 +247,14 @@ fun JamRoomScreen(
             )
             
             LazyColumn {
-                items(queue) { song ->
+                items(queue, key = { it.videoId }) { song ->
                     Row(
                         modifier = Modifier
+                            .animateItem(
+                                fadeInSpec = tween(500),
+                                fadeOutSpec = tween(500),
+                                placementSpec = tween(500)
+                            )
                             .fillMaxWidth()
                             .padding(horizontal = 16.dp, vertical = 8.dp),
                         verticalAlignment = Alignment.CenterVertically
