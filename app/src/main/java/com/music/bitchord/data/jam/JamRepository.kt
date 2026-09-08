@@ -99,13 +99,17 @@ class JamRepository {
     }
 
     fun observeJoinRequests(roomId: String): Flow<List<JamInvite>> = flow {
-        val requests = supabase.postgrest["jam_invites"]
-            .select {
-                FilterOperation("room_id", FilterOperator.EQ, roomId)
-                FilterOperation("status", FilterOperator.EQ, "pending")
-            }
-            .decodeList<JamInvite>()
-        emit(requests)
+        // Fallback to simple polling in absence of realtime setup for postgrest in this repo setup
+        while (true) {
+            val requests = supabase.postgrest["jam_invites"]
+                .select {
+                    FilterOperation("room_id", FilterOperator.EQ, roomId)
+                    FilterOperation("status", FilterOperator.EQ, "pending")
+                }
+                .decodeList<JamInvite>()
+            emit(requests)
+            kotlinx.coroutines.delay(5000)
+        }
     }
 
     suspend fun updateInviteStatus(inviteId: String, status: String) {
