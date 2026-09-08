@@ -220,7 +220,7 @@ object YtMusicRepository {
     /** Enough to scroll through, short of turning the shelf into the history page. */
     private const val RECENT_LIMIT = 20
 
-    private suspend fun shelvesOf(browseId: String): List<HomeShelf> =
+    suspend fun shelvesOf(browseId: String): List<HomeShelf> =
         InnertubeParser.parseHome(Innertube.browse(browseId))
 
     /** The server-defined mood and genre categories used by Explore. */

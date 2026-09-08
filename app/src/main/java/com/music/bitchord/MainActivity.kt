@@ -2073,8 +2073,22 @@ private fun BitChordApp(
                             filter = filter,
                             onFilterChange = viewModel::onFilterChange,
                             results = results,
+                            charts = viewModel.charts.collectAsStateWithLifecycle().value,
                             loadingMore = searchLoadingMore,
                             onLoadMore = viewModel::loadMoreSearchResults,
+                            onCategoryClick = { title -> 
+                                val exploreState = viewModel.explore.value
+                                if (exploreState is UiState.Success) {
+                                    val moodGenre = exploreState.data.flatMap { it.items }.find { it.title.equals(title, ignoreCase = true) }
+                                    if (moodGenre != null) {
+                                        viewModel.openMoodGenre(moodGenre)
+                                    } else {
+                                        viewModel.onQueryChange(title)
+                                    }
+                                } else {
+                                    viewModel.onQueryChange(title)
+                                }
+                            },
                             listState = searchListState,
                             scrollResetTrigger = searchScrollReset,
                             focusTrigger = searchFocusTrigger,
