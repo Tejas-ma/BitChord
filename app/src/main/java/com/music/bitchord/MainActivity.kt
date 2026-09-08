@@ -332,6 +332,7 @@ private fun BitChordApp(
     val context = LocalContext.current
     val clipboard = LocalClipboardManager.current
     val hazeState = remember { HazeState() }
+    val navController = androidx.navigation.compose.rememberNavController()
     // Recording the backdrop layer costs a draw pass, so it only runs when the
     // nav bar's glass surface actually has something to sample.
     val glassActive = LocalLiquidGlassEnabled.current && isGlassSupported()
@@ -2413,6 +2414,7 @@ private fun BitChordApp(
                             onNext = { controller?.seekToNextMediaItem() },
                             onExpand = { showNowPlaying = true },
                             modifier = Modifier.fillMaxWidth(),
+                            navController = navController
                         )
                     }
                     FloatingBottomBar(
