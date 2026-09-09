@@ -235,7 +235,7 @@ fun MiniPlayer(
             Spacer(Modifier.width(TRANSPORT_GAP))
             IconButton(
                 onClick = {
-                    navController.navigate("jam_room")
+                    onJamClick()
                 },
                 modifier = Modifier.size(GLYPH_SLOT),
             ) {

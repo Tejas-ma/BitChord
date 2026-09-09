@@ -7,6 +7,7 @@ import kotlinx.serialization.SerialName
 data class Room(
     val id: String = "",
     val name: String = "",
+    @SerialName("host_id")
     val hostId: String = "",
     val members: List<String> = emptyList(),
     val currentSong: String? = null,
