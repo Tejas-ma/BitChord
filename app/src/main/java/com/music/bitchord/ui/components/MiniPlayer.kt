@@ -121,7 +121,7 @@ private val ART_CORNER = 8.dp
 @OptIn(ExperimentalHazeMaterialsApi::class, ExperimentalMaterial3Api::class)
 @Composable
 fun MiniPlayer(
-    navController: androidx.navigation.NavController,
+    onJamClick: () -> Unit,
     song: Song,
     isPlaying: Boolean,
     isLoading: Boolean,
@@ -235,7 +235,7 @@ fun MiniPlayer(
             Spacer(Modifier.width(TRANSPORT_GAP))
             IconButton(
                 onClick = {
-                    navController.navigate("jam_room")
+                    onJamClick()
                 },
                 modifier = Modifier.size(GLYPH_SLOT),
             ) {

@@ -332,7 +332,6 @@ private fun BitChordApp(
     val context = LocalContext.current
     val clipboard = LocalClipboardManager.current
     val hazeState = remember { HazeState() }
-    val navController = androidx.navigation.compose.rememberNavController()
     // Recording the backdrop layer costs a draw pass, so it only runs when the
     // nav bar's glass surface actually has something to sample.
     val glassActive = LocalLiquidGlassEnabled.current && isGlassSupported()
@@ -402,6 +401,7 @@ private fun BitChordApp(
     // background at all. Hosting it here also puts the scrim over the tab bar
     // and the mini player, like every other alert in the app.
     var editingSource by remember { mutableStateOf<SourceConfig?>(null) }
+    var activeJamRoomId by remember { mutableStateOf<String?>(null) }
     var showHistory by remember { mutableStateOf(false) }
     // A Library shelf's "Show all" — the shelf it was opened from, so its own
     // cards can be laid out again as a full-screen grid. See [LibraryGridPage].
@@ -1633,6 +1633,7 @@ private fun BitChordApp(
         BackHandler(enabled = discordDialog != null) { discordDialog = null }
         BackHandler(enabled = editingSource != null) { editingSource = null }
         BackHandler(enabled = showHistory) { showHistory = false }
+        BackHandler(enabled = activeJamRoomId != null) { activeJamRoomId = null }
         // Disabled while a detail page is open over the grid: that one's own
         // BackHandler below has to close first, or back would skip past it
         // straight to Library. See [onLibraryItemClick].
@@ -1656,6 +1657,7 @@ private fun BitChordApp(
                         // give way to the `detail != null` branch below it
                         // rather than keep showing the grid underneath.
                         libraryShowAll != null && detail == null -> "library_show_all"
+                        activeJamRoomId != null -> "jam_room"
                         showAccountScrobbling -> "account_scrobbling"
                         showSources -> "sources"
                         // Above Replay, not below it. The top bar's account
@@ -1687,7 +1689,7 @@ private fun BitChordApp(
                     // card there. A card opened *from* the grid is a real page
                     // and keeps the fade, same as one opened from the row.
                     transitionSpec = {
-                        val tabSwap = initialState.startsWith(TAB_KEY) && targetState.startsWith(TAB_KEY)
+                        val tabSwap = initialState.toString().startsWith(TAB_KEY) && targetState.toString().startsWith(TAB_KEY)
                         val libraryTabKey = "$TAB_KEY$TAB_LIBRARY"
                         val libraryShowAllSwap = (initialState == "library_show_all" && targetState == libraryTabKey) ||
                             (targetState == "library_show_all" && initialState == libraryTabKey)
@@ -1824,6 +1826,15 @@ private fun BitChordApp(
                             onOpenLastfmLogin = { showLastfmLogin = true },
                             onOpenDiscord = { showDiscord = true },
                             contentPadding = listPadding,
+                        )
+                    } else if (key == "jam_room") {
+                        val roomId = activeJamRoomId ?: "quick_jam"
+                        val jamViewModel: com.music.bitchord.ui.social.JamViewModel = androidx.lifecycle.viewmodel.compose.viewModel()
+                        com.music.bitchord.ui.social.JamRoomScreen(
+                            roomId = roomId,
+                            viewModel = jamViewModel,
+                            roomName = "Jam Session",
+                            onBack = { activeJamRoomId = null }
                         )
                     } else if (key == "sources") {
                         SourcesScreen(
@@ -2003,7 +2014,7 @@ private fun BitChordApp(
                             songSort = songSort,
                             contentPadding = listPadding,
                         )
-                    } else when (key.removePrefix(TAB_KEY).toIntOrNull() ?: selectedTab) {
+                    } else when (key.toString().removePrefix(TAB_KEY).toIntOrNull() ?: selectedTab) {
                         TAB_HOME -> HomeScreen(
                             state = homeState,
                             listState = homeListState,
@@ -2033,9 +2044,7 @@ private fun BitChordApp(
                             recentlyPlayedLoading = homeRecentlyPlayedLoading,
                         )
                         TAB_SOCIAL -> SocialScreen(
-                            onNavigateToJamRoom = { roomId -> 
-                                // TODO: Handle jam room navigation from MainActivity if needed
-                            }
+                            onNavigateToJamRoom = { roomId -> activeJamRoomId = roomId }
                         )
                         TAB_SEARCH -> SearchScreen(
                             query = query,
@@ -2414,7 +2423,7 @@ private fun BitChordApp(
                             onNext = { controller?.seekToNextMediaItem() },
                             onExpand = { showNowPlaying = true },
                             modifier = Modifier.fillMaxWidth(),
-                            navController = navController
+                            onJamClick = { activeJamRoomId = "quick_jam" }
                         )
                     }
                     FloatingBottomBar(
