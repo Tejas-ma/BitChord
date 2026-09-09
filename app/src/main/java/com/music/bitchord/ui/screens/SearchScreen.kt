@@ -1,4 +1,12 @@
 package com.music.bitchord.ui.screens
+import com.music.bitchord.data.model.UiState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
+import com.music.bitchord.data.YtMusicRepository
+import androidx.compose.runtime.produceState
+import androidx.compose.ui.focus.onFocusChanged
+import com.music.bitchord.data.model.MoodGenreSection
+import androidx.compose.material3.CircularProgressIndicator
 
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
@@ -68,7 +76,6 @@ import com.music.bitchord.data.model.SearchFilter
 import com.music.bitchord.data.model.artworkAt
 import com.music.bitchord.data.model.SearchResult
 import com.music.bitchord.data.model.Song
-import com.music.bitchord.data.model.UiState
 import com.music.bitchord.R
 import com.music.bitchord.ui.components.MessageState
 import com.music.bitchord.ui.components.PAGE_GUTTER
@@ -129,9 +136,18 @@ val genreCards = listOf(
 
 @Composable
 private fun BrowseContent(
-    charts: UiState<List<HomeShelf>>?,
-    onCategoryClick: (String) -> Unit
+    moodsState: UiState<List<MoodGenreSection>>?,
+    chartsState: UiState<List<HomeShelf>>?,
+    onCategoryClick: (String) -> Unit,
+    onSongClick: (Song) -> Unit,
 ) {
+    if (moodsState is UiState.Loading || chartsState is UiState.Loading) {
+        Box(modifier = Modifier.fillMaxWidth().height(200.dp), contentAlignment = Alignment.Center) {
+            CircularProgressIndicator()
+        }
+        return
+    }
+
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -167,10 +183,16 @@ private fun BrowseContent(
         
         CategoryGrid(genreCards, onCategoryClick)
         
-        if (charts is UiState.Success) {
+        if (chartsState is UiState.Success) {
             Spacer(Modifier.height(24.dp))
-            // Iterate shelves since FEmusic_charts gives multiple shelves
-            charts.data.forEach { shelf ->
+            Text(
+                text = "Charts",
+                style = MaterialTheme.typography.titleLarge,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.onBackground,
+                modifier = Modifier.padding(bottom = 16.dp)
+            )
+            chartsState.data.forEach { shelf ->
                 Text(
                     text = shelf.title,
                     style = MaterialTheme.typography.titleMedium,
@@ -187,8 +209,12 @@ private fun BrowseContent(
                         Column(
                             modifier = Modifier
                                 .width(160.dp)
-                                .clickable { /* We do not have BrowseItem click wired here directly for chart shelf items, 
-                                             but the user asked for cards. Let's make it clickable if needed */ }
+                                .clickable {
+                                    val videoId = item.browseId
+                                    if (videoId != null) {
+                                        onSongClick(Song(videoId = videoId, title = item.title, artist = "Chart", thumbnailUrl = item.thumbnailUrl, durationText = null, isVideo = false))
+                                    }
+                                }
                         ) {
                             AsyncImage(
                                 model = item.thumbnailUrl,
@@ -292,6 +318,26 @@ fun SearchScreen(
     contentPadding: PaddingValues,
 ) {
     val focusRequester = remember { FocusRequester() }
+    var isSearchActive by remember { androidx.compose.runtime.mutableStateOf(false) }
+
+    val moodsState by produceState<UiState<List<MoodGenreSection>>?>(initialValue = null) {
+        val result = runCatching { YtMusicRepository.moodAndGenres() }
+        val r = result.getOrNull()
+        if (r != null && r.isSuccess) {
+            value = UiState.Success(r.getOrNull() ?: emptyList())
+        } else {
+            value = UiState.Error("")
+        }
+    }
+
+    val chartsState by produceState<UiState<List<HomeShelf>>?>(initialValue = null) {
+        val result = runCatching { YtMusicRepository.shelvesOf("FEmusic_charts") }
+        if (result.isSuccess) {
+            value = UiState.Success(result.getOrNull() ?: emptyList())
+        } else {
+            value = UiState.Error("")
+        }
+    }
     val focusManager = LocalFocusManager.current
     // Re-tapping the search tab from the nav bar increments focusTrigger;
     // respond by focusing the field and opening the keyboard.
@@ -328,45 +374,37 @@ fun SearchScreen(
                 onQueryChange = onQueryChange,
                 onSubmit = onSubmit,
                 focusRequester = focusRequester,
+                isSearchActive = isSearchActive,
+                onSearchActiveChange = { isSearchActive = it },
                 modifier = Modifier.padding(start = PAGE_GUTTER, end = PAGE_GUTTER, bottom = 4.dp),
             )
             // The filters only mean something once there is a result set to narrow;
             // they stay up for an empty or failed search too, or picking a filter
             // that finds nothing would take away the control needed to leave it.
-            if (results != null && !suggesting) {
+            if (results != null && !suggesting && (query.isNotEmpty() || isSearchActive)) {
                 SearchFilterTabs(filter = filter, onFilterChange = onFilterChange)
             }
         }
-
-        
-        AnimatedVisibility(
-            visible = query.isEmpty(),
-            enter = fadeIn() + expandVertically(),
-            exit = fadeOut() + shrinkVertically(),
-            modifier = Modifier.weight(1f).fillMaxWidth()
-        ) {
+        if (query.isEmpty() && !isSearchActive) {
             LazyColumn(
-                modifier = Modifier.fillMaxHeight(),
+                modifier = Modifier.fillMaxHeight().weight(1f).fillMaxWidth(),
                 contentPadding = PaddingValues(bottom = contentPadding.calculateBottomPadding())
             ) {
                 item {
-                    BrowseContent(charts, onCategoryClick)
+                    BrowseContent(
+                        moodsState = moodsState,
+                        chartsState = chartsState,
+                        onCategoryClick = { /* Handle category click */ },
+                        onSongClick = { song -> onTopResultPlay(song) }
+                    )
                 }
             }
-        }
-
-        AnimatedVisibility(
-            visible = query.isNotEmpty(),
-            enter = fadeIn() + expandVertically(),
-            exit = fadeOut() + shrinkVertically(),
-            modifier = Modifier.weight(1f).fillMaxWidth()
-        ) {
+        } else {
             LazyColumn(
                 state = listState,
-                modifier = Modifier.fillMaxHeight(),
-
-            contentPadding = PaddingValues(bottom = contentPadding.calculateBottomPadding()),
-        ) {
+                modifier = Modifier.fillMaxHeight().weight(1f).fillMaxWidth(),
+                contentPadding = PaddingValues(bottom = contentPadding.calculateBottomPadding()),
+            ) {
             when {
                 suggesting -> searchSuggestions(
                     suggestions = suggestions,
@@ -828,6 +866,8 @@ private fun SearchField(
     onQueryChange: (String) -> Unit,
     onSubmit: () -> Unit,
     focusRequester: FocusRequester = remember { FocusRequester() },
+    isSearchActive: Boolean = false,
+    onSearchActiveChange: (Boolean) -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val focusManager = LocalFocusManager.current
@@ -914,7 +954,8 @@ private fun SearchField(
                 keyboardActions = KeyboardActions(onSearch = { submit() }),
                 modifier = Modifier
                     .fillMaxWidth()
-                    .focusRequester(focusRequester),
+                    .focusRequester(focusRequester)
+                    .onFocusChanged { state -> onSearchActiveChange(state.isFocused) },
             )
         }
         // Emptying the field is also how the recent searches are got back to,
