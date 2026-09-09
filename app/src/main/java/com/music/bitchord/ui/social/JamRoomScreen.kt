@@ -94,6 +94,14 @@ fun JamRoomScreen(
     var showInviteSheet by remember { mutableStateOf(false) }
 
     Scaffold(
+        floatingActionButton = {
+            FloatingActionButton(
+                onClick = { showAddSheet = true },
+                containerColor = MaterialTheme.colorScheme.primary
+            ) {
+                Text("+", color = MaterialTheme.colorScheme.onBackground)
+            }
+        },
         topBar = {
             TopAppBar(
                 title = { 
@@ -233,7 +241,7 @@ fun JamRoomScreen(
                 modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
             )
             
-            LazyColumn {
+            LazyColumn(contentPadding = PaddingValues(bottom = 72.dp)) {
                 items(queue, key = { it.videoId }) { song ->
                     Row(
                         modifier = Modifier

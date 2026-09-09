@@ -143,7 +143,11 @@ fun SocialScreen(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    modifier = Modifier.weight(1f).padding(end = 16.dp)
+                ) {
                     Text(
                         "😎",
                         modifier = Modifier.padding(end = 8.dp),
@@ -292,6 +296,7 @@ fun SocialScreen(
                 }
             }
 
+            Spacer(modifier = Modifier.height(72.dp))
             if (isLoading) {
                 CircularProgressIndicator(modifier = Modifier.align(Alignment.Center))
             }
