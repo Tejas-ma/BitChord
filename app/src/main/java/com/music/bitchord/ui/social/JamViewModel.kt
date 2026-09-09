@@ -51,7 +51,8 @@ class JamViewModel : ViewModel() {
                     _friendsListening.value = it
                 }
             } catch (e: Exception) {
-                _error.value = e.message
+                _friendsListening.value = emptyList()
+                _error.value = "Could not load activity. Pull to refresh."
             }
         }
     }

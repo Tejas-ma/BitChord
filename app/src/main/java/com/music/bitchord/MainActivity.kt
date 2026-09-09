@@ -2423,7 +2423,7 @@ private fun BitChordApp(
                             onNext = { controller?.seekToNextMediaItem() },
                             onExpand = { showNowPlaying = true },
                             modifier = Modifier.fillMaxWidth(),
-                            onJamClick = { activeJamRoomId = "quick_jam" }
+                            onJamClick = { if (activeJamRoomId == null) activeJamRoomId = "quick_jam" }
                         )
                     }
                     FloatingBottomBar(
