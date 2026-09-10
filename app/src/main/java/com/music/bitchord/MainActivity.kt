@@ -64,6 +64,9 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.FloatingActionButton
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -410,6 +413,7 @@ private fun BitChordApp(
     var showLyricsSources by remember { mutableStateOf(false) }
     var showAppLanguage by remember { mutableStateOf(false) }
     var showAccountSelector by remember { mutableStateOf(false) }
+    var showStartJamDialog by remember { mutableStateOf(false) }
     var showListenBrainzLogin by remember { mutableStateOf(false) }
     var showLastfmLogin by remember { mutableStateOf(false) }
     /**
@@ -721,7 +725,6 @@ private fun BitChordApp(
             BottomTab(playLabel, BitChordIcons.Play),
             BottomTab(socialLabel, Icons.Rounded.People),
             BottomTab(libraryLabel, BitChordIcons.Library),
-            BottomTab(searchLabel, BitChordIcons.Search),
         )
     }
 
@@ -2324,6 +2327,32 @@ private fun BitChordApp(
                             // there is a batch to report on — see
                             // [TopBarDownloadButton], which decides that for
                             // itself rather than being told.
+                            if (!showSettings && !showAccountScrobbling && detail == null) {
+                                IconButton(
+                                    onClick = {
+                                        if (selectedTab == TAB_SEARCH) {
+                                            searchFocusTrigger++
+                                        } else {
+                                            searchFocusTrigger = 0
+                                            viewModel.clearDetail()
+                                            viewModel.closeMoodGenre()
+                                            showSettings = false
+                                            showAccountScrobbling = false
+                                            showSources = false
+                                            showReplay = false
+                                            showHistory = false
+                                            libraryShowAll = null
+                                            selectedTab = TAB_SEARCH
+                                        }
+                                    }
+                                ) {
+                                    Icon(
+                                        Icons.Rounded.Search,
+                                        contentDescription = stringResource(R.string.search),
+                                        tint = MaterialTheme.colorScheme.onSurface,
+                                    )
+                                }
+                            }
                             TopBarDownloadButton(onClick = { showDownloadManager = true })
                             TopBarAccountButton(
                                 account = account,
@@ -2412,6 +2441,25 @@ private fun BitChordApp(
                     // a bar whose whole job is to stand in for the player, next
                     // to the player, is a second copy of what is already there.
                     player.song?.takeUnless { playerDocked }?.let { song ->
+                        Box(modifier = Modifier.fillMaxWidth().padding(start = PAGE_GUTTER, bottom = 4.dp)) {
+                            FloatingActionButton(
+                                onClick = {
+                                    if (activeJamRoomId == null) {
+                                        showStartJamDialog = true
+                                    } else {
+                                        val current = activeJamRoomId
+                                        activeJamRoomId = null
+                                        activeJamRoomId = current
+                                    }
+                                },
+                                shape = RoundedCornerShape(12.dp),
+                                containerColor = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(48.dp)
+                            ) {
+                                Icon(BitChordIcons.MusicNote, contentDescription = "Start Jam")
+                            }
+                        }
+
                         MiniPlayer(
                             song = song,
                             isPlaying = player.isPlaying,
@@ -2422,8 +2470,7 @@ private fun BitChordApp(
                             },
                             onNext = { controller?.seekToNextMediaItem() },
                             onExpand = { showNowPlaying = true },
-                            modifier = Modifier.fillMaxWidth(),
-                            onJamClick = { if (activeJamRoomId == null) activeJamRoomId = "quick_jam" }
+                            modifier = Modifier.fillMaxWidth()
                         )
                     }
                     FloatingBottomBar(
@@ -3111,6 +3158,18 @@ private fun BitChordApp(
                 which = which,
                 hazeState = hazeState,
                 onDismiss = { discordDialog = null },
+            )
+        }
+
+
+        if (showStartJamDialog) {
+            AlertDialog(
+                onDismissRequest = { showStartJamDialog = false },
+                confirmButton = {
+                    TextButton(onClick = { showStartJamDialog = false }) { Text("Dismiss") }
+                },
+                title = { Text("Start Jam") },
+                text = { Text("Start Jam — coming soon") }
             )
         }
 
