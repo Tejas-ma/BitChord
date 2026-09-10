@@ -246,7 +246,7 @@ fun SocialScreen(
                 Spacer(modifier = Modifier.height(24.dp))
 
                 Text(
-                    "Friends", 
+                    "Friends",
                     style = MaterialTheme.typography.titleLarge,
                     color = MaterialTheme.colorScheme.onBackground
                 )
@@ -297,10 +297,10 @@ fun SocialScreen(
                 }
             }
 
-            
+
                 Spacer(modifier = Modifier.height(24.dp))
                 Text(
-                    "My Rooms", 
+                    "My Rooms",
                     style = MaterialTheme.typography.titleLarge,
                     color = MaterialTheme.colorScheme.onBackground
                 )

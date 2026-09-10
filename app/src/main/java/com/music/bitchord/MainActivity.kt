@@ -2180,6 +2180,7 @@ private fun BitChordApp(
                     modifier = Modifier.align(Alignment.TopCenter),
                 )
 
+                if (selectedTab != TAB_SOCIAL) {
                 FrostedTopBar(
                     title = when {
                         showDiscord -> "Discord"
@@ -2370,6 +2371,7 @@ private fun BitChordApp(
                         }
                     },
                 )
+                }
 
                 // Drawn before the bars so their own glass reads on top of it.
                 BottomFadeScrim(
