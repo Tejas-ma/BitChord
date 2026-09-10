@@ -2163,22 +2163,24 @@ private fun BitChordApp(
                 // Drawn before the bar so the bar's own content sits on top of it.
                 val isDetailVisible = detail != null && !isLocalDetail && !showSettings &&
                     !showAccountScrobbling && !showSources && !showReplay
-                TopFadeBlur(
-                    hazeState = hazeState,
-                    // Replay paints its own full-bleed black backdrop up under the
-                    // status bar, exactly as a release page's artwork does.
-                    pageColor = when {
-                        showReplay -> Color.Black
-                        isDetailVisible -> detailPalette.wash
-                        else -> MaterialTheme.colorScheme.background
-                    },
-                    scrimColor = when {
-                        showReplay -> Color.Black
-                        isDetailVisible -> detailPalette.background
-                        else -> MaterialTheme.colorScheme.background
-                    },
-                    modifier = Modifier.align(Alignment.TopCenter),
-                )
+                if (selectedTab != TAB_SOCIAL) {
+                    TopFadeBlur(
+                        hazeState = hazeState,
+                        // Replay paints its own full-bleed black backdrop up under the
+                        // status bar, exactly as a release page's artwork does.
+                        pageColor = when {
+                            showReplay -> Color.Black
+                            isDetailVisible -> detailPalette.wash
+                            else -> MaterialTheme.colorScheme.background
+                        },
+                        scrimColor = when {
+                            showReplay -> Color.Black
+                            isDetailVisible -> detailPalette.background
+                            else -> MaterialTheme.colorScheme.background
+                        },
+                        modifier = Modifier.align(Alignment.TopCenter),
+                    )
+                }
 
                 if (selectedTab != TAB_SOCIAL) {
                 FrostedTopBar(
@@ -2446,7 +2448,7 @@ private fun BitChordApp(
                     // a bar whose whole job is to stand in for the player, next
                     // to the player, is a second copy of what is already there.
                     player.song?.takeUnless { playerDocked }?.let { song ->
-                        Box(modifier = Modifier.fillMaxWidth().padding(end = PAGE_GUTTER, bottom = 4.dp), contentAlignment = Alignment.BottomEnd) {
+                        Box(modifier = Modifier.fillMaxWidth().padding(end = 16.dp, bottom = 80.dp), contentAlignment = Alignment.BottomEnd) {
                             FloatingActionButton(
                                 onClick = {
                                     if (activeJamRoomId == null) {
