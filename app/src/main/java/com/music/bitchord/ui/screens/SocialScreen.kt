@@ -41,15 +41,32 @@ fun SocialScreen(
             Image(
                 painter = painterResource(id = R.drawable.ic_launcher_foreground),
                 contentDescription = "BitChord",
-                modifier = Modifier.height(32.dp),
+                modifier = Modifier.height(48.dp).widthIn(min = 48.dp),
                 contentScale = ContentScale.Fit
             )
-            IconButton(onClick = { showCreateRoomDialog.value = true }) {
-                Icon(
-                    imageVector = Icons.Default.Add,
-                    contentDescription = "Create Room",
-                    tint = MaterialTheme.colorScheme.onBackground
-                )
+            Surface(
+                onClick = { showCreateRoomDialog.value = true },
+                shape = androidx.compose.foundation.shape.RoundedCornerShape(20.dp),
+                color = MaterialTheme.colorScheme.surfaceVariant,
+                modifier = Modifier.height(36.dp)
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Add,
+                        contentDescription = null,
+                        modifier = Modifier.size(16.dp),
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Text(
+                        text = "Create Room",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
             }
         }
 
