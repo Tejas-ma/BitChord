@@ -5,6 +5,8 @@ import androidx.lifecycle.viewModelScope
 import com.music.bitchord.data.jam.FriendActivity
 import com.music.bitchord.data.jam.JamRepository
 import com.music.bitchord.data.jam.Room
+import com.music.bitchord.supabase
+import io.github.jan.supabase.postgrest.postgrest
 
 import com.music.bitchord.data.jam.JamInvite
 import kotlinx.coroutines.flow.Flow
@@ -28,6 +30,24 @@ class JamViewModel : ViewModel() {
 
     private val _error = MutableStateFlow<String?>(null)
     val error: StateFlow<String?> = _error.asStateFlow()
+
+    fun createRoom(name: String, isPrivate: Boolean, maxMembers: Int) {
+        viewModelScope.launch {
+            try {
+                supabase.postgrest["rooms"].insert(
+                    mapOf(
+                        "name" to name,
+                        "is_private" to isPrivate,
+                        "max_members" to maxMembers,
+                        "host_id" to null
+                    )
+                )
+            } catch (e: Exception) {
+                _error.value = "Could not create room. Try again."
+            }
+        }
+    }
+
 
     init {
         loadRooms()
