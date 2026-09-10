@@ -2191,7 +2191,7 @@ private fun BitChordApp(
                         showReplay -> stringResource(R.string.replay)
                         detail != null -> detail.title
                         selectedMoodGenre != null -> selectedMoodGenre?.title.orEmpty()
-                        else -> tabs[selectedTab].let {
+                        else -> if (selectedTab == TAB_SEARCH) stringResource(R.string.search) else tabs[selectedTab].let {
                             if (it.label == "Play") stringResource(R.string.listen_now) else it.label
                         }
                     },
@@ -2444,7 +2444,7 @@ private fun BitChordApp(
                     // a bar whose whole job is to stand in for the player, next
                     // to the player, is a second copy of what is already there.
                     player.song?.takeUnless { playerDocked }?.let { song ->
-                        Box(modifier = Modifier.fillMaxWidth().padding(start = PAGE_GUTTER, bottom = 4.dp)) {
+                        Box(modifier = Modifier.fillMaxWidth().padding(end = PAGE_GUTTER, bottom = 4.dp), contentAlignment = Alignment.BottomEnd) {
                             FloatingActionButton(
                                 onClick = {
                                     if (activeJamRoomId == null) {

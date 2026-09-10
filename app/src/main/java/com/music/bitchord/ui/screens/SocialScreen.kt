@@ -16,6 +16,7 @@ import androidx.compose.animation.core.RepeatMode
 import androidx.compose.ui.draw.scale
 
 import androidx.compose.material3.*
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -245,7 +246,7 @@ fun SocialScreen(
                 Spacer(modifier = Modifier.height(24.dp))
 
                 Text(
-                    "Friends Listening", 
+                    "Friends",
                     style = MaterialTheme.typography.titleLarge,
                     color = MaterialTheme.colorScheme.onBackground
                 )
@@ -296,6 +297,20 @@ fun SocialScreen(
                 }
             }
 
+
+                Spacer(modifier = Modifier.height(24.dp))
+                Text(
+                    "My Rooms",
+                    style = MaterialTheme.typography.titleLarge,
+                    color = MaterialTheme.colorScheme.onBackground
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                Text(
+                    "Coming soon",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+
             Spacer(modifier = Modifier.height(72.dp))
             if (isLoading) {
                 CircularProgressIndicator(modifier = Modifier.align(Alignment.Center))
@@ -304,60 +319,49 @@ fun SocialScreen(
     }
 
     if (showCreateRoom) {
-        ModalBottomSheet(
+        var isPrivate by remember { mutableStateOf(false) }
+        var roomName by remember { mutableStateOf("") }
+        AlertDialog(
             onDismissRequest = { showCreateRoom = false },
+            title = { Text("Create Room", color = MaterialTheme.colorScheme.onBackground) },
+            text = {
+                Column {
+                    OutlinedTextField(
+                        value = roomName,
+                        onValueChange = { roomName = it },
+                        label = { Text("Session name") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    Spacer(modifier = Modifier.height(16.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text("Private room", color = MaterialTheme.colorScheme.onBackground)
+                        Switch(
+                            checked = isPrivate,
+                            onCheckedChange = { isPrivate = it }
+                        )
+                    }
+                    Spacer(modifier = Modifier.height(16.dp))
+                    Text("Max members: 8", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { showCreateRoom = false }) {
+                    Text("Create")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showCreateRoom = false }) {
+                    Text("Cancel")
+                }
+            },
             containerColor = MaterialTheme.colorScheme.surface
-        ) {
-            var roomName by remember { mutableStateOf("") }
-            var privacy by remember { mutableStateOf("everyone") }
-            
-            Column(modifier = Modifier.padding(16.dp)) {
-                OutlinedTextField(
-                    value = roomName,
-                    onValueChange = { roomName = it },
-                    label = { Text("Room Name", color = MaterialTheme.colorScheme.onBackground) },
-                    modifier = Modifier.fillMaxWidth(),
-                    colors = OutlinedTextFieldDefaults.colors(
-                        focusedTextColor = MaterialTheme.colorScheme.onBackground,
-                        unfocusedTextColor = MaterialTheme.colorScheme.onBackground
-                    )
-                )
-                Spacer(modifier = Modifier.height(16.dp))
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    FilterChip(
-                        selected = privacy == "everyone",
-                        onClick = { privacy = "everyone" },
-                        label = { Text("Everyone", color = MaterialTheme.colorScheme.onBackground) }
-                    )
-                    FilterChip(
-                        selected = privacy == "friends",
-                        onClick = { privacy = "friends" },
-                        label = { Text("Friends", color = MaterialTheme.colorScheme.onBackground) }
-                    )
-                }
-                Spacer(modifier = Modifier.height(16.dp))
-                Button(
-                    onClick = {
-                        viewModel.createRoom(roomName, "my_user_id", privacy)
-                        showCreateRoom = false
-                    },
-                    modifier = Modifier.fillMaxWidth(),
-                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
-                ) {
-                    Text("Start Jam", color = MaterialTheme.colorScheme.onBackground)
-                }
-                Spacer(modifier = Modifier.height(32.dp))
-            }
-        }
+        )
     }
 
-    if (showMoodSummary) {
-        Dialog(
-            onDismissRequest = { showMoodSummary = false },
-            properties = DialogProperties(usePlatformDefaultWidth = false)
-        ) {
-            MoodSummaryScreen(onBack = { showMoodSummary = false })
-        }
-    }
+
 }
-
