@@ -157,7 +157,7 @@ private fun ChromeStack(scrolled: Boolean, withMiniPlayer: Boolean) {
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             if (withMiniPlayer) {
-                MiniPlayer(onJamClick = {},
+                MiniPlayer(
                     song = PreviewSong,
                     isPlaying = true,
                     isLoading = false,
@@ -224,7 +224,7 @@ private fun MiniPlayerPreview() {
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
             val haze = remember { HazeState() }
-            MiniPlayer(onJamClick = {},
+            MiniPlayer(
                 song = PreviewSong,
                 isPlaying = true,
                 isLoading = false,
@@ -232,7 +232,7 @@ private fun MiniPlayerPreview() {
                 onPlayPause = {}, onNext = {}, onExpand = {},
                 modifier = Modifier.fillMaxWidth(),
             )
-            MiniPlayer(onJamClick = {},
+            MiniPlayer(
                 song = PreviewSong.copy(title = "A considerably longer track title that has to truncate"),
                 isPlaying = false,
                 isLoading = false,
@@ -240,7 +240,7 @@ private fun MiniPlayerPreview() {
                 onPlayPause = {}, onNext = {}, onExpand = {},
                 modifier = Modifier.fillMaxWidth(),
             )
-            MiniPlayer(onJamClick = {},
+            MiniPlayer(
                 song = PreviewSong,
                 isPlaying = false,
                 isLoading = true,

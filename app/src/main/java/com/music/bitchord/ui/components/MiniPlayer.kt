@@ -121,7 +121,6 @@ private val ART_CORNER = 8.dp
 @OptIn(ExperimentalHazeMaterialsApi::class, ExperimentalMaterial3Api::class)
 @Composable
 fun MiniPlayer(
-    onJamClick: () -> Unit,
     song: Song,
     isPlaying: Boolean,
     isLoading: Boolean,
@@ -232,20 +231,7 @@ fun MiniPlayer(
                     modifier = Modifier.size(GLYPH_SIZE),
                 )
             }
-            Spacer(Modifier.width(TRANSPORT_GAP))
-            IconButton(
-                onClick = {
-                    onJamClick()
-                },
-                modifier = Modifier.size(GLYPH_SLOT),
-            ) {
-                Icon(
-                    Icons.Rounded.People,
-                    contentDescription = "Quick Jam",
-                    tint = MaterialTheme.colorScheme.onBackground,
-                    modifier = Modifier.size(GLYPH_SIZE),
-                )
-            }
+
 
         }
     }
