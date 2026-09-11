@@ -2533,7 +2533,7 @@ fun NowPlayingScreen(
                         LoopMode.AUTOPLAY -> LoopMode.OFF
                     }
                     loopMode = nextMode
-                    
+
                     when (nextMode) {
                         LoopMode.OFF -> {
                             if (repeatMode != Player.REPEAT_MODE_OFF) onCycleRepeat()
