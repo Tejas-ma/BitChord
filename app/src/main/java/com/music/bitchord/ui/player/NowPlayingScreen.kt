@@ -88,6 +88,7 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.RepeatOne
 import androidx.compose.material.icons.automirrored.rounded.QueueMusic
 import androidx.compose.material.icons.automirrored.rounded.Undo
 import androidx.compose.material.icons.automirrored.rounded.VolumeDown
@@ -2509,35 +2510,65 @@ fun NowPlayingScreen(
                     haptic = if (shuffleEnabled) Haptic.ToggleOff else Haptic.ToggleOn,
                     tapWindowMs = SHUFFLE_TAP_WINDOW_MS,
                 )
-                BottomGlyph(
-                    icon = if (repeatMode == Player.REPEAT_MODE_ONE) null else BitChordIcons.Repeat,
-                    label = if (repeatMode == Player.REPEAT_MODE_ONE) "1" else null,
-                    contentDescription = when (repeatMode) {
-                        Player.REPEAT_MODE_ONE -> stringResource(R.string.repeat_one)
-                        Player.REPEAT_MODE_ALL -> stringResource(R.string.repeat_all)
-                        else -> stringResource(R.string.repeat_off)
-                    },
-                    onClick = onCycleRepeat,
-                    highlighted = repeatMode != Player.REPEAT_MODE_OFF,
-                    // Three states, so the buzz tracks the edges of the cycle:
-                    // leaving off rises, returning to off falls, and the step
-                    // between the two repeat modes is just a selection.
-                    haptic = when (repeatMode) {
-                        Player.REPEAT_MODE_OFF -> Haptic.ToggleOn
-                        Player.REPEAT_MODE_ONE -> Haptic.ToggleOff
-                        else -> Haptic.Select
-                    },
-                )
-                BottomGlyph(
-                    icon = BitChordIcons.Infinity,
-                    contentDescription = stringResource(
-                        if (autoplayEnabled) R.string.autoplay_on else R.string.autoplay_off,
-                    ),
-                    onClick = onToggleAutoplay,
-                    highlighted = autoplayEnabled,
-                    haptic = if (autoplayEnabled) Haptic.ToggleOff else Haptic.ToggleOn,
-                    tapWindowMs = AUTOPLAY_TAP_WINDOW_MS,
-                )
+                
+                enum class LoopMode { OFF, REPEAT_ONE, REPEAT_ALL, AUTOPLAY }
+                var loopMode by remember(repeatMode, autoplayEnabled) {
+                    mutableStateOf(
+                        when {
+                            autoplayEnabled -> LoopMode.AUTOPLAY
+                            repeatMode == Player.REPEAT_MODE_ONE -> LoopMode.REPEAT_ONE
+                            repeatMode == Player.REPEAT_MODE_ALL -> LoopMode.REPEAT_ALL
+                            else -> LoopMode.OFF
+                        }
+                    )
+                }
+
+                IconButton(onClick = {
+                    val nextMode = when (loopMode) {
+                        LoopMode.OFF -> LoopMode.REPEAT_ONE
+                        LoopMode.REPEAT_ONE -> LoopMode.REPEAT_ALL
+                        LoopMode.REPEAT_ALL -> LoopMode.AUTOPLAY
+                        LoopMode.AUTOPLAY -> LoopMode.OFF
+                    }
+                    loopMode = nextMode
+                    
+                    when (nextMode) {
+                        LoopMode.OFF -> {
+                            if (repeatMode != Player.REPEAT_MODE_OFF) onCycleRepeat()
+                            if (autoplayEnabled) onToggleAutoplay()
+                        }
+                        LoopMode.REPEAT_ONE -> {
+                            if (repeatMode != Player.REPEAT_MODE_ONE) onCycleRepeat()
+                            if (autoplayEnabled) onToggleAutoplay()
+                        }
+                        LoopMode.REPEAT_ALL -> {
+                            if (repeatMode != Player.REPEAT_MODE_ALL) onCycleRepeat()
+                            if (autoplayEnabled) onToggleAutoplay()
+                        }
+                        LoopMode.AUTOPLAY -> {
+                            if (repeatMode != Player.REPEAT_MODE_OFF) {
+                                // Needs to be OFF
+                                onCycleRepeat()
+                            }
+                            if (!autoplayEnabled) onToggleAutoplay()
+                        }
+                    }
+                }) {
+                    Icon(
+                        imageVector = when (loopMode) {
+                            LoopMode.OFF -> BitChordIcons.Repeat
+                            LoopMode.REPEAT_ONE -> Icons.Rounded.RepeatOne
+                            LoopMode.REPEAT_ALL -> BitChordIcons.Repeat
+                            LoopMode.AUTOPLAY -> BitChordIcons.Infinity
+                        },
+                        contentDescription = loopMode.name,
+                        tint = when (loopMode) {
+                            LoopMode.OFF -> MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f)
+                            else -> MaterialTheme.colorScheme.primary
+                        }
+                    )
+                }
+
                 BottomGlyph(
                     icon = Icons.AutoMirrored.Rounded.QueueMusic,
                     contentDescription = stringResource(R.string.up_next),
