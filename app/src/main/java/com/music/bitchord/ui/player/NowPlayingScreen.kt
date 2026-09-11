@@ -108,6 +108,7 @@ import androidx.compose.material.icons.rounded.Share
 import androidx.compose.material.icons.rounded.Videocam
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -225,6 +226,8 @@ import java.util.Locale
 import java.util.concurrent.TimeUnit
 import kotlin.math.abs
 import kotlin.math.roundToInt
+
+enum class LoopMode { OFF, REPEAT_ONE, REPEAT_ALL, AUTOPLAY }
 
 /** Collapsed-header geometry, shared by the layout and its animation. */
 /**
@@ -2511,7 +2514,6 @@ fun NowPlayingScreen(
                     tapWindowMs = SHUFFLE_TAP_WINDOW_MS,
                 )
                 
-                enum class LoopMode { OFF, REPEAT_ONE, REPEAT_ALL, AUTOPLAY }
                 var loopMode by remember(repeatMode, autoplayEnabled) {
                     mutableStateOf(
                         when {
