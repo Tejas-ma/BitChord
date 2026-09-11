@@ -13,6 +13,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.painterResource
+import androidx.lifecycle.viewmodel.compose.viewModel
+import com.music.bitchord.ui.social.JamViewModel
 import androidx.compose.ui.unit.dp
 import com.music.bitchord.R
 
@@ -21,6 +23,8 @@ import com.music.bitchord.R
 fun SocialScreen(
     onNavigateToJamRoom: (String) -> Unit
 ) {
+    val viewModel: JamViewModel = viewModel()
+    val jamViewModel: JamViewModel = viewModel()
     val showCreateRoomDialog = remember { mutableStateOf(false) }
     val sessionName = remember { mutableStateOf("") }
     val isPrivate = remember { mutableStateOf(false) }
@@ -34,7 +38,8 @@ fun SocialScreen(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 12.dp),
+                .statusBarsPadding()
+                .padding(horizontal = 16.dp, vertical = 8.dp),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
@@ -145,7 +150,18 @@ fun SocialScreen(
                 }
             },
             confirmButton = {
-                TextButton(onClick = { showCreateRoomDialog.value = false }) {
+                TextButton(onClick = {
+                    if (sessionName.value.isNotBlank()) {
+                        viewModel.createRoom(
+                            name = sessionName.value.trim(),
+                            isPrivate = isPrivate.value,
+                            maxMembers = 8
+                        )
+                        showCreateRoomDialog.value = false
+                        sessionName.value = ""
+                        isPrivate.value = false
+                    }
+                }) {
                     Text("Create")
                 }
             },

@@ -2453,7 +2453,7 @@ private fun BitChordApp(
                     // a bar whose whole job is to stand in for the player, next
                     // to the player, is a second copy of what is already there.
                     player.song?.takeUnless { playerDocked }?.let { song ->
-                        Box(modifier = Modifier.fillMaxWidth().padding(end = 16.dp, bottom = 80.dp), contentAlignment = Alignment.BottomEnd) {
+                        Box(modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp, end = 16.dp), contentAlignment = Alignment.BottomEnd) {
                             FloatingActionButton(
                                 onClick = {
                                     if (activeJamRoomId == null) {
@@ -3306,7 +3306,7 @@ private fun BitChordApp(
                     // a bar whose whole job is to stand in for the player, next
                     // to the player, is a second copy of what is already there.
                     player.song?.takeUnless { playerDocked }?.let { song ->
-                        Box(modifier = Modifier.fillMaxWidth().padding(end = 16.dp, bottom = 80.dp), contentAlignment = Alignment.BottomEnd) {
+                        Box(modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp, end = 16.dp), contentAlignment = Alignment.BottomEnd) {
                             FloatingActionButton(
                                 onClick = {
                                     if (activeJamRoomId == null) {
