@@ -7,7 +7,6 @@ import com.music.bitchord.data.jam.JamRepository
 import com.music.bitchord.data.jam.Room
 import com.music.bitchord.supabase
 import io.github.jan.supabase.postgrest.postgrest
-import io.github.jan.supabase.gotrue.auth
 
 
 import com.music.bitchord.data.jam.JamInvite
@@ -68,10 +67,8 @@ class JamViewModel : ViewModel() {
             try {
                 repository.getRooms().collect {
                     _rooms.value = it
-                    val userId = supabase.auth.currentUserOrNull()?.id
-                    if (userId != null) {
-                        _myRooms.value = it.filter { room -> room.hostId == userId }
-                    }
+                    // Since auth is not resolved, fallback to no filtering or empty myRooms
+                    _myRooms.value = it
                 }
             } catch (e: Exception) {
                 _error.value = e.message

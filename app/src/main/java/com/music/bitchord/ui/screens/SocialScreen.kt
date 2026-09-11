@@ -17,7 +17,7 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.music.bitchord.R
-import com.music.bitchord.data.jam.JamRoom
+import com.music.bitchord.data.jam.Room
 import com.music.bitchord.ui.social.JamViewModel
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -199,7 +199,7 @@ fun SocialScreen(
 }
 
 @Composable
-fun RoomCard(room: JamRoom, onJoin: () -> Unit) {
+fun RoomCard(room: Room, onJoin: () -> Unit) {
     Surface(
         shape = RoundedCornerShape(12.dp),
         color = MaterialTheme.colorScheme.surfaceVariant,
