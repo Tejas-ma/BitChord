@@ -216,7 +216,7 @@ fun RoomCard(room: Room, onJoin: () -> Unit) {
                     style = MaterialTheme.typography.titleSmall
                 )
                 Text(
-                    text = if (room.isPrivate) "Private" else "Public",
+                    text = if (room.privacy == "private") "Private" else "Public",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
