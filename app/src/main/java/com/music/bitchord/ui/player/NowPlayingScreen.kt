@@ -2513,7 +2513,7 @@ fun NowPlayingScreen(
                     haptic = if (shuffleEnabled) Haptic.ToggleOff else Haptic.ToggleOn,
                     tapWindowMs = SHUFFLE_TAP_WINDOW_MS,
                 )
-                
+
                 var loopMode by remember(repeatMode, autoplayEnabled) {
                     mutableStateOf(
                         when {
@@ -2533,7 +2533,7 @@ fun NowPlayingScreen(
                         LoopMode.AUTOPLAY -> LoopMode.OFF
                     }
                     loopMode = nextMode
-                    
+
                     when (nextMode) {
                         LoopMode.OFF -> {
                             if (repeatMode != Player.REPEAT_MODE_OFF) onCycleRepeat()

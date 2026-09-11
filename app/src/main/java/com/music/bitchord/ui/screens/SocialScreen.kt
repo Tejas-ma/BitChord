@@ -102,11 +102,17 @@ fun SocialScreen(
                 style = MaterialTheme.typography.titleLarge
             )
             if (rooms.isEmpty()) {
+                if (rooms.isEmpty()) {
                 Text(
                     text = "No active rooms",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
+            } else {
+                rooms.forEach { room ->
+                    RoomCard(room = room, onJoin = { jamViewModel.joinRoom(room.id) })
+                }
+            }
             } else {
                 rooms.forEach { room ->
                     RoomCard(room = room, onJoin = { jamViewModel.joinRoom(room.id) })
@@ -130,11 +136,17 @@ fun SocialScreen(
                 style = MaterialTheme.typography.titleLarge
             )
             if (myRooms.isEmpty()) {
+                if (myRooms.isEmpty()) {
                 Text(
                     text = "No rooms yet",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
+            } else {
+                myRooms.forEach { room ->
+                    RoomCard(room = room, onJoin = { jamViewModel.joinRoom(room.id) })
+                }
+            }
             } else {
                 myRooms.forEach { room ->
                     RoomCard(room = room, onJoin = { jamViewModel.joinRoom(room.id) })

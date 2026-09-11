@@ -409,7 +409,13 @@ private fun BitChordApp(
     // background at all. Hosting it here also puts the scrim over the tab bar
     // and the mini player, like every other alert in the app.
     var editingSource by remember { mutableStateOf<SourceConfig?>(null) }
-    var activeJamRoomId by remember { mutableStateOf<String?>(null) }
+var activeJamRoomId by remember { mutableStateOf<String?>(null) }
+    val viewModelActiveRoomId by jamViewModel.activeRoomId.collectAsStateWithLifecycle()
+    LaunchedEffect(viewModelActiveRoomId) {
+        if (viewModelActiveRoomId != null) {
+            activeJamRoomId = viewModelActiveRoomId
+        }
+    }
     val viewModelActiveRoomId by jamViewModel.activeRoomId.collectAsStateWithLifecycle()
     LaunchedEffect(viewModelActiveRoomId) {
         if (viewModelActiveRoomId != null) {

@@ -20,7 +20,7 @@ class JamViewModel : ViewModel() {
 
     private val repository = JamRepository()
 
-    
+
     private val _activeRoomId = MutableStateFlow<String?>(null)
     val activeRoomId: StateFlow<String?> = _activeRoomId.asStateFlow()
 
@@ -41,17 +41,14 @@ class JamViewModel : ViewModel() {
 
     fun createRoom(name: String, isPrivate: Boolean, maxMembers: Int) {
         viewModelScope.launch {
+            _isLoading.value = true
             try {
-                supabase.postgrest["rooms"].insert(
-                    mapOf(
-                        "name" to name,
-                        "is_private" to isPrivate,
-                        "max_members" to maxMembers,
-                        "host_id" to null
-                    )
-                )
+                repository.createRoom(name, "host_id", if (isPrivate) "private" else "everyone")
+                loadRooms()
             } catch (e: Exception) {
-                _error.value = "Could not create room. Try again."
+                _error.value = "Could not create room."
+            } finally {
+                _isLoading.value = false
             }
         }
     }
@@ -65,7 +62,7 @@ class JamViewModel : ViewModel() {
     fun loadRooms() {
         viewModelScope.launch {
             try {
-                repository.getRooms().collect { 
+                repository.getRooms().collect {
                     _rooms.value = it
                     // Since auth is not resolved, fallback to no filtering or empty myRooms
                     _myRooms.value = it
@@ -103,7 +100,7 @@ class JamViewModel : ViewModel() {
         }
     }
 
-    
+
     fun joinRoom(roomId: String) {
         _activeRoomId.value = roomId
     }
