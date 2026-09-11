@@ -17,7 +17,7 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.music.bitchord.R
-import com.music.bitchord.data.jam.JamRoom
+import com.music.bitchord.data.jam.Room
 import com.music.bitchord.ui.social.JamViewModel
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -102,11 +102,17 @@ fun SocialScreen(
                 style = MaterialTheme.typography.titleLarge
             )
             if (rooms.isEmpty()) {
+                if (rooms.isEmpty()) {
                 Text(
                     text = "No active rooms",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
+            } else {
+                rooms.forEach { room ->
+                    RoomCard(room = room, onJoin = { jamViewModel.joinRoom(room.id) })
+                }
+            }
             } else {
                 rooms.forEach { room ->
                     RoomCard(room = room, onJoin = { jamViewModel.joinRoom(room.id) })
@@ -130,11 +136,17 @@ fun SocialScreen(
                 style = MaterialTheme.typography.titleLarge
             )
             if (myRooms.isEmpty()) {
+                if (myRooms.isEmpty()) {
                 Text(
                     text = "No rooms yet",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
+            } else {
+                myRooms.forEach { room ->
+                    RoomCard(room = room, onJoin = { jamViewModel.joinRoom(room.id) })
+                }
+            }
             } else {
                 myRooms.forEach { room ->
                     RoomCard(room = room, onJoin = { jamViewModel.joinRoom(room.id) })
@@ -199,7 +211,7 @@ fun SocialScreen(
 }
 
 @Composable
-fun RoomCard(room: JamRoom, onJoin: () -> Unit) {
+fun RoomCard(room: Room, onJoin: () -> Unit) {
     Surface(
         shape = RoundedCornerShape(12.dp),
         color = MaterialTheme.colorScheme.surfaceVariant,
@@ -216,7 +228,7 @@ fun RoomCard(room: JamRoom, onJoin: () -> Unit) {
                     style = MaterialTheme.typography.titleSmall
                 )
                 Text(
-                    text = if (room.isPrivate) "Private" else "Public",
+                    text = if (room.privacy == "private") "Private" else "Public",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
