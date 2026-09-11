@@ -133,7 +133,6 @@ import com.music.bitchord.ui.screens.DiscordDialogHost
 import com.music.bitchord.ui.screens.DiscordScreen
 import com.music.bitchord.ui.screens.HistoryScreen
 import com.music.bitchord.ui.screens.SettingsScreen
-import com.music.bitchord.ui.screens.SocialScreen
 import com.music.bitchord.ui.screens.SourceEditorAlert
 import com.music.bitchord.ui.screens.SourcesScreen
 import com.music.bitchord.ui.screens.SpotifyCanvasAuthScreen
@@ -409,13 +408,7 @@ private fun BitChordApp(
     // background at all. Hosting it here also puts the scrim over the tab bar
     // and the mini player, like every other alert in the app.
     var editingSource by remember { mutableStateOf<SourceConfig?>(null) }
-var activeJamRoomId by remember { mutableStateOf<String?>(null) }
-    val viewModelActiveRoomId by jamViewModel.activeRoomId.collectAsStateWithLifecycle()
-    LaunchedEffect(viewModelActiveRoomId) {
-        if (viewModelActiveRoomId != null) {
-            activeJamRoomId = viewModelActiveRoomId
-        }
-    }
+val activeRoom by jamViewModel.activeRoom.collectAsStateWithLifecycle()
     var showHistory by remember { mutableStateOf(false) }
     // A Library shelf's "Show all" — the shelf it was opened from, so its own
     // cards can be laid out again as a full-screen grid. See [LibraryGridPage].
@@ -1647,7 +1640,7 @@ var activeJamRoomId by remember { mutableStateOf<String?>(null) }
         BackHandler(enabled = discordDialog != null) { discordDialog = null }
         BackHandler(enabled = editingSource != null) { editingSource = null }
         BackHandler(enabled = showHistory) { showHistory = false }
-        BackHandler(enabled = activeJamRoomId != null) { activeJamRoomId = null }
+        BackHandler(enabled = false) { /* do nothing */ }
         // Disabled while a detail page is open over the grid: that one's own
         // BackHandler below has to close first, or back would skip past it
         // straight to Library. See [onLibraryItemClick].
@@ -1675,7 +1668,7 @@ var activeJamRoomId by remember { mutableStateOf<String?>(null) }
                         // give way to the `detail != null` branch below it
                         // rather than keep showing the grid underneath.
                         libraryShowAll != null && detail == null -> "library_show_all"
-                        activeJamRoomId != null -> "jam_room"
+                        false -> "jam_room"
                         showAccountScrobbling -> "account_scrobbling"
                         showSources -> "sources"
                         // Above Replay, not below it. The top bar's account
@@ -1845,13 +1838,13 @@ var activeJamRoomId by remember { mutableStateOf<String?>(null) }
                             onOpenDiscord = { showDiscord = true },
                             contentPadding = listPadding,
                         )
-                    } else if (key == "jam_room") {
-                        val roomId = activeJamRoomId ?: "quick_jam"
-                                                com.music.bitchord.ui.social.JamRoomScreen(
-                            roomId = roomId,
-                            viewModel = jamViewModel,
-                            roomName = "Jam Session",
-                            onBack = { activeJamRoomId = null }
+                    } else if (key == "jam_room" && activeRoom != null) {
+                        com.music.bitchord.ui.social.JamRoomScreen(
+                            room = activeRoom!!,
+                            currentUserId = "local_user_id",
+                            jamViewModel = jamViewModel,
+                            onLeave = { jamViewModel.leaveRoom() },
+                            modifier = Modifier.fillMaxSize()
                         )
                     } else if (key == "sources") {
                         SourcesScreen(
@@ -2060,9 +2053,9 @@ var activeJamRoomId by remember { mutableStateOf<String?>(null) }
                             loadingMore = homeLoadingMore,
                             recentlyPlayedLoading = homeRecentlyPlayedLoading,
                         )
-                        TAB_SOCIAL -> SocialScreen(
+                        TAB_SOCIAL -> com.music.bitchord.ui.social.SocialScreen(
                             jamViewModel = jamViewModel,
-                            onNavigateToJamRoom = { roomId -> activeJamRoomId = roomId }
+                            modifier = Modifier.fillMaxSize()
                         )
                         TAB_SEARCH -> SearchScreen(
                             query = query,
@@ -2463,12 +2456,12 @@ var activeJamRoomId by remember { mutableStateOf<String?>(null) }
                         Box(modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp, end = 16.dp), contentAlignment = Alignment.BottomEnd) {
                             FloatingActionButton(
                                 onClick = {
-                                    if (activeJamRoomId == null) {
+                                    if ("" == null) {
                                         showStartJamDialog = true
                                     } else {
-                                        val current = activeJamRoomId
-                                        activeJamRoomId = null
-                                        activeJamRoomId = current
+                                        val current = ""
+                                        /* do nothing */
+                                        /* do nothing */
                                     }
                                 },
                                 shape = RoundedCornerShape(12.dp),
@@ -2528,7 +2521,7 @@ var activeJamRoomId by remember { mutableStateOf<String?>(null) }
                         // give way to the `detail != null` branch below it
                         // rather than keep showing the grid underneath.
                         libraryShowAll != null && detail == null -> "library_show_all"
-                        activeJamRoomId != null -> "jam_room"
+                        false -> "jam_room"
                         showAccountScrobbling -> "account_scrobbling"
                         showSources -> "sources"
                         // Above Replay, not below it. The top bar's account
@@ -2698,13 +2691,13 @@ var activeJamRoomId by remember { mutableStateOf<String?>(null) }
                             onOpenDiscord = { showDiscord = true },
                             contentPadding = listPadding,
                         )
-                    } else if (key == "jam_room") {
-                        val roomId = activeJamRoomId ?: "quick_jam"
-                                                com.music.bitchord.ui.social.JamRoomScreen(
-                            roomId = roomId,
-                            viewModel = jamViewModel,
-                            roomName = "Jam Session",
-                            onBack = { activeJamRoomId = null }
+                    } else if (key == "jam_room" && activeRoom != null) {
+                        com.music.bitchord.ui.social.JamRoomScreen(
+                            room = activeRoom!!,
+                            currentUserId = "local_user_id",
+                            jamViewModel = jamViewModel,
+                            onLeave = { jamViewModel.leaveRoom() },
+                            modifier = Modifier.fillMaxSize()
                         )
                     } else if (key == "sources") {
                         SourcesScreen(
@@ -2913,9 +2906,9 @@ var activeJamRoomId by remember { mutableStateOf<String?>(null) }
                             loadingMore = homeLoadingMore,
                             recentlyPlayedLoading = homeRecentlyPlayedLoading,
                         )
-                        TAB_SOCIAL -> SocialScreen(
+                        TAB_SOCIAL -> com.music.bitchord.ui.social.SocialScreen(
                             jamViewModel = jamViewModel,
-                            onNavigateToJamRoom = { roomId -> activeJamRoomId = roomId }
+                            modifier = Modifier.fillMaxSize()
                         )
                         TAB_SEARCH -> SearchScreen(
                             query = query,
@@ -3316,12 +3309,12 @@ var activeJamRoomId by remember { mutableStateOf<String?>(null) }
                         Box(modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp, end = 16.dp), contentAlignment = Alignment.BottomEnd) {
                             FloatingActionButton(
                                 onClick = {
-                                    if (activeJamRoomId == null) {
+                                    if ("" == null) {
                                         showStartJamDialog = true
                                     } else {
-                                        val current = activeJamRoomId
-                                        activeJamRoomId = null
-                                        activeJamRoomId = current
+                                        val current = ""
+                                        /* do nothing */
+                                        /* do nothing */
                                     }
                                 },
                                 shape = RoundedCornerShape(12.dp),

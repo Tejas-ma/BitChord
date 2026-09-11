@@ -1,205 +1,144 @@
 package com.music.bitchord.ui.social
 
-import androidx.lifecycle.ViewModel
+import android.app.Application
+import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
-import com.music.bitchord.data.jam.FriendActivity
-import com.music.bitchord.data.jam.JamRepository
-import com.music.bitchord.data.jam.Room
+import com.music.bitchord.data.jam.JamRoom
+import com.music.bitchord.data.jam.JamQueueItem
 import com.music.bitchord.supabase
 import io.github.jan.supabase.postgrest.postgrest
-
-
-import com.music.bitchord.data.jam.JamInvite
-import kotlinx.coroutines.flow.Flow
+import io.github.jan.supabase.postgrest.query.filter.FilterOperator
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
 
-class JamViewModel : ViewModel() {
+class JamViewModel(application: Application) : AndroidViewModel(application) {
 
-    private val repository = JamRepository()
+    private val _rooms = MutableStateFlow<List<JamRoom>>(emptyList())
+    val rooms: StateFlow<List<JamRoom>> = _rooms.asStateFlow()
 
+    private val _myRooms = MutableStateFlow<List<JamRoom>>(emptyList())
+    val myRooms: StateFlow<List<JamRoom>> = _myRooms.asStateFlow()
 
-    private val _activeRoomId = MutableStateFlow<String?>(null)
-    val activeRoomId: StateFlow<String?> = _activeRoomId.asStateFlow()
+    private val _activeRoom = MutableStateFlow<JamRoom?>(null)
+    val activeRoom: StateFlow<JamRoom?> = _activeRoom.asStateFlow()
 
-    private val _myRooms = MutableStateFlow<List<Room>>(emptyList())
-    val myRooms: StateFlow<List<Room>> = _myRooms.asStateFlow()
-
-    private val _rooms = MutableStateFlow<List<Room>>(emptyList())
-    val rooms: StateFlow<List<Room>> = _rooms.asStateFlow()
-
-    private val _friendsListening = MutableStateFlow<List<FriendActivity>>(emptyList())
-    val friendsListening: StateFlow<List<FriendActivity>> = _friendsListening.asStateFlow()
-
-    private val _isLoading = MutableStateFlow(false)
-    val isLoading: StateFlow<Boolean> = _isLoading.asStateFlow()
+    private val _queue = MutableStateFlow<List<JamQueueItem>>(emptyList())
+    val queue: StateFlow<List<JamQueueItem>> = _queue.asStateFlow()
 
     private val _error = MutableStateFlow<String?>(null)
     val error: StateFlow<String?> = _error.asStateFlow()
 
     fun createRoom(name: String, isPrivate: Boolean, maxMembers: Int) {
         viewModelScope.launch {
-            _isLoading.value = true
             try {
-                repository.createRoom(name, "host_id", if (isPrivate) "private" else "everyone")
+                // auth.currentUserOrNull() doesn't exist, we will use local string as fallback for now
+                val userId = "local_user"
+                val room = supabase.postgrest["rooms"].insert(
+                    buildJsonObject {
+                        put("name", name)
+                        put("host_id", userId)
+                        put("privacy", if (isPrivate) "private" else "everyone")
+                        put("is_active", true)
+                        put("allow_others_to_play", false)
+                        put("allow_invite", true)
+                    }
+                ).decodeAs<JamRoom>()
+                _activeRoom.value = room
+                loadQueue(room.id)
                 loadRooms()
             } catch (e: Exception) {
-                _error.value = "Could not create room."
-            } finally {
-                _isLoading.value = false
+                _error.value = "Could not create room: ${e.message}"
             }
         }
     }
 
+    fun joinRoom(room: JamRoom) {
+        viewModelScope.launch {
+            _activeRoom.value = room
+            loadQueue(room.id)
+        }
+    }
 
-    init {
-        loadRooms()
-        loadFriendsListening()
+    fun leaveRoom() {
+        _activeRoom.value = null
+        _queue.value = emptyList()
+    }
+
+    fun endRoom(roomId: String) {
+        viewModelScope.launch {
+            try {
+                supabase.postgrest["queue"]
+                    .delete { filter { eq("room_id", roomId) } }
+                supabase.postgrest["rooms"]
+                    .update({ set("is_active", false) }) {
+                        filter { eq("id", roomId) }
+                    }
+                _activeRoom.value = null
+                _queue.value = emptyList()
+                loadRooms()
+            } catch (e: Exception) {
+                _error.value = "Could not end room: ${e.message}"
+            }
+        }
+    }
+
+    fun updateRoomSettings(
+        roomId: String,
+        allowOthersToPlay: Boolean,
+        allowInvite: Boolean
+    ) {
+        viewModelScope.launch {
+            try {
+                supabase.postgrest["rooms"]
+                    .update({
+                        set("allow_others_to_play", allowOthersToPlay)
+                        set("allow_invite", allowInvite)
+                    }) {
+                        filter { eq("id", roomId) }
+                    }
+                _activeRoom.value = _activeRoom.value?.copy(
+                    allowOthersToPlay = allowOthersToPlay,
+                    allowInvite = allowInvite
+                )
+            } catch (e: Exception) {
+                _error.value = "Could not update settings"
+            }
+        }
+    }
+
+    fun loadQueue(roomId: String) {
+        viewModelScope.launch {
+            try {
+                val items = supabase.postgrest["queue"]
+                    .select { filter { eq("room_id", roomId) } }
+                    .decodeList<JamQueueItem>()
+                _queue.value = items.sortedBy { it.position }
+            } catch (e: Exception) {
+                _error.value = "Could not load queue"
+            }
+        }
     }
 
     fun loadRooms() {
         viewModelScope.launch {
             try {
-                repository.getRooms().collect {
-                    _rooms.value = it
-                    // Since auth is not resolved, fallback to no filtering or empty myRooms
-                    _myRooms.value = it
-                }
+                val userId = "local_user"
+                val all = supabase.postgrest["rooms"]
+                    .select { filter { eq("is_active", true) } }
+                    .decodeList<JamRoom>()
+                _rooms.value = all
+                _myRooms.value = all.filter { it.hostId == userId }
             } catch (e: Exception) {
-                _error.value = e.message
-            }
-        }
-    }
-
-    private fun loadFriendsListening() {
-        viewModelScope.launch {
-            try {
-                repository.getFriendsListening().collect {
-                    _friendsListening.value = it
-                }
-            } catch (e: Exception) {
-                _friendsListening.value = emptyList()
-                _error.value = "Could not load activity. Pull to refresh."
-            }
-        }
-    }
-
-    fun createRoom(name: String, hostId: String, privacy: String = "everyone") {
-        viewModelScope.launch {
-            _isLoading.value = true
-            try {
-                repository.createRoom(name, hostId, privacy)
-                loadRooms()
-            } catch (e: Exception) {
-                _error.value = e.message
-            } finally {
-                _isLoading.value = false
-            }
-        }
-    }
-
-
-    fun joinRoom(roomId: String) {
-        _activeRoomId.value = roomId
-    }
-
-    fun joinRoom(roomId: String, userId: String) {
-        viewModelScope.launch {
-            try {
-                repository.joinRoom(roomId, userId)
-            } catch (e: Exception) {
-                _error.value = e.message
-            }
-        }
-    }
-
-    fun leaveRoom(roomId: String, userId: String) {
-        viewModelScope.launch {
-            try {
-                repository.leaveRoom(roomId, userId)
-            } catch (e: Exception) {
-                _error.value = e.message
-            }
-        }
-    }
-
-    fun sendInvite(roomId: String, fromUserId: String, toUserId: String) {
-        viewModelScope.launch {
-            try {
-                repository.sendInvite(roomId, fromUserId, toUserId)
-            } catch (e: Exception) {
-                _error.value = e.message
-            }
-        }
-    }
-
-    fun updatePrivacy(roomId: String, privacy: String) {
-        viewModelScope.launch {
-            try {
-                repository.updateRoomPrivacy(roomId, privacy)
-            } catch (e: Exception) {
-                _error.value = e.message
+                _error.value = "Could not load rooms"
             }
         }
     }
 
     fun clearError() { _error.value = null }
 
-
-
-    fun observeQueue(roomId: String) = repository.observeQueue(roomId)
-    fun observePlayback(roomId: String) = repository.observePlayback(roomId)
-
-
-    fun updateRoomPermissions(roomId: String, canGuestsAdd: Boolean, canGuestsSkip: Boolean) {
-        viewModelScope.launch {
-            try {
-                repository.updateRoomPermissions(roomId, canGuestsAdd, canGuestsSkip)
-                loadRooms()
-            } catch (e: Exception) {
-                _error.value = e.message
-            }
-        }
-    }
-
-    fun endRoom(roomId: String) {
-        viewModelScope.launch {
-            try {
-                repository.endRoom(roomId)
-                loadRooms()
-            } catch (e: Exception) {
-                _error.value = e.message
-            }
-        }
-    }
-
-    fun requestToJoin(roomId: String, userId: String) {
-        viewModelScope.launch {
-            try {
-                repository.sendInvite(roomId, userId, "") // Using sendInvite for requests where toUserId is empty/host
-            } catch (e: Exception) {
-                _error.value = e.message
-            }
-        }
-    }
-
-    fun observeJoinRequests(roomId: String): Flow<List<JamInvite>> {
-        return repository.observeJoinRequests(roomId)
-    }
-
-    fun handleJoinRequest(requestId: String, roomId: String, userId: String, accept: Boolean) {
-        viewModelScope.launch {
-            try {
-                repository.updateInviteStatus(requestId, if (accept) "accepted" else "declined")
-                if (accept) {
-                    repository.joinRoom(roomId, userId)
-                    loadRooms()
-                }
-            } catch (e: Exception) {
-                _error.value = e.message
-            }
-        }
-    }
+    init { loadRooms() }
 }
