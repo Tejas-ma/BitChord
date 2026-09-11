@@ -4,6 +4,7 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
@@ -13,21 +14,30 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.painterResource
-import androidx.lifecycle.viewmodel.compose.viewModel
-import com.music.bitchord.ui.social.JamViewModel
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.music.bitchord.R
+import com.music.bitchord.data.jam.JamRoom
+import com.music.bitchord.ui.social.JamViewModel
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SocialScreen(
+    jamViewModel: JamViewModel,
     onNavigateToJamRoom: (String) -> Unit
 ) {
-    val viewModel: JamViewModel = viewModel()
-    val jamViewModel: JamViewModel = viewModel()
+    val rooms by jamViewModel.rooms.collectAsStateWithLifecycle()
+    val myRooms by jamViewModel.myRooms.collectAsStateWithLifecycle()
+    val activeRoomId by jamViewModel.activeRoomId.collectAsStateWithLifecycle()
+    val error by jamViewModel.error.collectAsStateWithLifecycle()
+
     val showCreateRoomDialog = remember { mutableStateOf(false) }
     val sessionName = remember { mutableStateOf("") }
     val isPrivate = remember { mutableStateOf(false) }
+
+    LaunchedEffect(Unit) {
+        jamViewModel.loadRooms()
+    }
 
     Column(
         modifier = Modifier
@@ -46,12 +56,14 @@ fun SocialScreen(
             Image(
                 painter = painterResource(id = R.drawable.ic_launcher_foreground),
                 contentDescription = "BitChord",
-                modifier = Modifier.height(48.dp).widthIn(min = 48.dp),
+                modifier = Modifier
+                    .height(48.dp)
+                    .widthIn(min = 48.dp),
                 contentScale = ContentScale.Fit
             )
             Surface(
                 onClick = { showCreateRoomDialog.value = true },
-                shape = androidx.compose.foundation.shape.RoundedCornerShape(20.dp),
+                shape = RoundedCornerShape(20.dp),
                 color = MaterialTheme.colorScheme.surfaceVariant,
                 modifier = Modifier.height(36.dp)
             ) {
@@ -89,11 +101,17 @@ fun SocialScreen(
                 text = "Active Rooms",
                 style = MaterialTheme.typography.titleLarge
             )
-            Text(
-                text = "No active rooms",
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
+            if (rooms.isEmpty()) {
+                Text(
+                    text = "No active rooms",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            } else {
+                rooms.forEach { room ->
+                    RoomCard(room = room, onJoin = { jamViewModel.joinRoom(room.id) })
+                }
+            }
 
             // Friends
             Text(
@@ -111,11 +129,17 @@ fun SocialScreen(
                 text = "My Rooms",
                 style = MaterialTheme.typography.titleLarge
             )
-            Text(
-                text = "No rooms yet",
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
+            if (myRooms.isEmpty()) {
+                Text(
+                    text = "No rooms yet",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            } else {
+                myRooms.forEach { room ->
+                    RoomCard(room = room, onJoin = { jamViewModel.joinRoom(room.id) })
+                }
+            }
         }
     }
 
@@ -152,7 +176,7 @@ fun SocialScreen(
             confirmButton = {
                 TextButton(onClick = {
                     if (sessionName.value.isNotBlank()) {
-                        viewModel.createRoom(
+                        jamViewModel.createRoom(
                             name = sessionName.value.trim(),
                             isPrivate = isPrivate.value,
                             maxMembers = 8
@@ -171,5 +195,35 @@ fun SocialScreen(
                 }
             }
         )
+    }
+}
+
+@Composable
+fun RoomCard(room: JamRoom, onJoin: () -> Unit) {
+    Surface(
+        shape = RoundedCornerShape(12.dp),
+        color = MaterialTheme.colorScheme.surfaceVariant,
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Row(
+            modifier = Modifier.padding(12.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column {
+                Text(
+                    text = room.name,
+                    style = MaterialTheme.typography.titleSmall
+                )
+                Text(
+                    text = if (room.isPrivate) "Private" else "Public",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            TextButton(onClick = onJoin) {
+                Text("Join")
+            }
+        }
     }
 }

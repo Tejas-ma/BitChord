@@ -335,6 +335,7 @@ private fun BitChordApp(
     windowWidth: Dp,
     appBackdrop: LayerBackdrop,
     viewModel: MainViewModel = viewModel(),
+    jamViewModel: com.music.bitchord.ui.social.JamViewModel = viewModel(),
 ) {
     val context = LocalContext.current
     val clipboard = LocalClipboardManager.current
@@ -409,6 +410,12 @@ private fun BitChordApp(
     // and the mini player, like every other alert in the app.
     var editingSource by remember { mutableStateOf<SourceConfig?>(null) }
     var activeJamRoomId by remember { mutableStateOf<String?>(null) }
+    val viewModelActiveRoomId by jamViewModel.activeRoomId.collectAsStateWithLifecycle()
+    LaunchedEffect(viewModelActiveRoomId) {
+        if (viewModelActiveRoomId != null) {
+            activeJamRoomId = viewModelActiveRoomId
+        }
+    }
     var showHistory by remember { mutableStateOf(false) }
     // A Library shelf's "Show all" — the shelf it was opened from, so its own
     // cards can be laid out again as a full-screen grid. See [LibraryGridPage].
@@ -1840,8 +1847,7 @@ private fun BitChordApp(
                         )
                     } else if (key == "jam_room") {
                         val roomId = activeJamRoomId ?: "quick_jam"
-                        val jamViewModel: com.music.bitchord.ui.social.JamViewModel = androidx.lifecycle.viewmodel.compose.viewModel()
-                        com.music.bitchord.ui.social.JamRoomScreen(
+                                                com.music.bitchord.ui.social.JamRoomScreen(
                             roomId = roomId,
                             viewModel = jamViewModel,
                             roomName = "Jam Session",
@@ -2055,6 +2061,7 @@ private fun BitChordApp(
                             recentlyPlayedLoading = homeRecentlyPlayedLoading,
                         )
                         TAB_SOCIAL -> SocialScreen(
+                            jamViewModel = jamViewModel,
                             onNavigateToJamRoom = { roomId -> activeJamRoomId = roomId }
                         )
                         TAB_SEARCH -> SearchScreen(
@@ -2188,7 +2195,7 @@ private fun BitChordApp(
                 }
 
                 if (selectedTab != TAB_SOCIAL) {
-                FrostedTopBar(
+                    FrostedTopBar(
                     title = when {
                         showDiscord -> "Discord"
                         showHistory -> stringResource(R.string.history)
@@ -2693,8 +2700,7 @@ private fun BitChordApp(
                         )
                     } else if (key == "jam_room") {
                         val roomId = activeJamRoomId ?: "quick_jam"
-                        val jamViewModel: com.music.bitchord.ui.social.JamViewModel = androidx.lifecycle.viewmodel.compose.viewModel()
-                        com.music.bitchord.ui.social.JamRoomScreen(
+                                                com.music.bitchord.ui.social.JamRoomScreen(
                             roomId = roomId,
                             viewModel = jamViewModel,
                             roomName = "Jam Session",
@@ -2908,6 +2914,7 @@ private fun BitChordApp(
                             recentlyPlayedLoading = homeRecentlyPlayedLoading,
                         )
                         TAB_SOCIAL -> SocialScreen(
+                            jamViewModel = jamViewModel,
                             onNavigateToJamRoom = { roomId -> activeJamRoomId = roomId }
                         )
                         TAB_SEARCH -> SearchScreen(
@@ -3041,7 +3048,7 @@ private fun BitChordApp(
                 }
 
                 if (selectedTab != TAB_SOCIAL) {
-                FrostedTopBar(
+                    FrostedTopBar(
                     title = when {
                         showDiscord -> "Discord"
                         showHistory -> stringResource(R.string.history)
