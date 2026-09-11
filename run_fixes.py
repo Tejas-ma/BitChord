@@ -1,4 +1,87 @@
-package com.music.bitchord.ui.screens
+import re
+import os
+
+# --- 1. Fix FrostedTopBar brace wrap ---
+file_path_main = "app/src/main/java/com/music/bitchord/MainActivity.kt"
+with open(file_path_main, "r") as f:
+    main_content = f.read()
+
+# Replace: `if (selectedTab != TAB_EXPLORE) FrostedTopBar(`
+# With: `if (selectedTab != TAB_EXPLORE) {\n                    FrostedTopBar(`
+main_content = main_content.replace(
+    "                if (selectedTab != TAB_EXPLORE) FrostedTopBar(",
+    "                if (selectedTab != TAB_EXPLORE) {\n                    FrostedTopBar("
+)
+
+# Then find the closing ) of FrostedTopBar
+# It is the ) on its own line immediately before this comment: "// Drawn before the bars so their own glass reads on top of it."
+# "After that closing ), add a new line: }"
+closing_brace_replacement = """                    },
+                )
+                }
+
+                // Drawn before the bars so their own glass reads on top of it."""
+main_content = main_content.replace(
+    "                    },\n                )\n\n                // Drawn before the bars so their own glass reads on top of it.",
+    closing_brace_replacement
+)
+
+# Also wrap TopFadeBlur
+top_fade_blur_original = """                val isDetailVisible = detail != null && !isLocalDetail && !showSettings &&
+                    !showAccountScrobbling && !showSources && !showReplay
+                TopFadeBlur(
+                    hazeState = hazeState,"""
+top_fade_blur_new = """                val isDetailVisible = detail != null && !isLocalDetail && !showSettings &&
+                    !showAccountScrobbling && !showSources && !showReplay
+                if (selectedTab != TAB_EXPLORE) {
+                TopFadeBlur(
+                    hazeState = hazeState,"""
+main_content = main_content.replace(top_fade_blur_original, top_fade_blur_new)
+
+# And add the closing brace for TopFadeBlur
+top_fade_blur_end_orig = """                    scrimColor = when {
+                        showReplay -> Color.Black
+                        isDetailVisible -> detailPalette.background
+                        else -> MaterialTheme.colorScheme.background
+                    },
+                    modifier = Modifier.align(Alignment.TopCenter),
+                )"""
+top_fade_blur_end_new = """                    scrimColor = when {
+                        showReplay -> Color.Black
+                        isDetailVisible -> detailPalette.background
+                        else -> MaterialTheme.colorScheme.background
+                    },
+                    modifier = Modifier.align(Alignment.TopCenter),
+                )
+                }"""
+main_content = main_content.replace(top_fade_blur_end_orig, top_fade_blur_end_new)
+
+
+# --- FIX 3 — Jam FAB bottom padding in MainActivity.kt ---
+# Change its modifier to:
+#     modifier = Modifier
+#         .padding(bottom = 80.dp, end = 16.dp)
+#         .align(Alignment.BottomEnd)
+fab_old = r"""                        Box\(modifier = Modifier\.fillMaxWidth\(\)\.padding\(start = 10\.dp, bottom = 4\.dp\)\) \{
+                            FloatingActionButton\("""
+fab_new = """                        Box(modifier = Modifier.fillMaxWidth().padding(bottom = 80.dp, end = 16.dp), contentAlignment = Alignment.BottomEnd) {
+                            FloatingActionButton("""
+# Let's check what it currently looks like since the base branch was reset.
+# It might be `Box(modifier = Modifier.fillMaxWidth().padding(end = 16.dp, bottom = 80.dp), contentAlignment = Alignment.BottomEnd)` from my previous commit if it got merged.
+# Or `Alignment.BottomStart` or something.
+# The prompt says: "It currently uses Alignment.BottomStart or is left-aligned. Change its alignment to Alignment.BottomEnd"
+# Wait, I'll search using regex to find the exact Box wrapping FloatingActionButton.
+fab_box_pattern = r"                        Box\(modifier = Modifier\.fillMaxWidth\(\)\.[^)]+\)\)(, contentAlignment = Alignment\.[a-zA-Z]+)? \{\n                            FloatingActionButton\("
+fab_box_new = r"""                        Box(modifier = Modifier.fillMaxWidth().padding(bottom = 80.dp, end = 16.dp), contentAlignment = Alignment.BottomEnd) {
+                            FloatingActionButton("""
+main_content = re.sub(fab_box_pattern, fab_box_new, main_content)
+
+with open(file_path_main, "w") as f:
+    f.write(main_content)
+
+
+# --- FIX 2 — SocialScreen.kt full content replacement ---
+social_screen_content = """package com.music.bitchord.ui.screens
 
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -139,3 +222,8 @@ fun SocialScreen(
         )
     }
 }
+"""
+
+with open("app/src/main/java/com/music/bitchord/ui/screens/SocialScreen.kt", "w") as f:
+    f.write(social_screen_content)
+

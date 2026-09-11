@@ -2919,7 +2919,7 @@ private fun BitChordApp(
                             charts = viewModel.charts.collectAsStateWithLifecycle().value,
                             loadingMore = searchLoadingMore,
                             onLoadMore = viewModel::loadMoreSearchResults,
-                            onCategoryClick = { title -> 
+                            onCategoryClick = { title ->
                                 val exploreState = viewModel.explore.value
                                 if (exploreState is UiState.Success) {
                                     val moodGenre = exploreState.data.flatMap { it.items }.find { it.title.equals(title, ignoreCase = true) }
