@@ -2188,7 +2188,7 @@ private fun BitChordApp(
                 }
 
                 if (selectedTab != TAB_SOCIAL) {
-                FrostedTopBar(
+                    FrostedTopBar(
                     title = when {
                         showDiscord -> "Discord"
                         showHistory -> stringResource(R.string.history)
@@ -3041,7 +3041,7 @@ private fun BitChordApp(
                 }
 
                 if (selectedTab != TAB_SOCIAL) {
-                FrostedTopBar(
+                    FrostedTopBar(
                     title = when {
                         showDiscord -> "Discord"
                         showHistory -> stringResource(R.string.history)
