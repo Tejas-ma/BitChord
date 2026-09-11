@@ -416,12 +416,6 @@ var activeJamRoomId by remember { mutableStateOf<String?>(null) }
             activeJamRoomId = viewModelActiveRoomId
         }
     }
-    val viewModelActiveRoomId by jamViewModel.activeRoomId.collectAsStateWithLifecycle()
-    LaunchedEffect(viewModelActiveRoomId) {
-        if (viewModelActiveRoomId != null) {
-            activeJamRoomId = viewModelActiveRoomId
-        }
-    }
     var showHistory by remember { mutableStateOf(false) }
     // A Library shelf's "Show all" — the shelf it was opened from, so its own
     // cards can be laid out again as a full-screen grid. See [LibraryGridPage].
