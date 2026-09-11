@@ -2513,7 +2513,7 @@ fun NowPlayingScreen(
                     haptic = if (shuffleEnabled) Haptic.ToggleOff else Haptic.ToggleOn,
                     tapWindowMs = SHUFFLE_TAP_WINDOW_MS,
                 )
-                
+
                 var loopMode by remember(repeatMode, autoplayEnabled) {
                     mutableStateOf(
                         when {
