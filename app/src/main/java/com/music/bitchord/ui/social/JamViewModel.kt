@@ -20,7 +20,7 @@ class JamViewModel : ViewModel() {
 
     private val repository = JamRepository()
 
-
+    
     private val _activeRoomId = MutableStateFlow<String?>(null)
     val activeRoomId: StateFlow<String?> = _activeRoomId.asStateFlow()
 
@@ -65,7 +65,7 @@ class JamViewModel : ViewModel() {
     fun loadRooms() {
         viewModelScope.launch {
             try {
-                repository.getRooms().collect {
+                repository.getRooms().collect { 
                     _rooms.value = it
                     // Since auth is not resolved, fallback to no filtering or empty myRooms
                     _myRooms.value = it
@@ -103,7 +103,7 @@ class JamViewModel : ViewModel() {
         }
     }
 
-
+    
     fun joinRoom(roomId: String) {
         _activeRoomId.value = roomId
     }
