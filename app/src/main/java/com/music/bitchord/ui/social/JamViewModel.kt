@@ -160,11 +160,11 @@ class JamViewModel(application: Application) : AndroidViewModel(application) {
                 val all = supabase.postgrest["rooms"]
                     .select()
                     .decodeList<JamRoom>()
-                _rooms.value = all.filter {
-                    it.isActive != false
+                _rooms.value = all.filter { 
+                    it.isActive != false 
                 }
-                _myRooms.value = _rooms.value.filter {
-                    it.hostId == localUserId
+                _myRooms.value = _rooms.value.filter { 
+                    it.hostId == localUserId 
                 }
             } catch (e: Exception) {
                 _error.value = "Could not load rooms"
