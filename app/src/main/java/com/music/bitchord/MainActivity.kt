@@ -1656,7 +1656,15 @@ val activeRoom by jamViewModel.activeRoom.collectAsStateWithLifecycle()
         val configuration = LocalConfiguration.current
         val isWideScreen = configuration.screenWidthDp >= 600
 
-        if (isWideScreen) {
+        if (activeRoom != null) {
+            com.music.bitchord.ui.social.JamRoomScreen(
+                room = activeRoom!!,
+                currentUserId = authStore.localUserId,
+                jamViewModel = jamViewModel,
+                onLeave = { jamViewModel.leaveRoom() },
+                modifier = Modifier.fillMaxSize()
+            )
+        } else if (isWideScreen) {
             Row(modifier = Modifier.fillMaxSize()) {
             Box(Modifier.weight(1f).fillMaxHeight()) {
                 AnimatedContent(

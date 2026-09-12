@@ -24,10 +24,22 @@ fun SocialScreen(
 ) {
     val rooms by jamViewModel.rooms.collectAsStateWithLifecycle()
     val myRooms by jamViewModel.myRooms.collectAsStateWithLifecycle()
+    val isLoading by jamViewModel.isLoading.collectAsStateWithLifecycle()
+    val activeRoom by jamViewModel.activeRoom.collectAsStateWithLifecycle()
 
     var showCreateRoomDialog by remember { mutableStateOf(false) }
     var sessionName by remember { mutableStateOf("") }
     var isPrivate by remember { mutableStateOf(false) }
+
+
+    LaunchedEffect(activeRoom) {
+        if (activeRoom != null) {
+            showCreateRoomDialog = false
+            sessionName = ""
+            isPrivate = false
+        }
+    }
+
 
     Column(
         modifier = modifier
@@ -168,18 +180,27 @@ fun SocialScreen(
                 }
             },
             confirmButton = {
-                TextButton(onClick = {
-                    if (sessionName.isNotBlank()) {
-                        jamViewModel.createRoom(
-                            name = sessionName.trim(),
-                            isPrivate = isPrivate,
-                            maxMembers = 8
+                TextButton(
+                    onClick = {
+                        if (sessionName.isNotBlank()) {
+                            jamViewModel.createRoom(
+                                name = sessionName.trim(),
+                                isPrivate = isPrivate,
+                                maxMembers = 8
+                            )
+                        }
+                    },
+                    enabled = !isLoading && sessionName.isNotBlank()
+                ) {
+                    if (isLoading) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(16.dp),
+                            strokeWidth = 2.dp
                         )
-                        showCreateRoomDialog = false
-                        sessionName = ""
-                        isPrivate = false
+                    } else {
+                        Text("Create")
                     }
-                }) { Text("Create") }
+                }
             },
             dismissButton = {
                 TextButton(onClick = { showCreateRoomDialog = false }) {

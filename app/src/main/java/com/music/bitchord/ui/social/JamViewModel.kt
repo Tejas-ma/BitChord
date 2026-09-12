@@ -36,8 +36,12 @@ class JamViewModel(application: Application) : AndroidViewModel(application) {
     private val _error = MutableStateFlow<String?>(null)
     val error: StateFlow<String?> = _error.asStateFlow()
 
+    private val _isLoading = MutableStateFlow(false)
+    val isLoading: StateFlow<Boolean> = _isLoading.asStateFlow()
+
     fun createRoom(name: String, isPrivate: Boolean, maxMembers: Int) {
         viewModelScope.launch {
+            _isLoading.value = true
             try {
                 val room = supabase.postgrest["rooms"].insert(
                     buildJsonObject {
@@ -54,6 +58,8 @@ class JamViewModel(application: Application) : AndroidViewModel(application) {
                 loadRooms()
             } catch (e: Exception) {
                 _error.value = "Could not create room: ${e.message}"
+            } finally {
+                _isLoading.value = false
             }
         }
     }
