@@ -410,7 +410,6 @@ private fun BitChordApp(
     // background at all. Hosting it here also puts the scrim over the tab bar
     // and the mini player, like every other alert in the app.
     var editingSource by remember { mutableStateOf<SourceConfig?>(null) }
-val activeRoom by jamViewModel.activeRoom.collectAsStateWithLifecycle()
     var showHistory by remember { mutableStateOf(false) }
     // A Library shelf's "Show all" — the shelf it was opened from, so its own
     // cards can be laid out again as a full-screen grid. See [LibraryGridPage].
@@ -1383,6 +1382,21 @@ val activeRoom by jamViewModel.activeRoom.collectAsStateWithLifecycle()
         links = YtMusicRepository.trackLinks(current.videoId).getOrNull()
         linksLoading = false
     }
+val activeRoom by jamViewModel.activeRoom.collectAsStateWithLifecycle()
+
+    LaunchedEffect(player.song, activeRoom) {
+        val song = player.song ?: return@LaunchedEffect
+        val room = activeRoom ?: return@LaunchedEffect
+        val isHost = room.hostId == authStore.localUserId
+        if (isHost) {
+            jamViewModel.broadcastNowPlaying(
+                videoId = song.videoId,
+                title = song.title,
+                artist = song.artist
+            )
+        }
+    }
+
     val playerSong = player.song?.let { current ->
         val extra = links?.takeIf { it.videoId == current.videoId } ?: return@let current
         current.copy(

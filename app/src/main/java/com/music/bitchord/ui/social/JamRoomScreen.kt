@@ -30,6 +30,8 @@ fun JamRoomScreen(
     modifier: Modifier = Modifier
 ) {
     val queue by jamViewModel.queue.collectAsStateWithLifecycle()
+    val nowPlayingTitle by jamViewModel.nowPlayingTitle.collectAsStateWithLifecycle()
+    val nowPlayingArtist by jamViewModel.nowPlayingArtist.collectAsStateWithLifecycle()
     val isHost = currentUserId == room.hostId
     var showMenu by remember { mutableStateOf(false) }
     var allowOthersToPlay by remember {
@@ -191,11 +193,20 @@ fun JamRoomScreen(
                         color = MaterialTheme.colorScheme.primary
                     )
                     Text(
-                        text = "No song playing",
+                        text = nowPlayingTitle ?: "No song playing",
                         style = MaterialTheme.typography.bodyMedium,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
                     )
+                    if (nowPlayingArtist != null) {
+                        Text(
+                            text = nowPlayingArtist!!,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
                 }
             }
         }
