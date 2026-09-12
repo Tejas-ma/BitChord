@@ -3,6 +3,7 @@ package com.music.bitchord.ui.social
 import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.music.bitchord.auth.AuthStore
 import com.music.bitchord.data.jam.JamRoom
 import com.music.bitchord.data.jam.JamQueueItem
 import com.music.bitchord.supabase
@@ -16,6 +17,9 @@ import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 
 class JamViewModel(application: Application) : AndroidViewModel(application) {
+
+    private val authStore = AuthStore(application.applicationContext)
+    private val localUserId get() = authStore.localUserId
 
     private val _rooms = MutableStateFlow<List<JamRoom>>(emptyList())
     val rooms: StateFlow<List<JamRoom>> = _rooms.asStateFlow()
@@ -35,12 +39,10 @@ class JamViewModel(application: Application) : AndroidViewModel(application) {
     fun createRoom(name: String, isPrivate: Boolean, maxMembers: Int) {
         viewModelScope.launch {
             try {
-                // auth.currentUserOrNull() doesn't exist, we will use local string as fallback for now
-                val userId = "local_user"
                 val room = supabase.postgrest["rooms"].insert(
                     buildJsonObject {
                         put("name", name)
-                        put("host_id", userId)
+                        put("host_id", localUserId)
                         put("privacy", if (isPrivate) "private" else "everyone")
                         put("is_active", true)
                         put("allow_others_to_play", false)
@@ -126,12 +128,15 @@ class JamViewModel(application: Application) : AndroidViewModel(application) {
     fun loadRooms() {
         viewModelScope.launch {
             try {
-                val userId = "local_user"
                 val all = supabase.postgrest["rooms"]
-                    .select { filter { eq("is_active", true) } }
+                    .select()
                     .decodeList<JamRoom>()
-                _rooms.value = all
-                _myRooms.value = all.filter { it.hostId == userId }
+                _rooms.value = all.filter { 
+                    it.isActive != false 
+                }
+                _myRooms.value = _rooms.value.filter { 
+                    it.hostId == localUserId 
+                }
             } catch (e: Exception) {
                 _error.value = "Could not load rooms"
             }

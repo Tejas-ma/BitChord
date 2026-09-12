@@ -6,6 +6,7 @@ import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import com.music.bitchord.auth.AuthStore
 import android.view.View
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
@@ -337,6 +338,7 @@ private fun BitChordApp(
     jamViewModel: com.music.bitchord.ui.social.JamViewModel = viewModel(),
 ) {
     val context = LocalContext.current
+    val authStore = androidx.compose.runtime.remember { AuthStore(context.applicationContext) }
     val clipboard = LocalClipboardManager.current
     val hazeState = remember { HazeState() }
     // Recording the backdrop layer costs a draw pass, so it only runs when the
@@ -1841,7 +1843,7 @@ val activeRoom by jamViewModel.activeRoom.collectAsStateWithLifecycle()
                     } else if (key == "jam_room" && activeRoom != null) {
                         com.music.bitchord.ui.social.JamRoomScreen(
                             room = activeRoom!!,
-                            currentUserId = "local_user_id",
+                            currentUserId = authStore.localUserId,
                             jamViewModel = jamViewModel,
                             onLeave = { jamViewModel.leaveRoom() },
                             modifier = Modifier.fillMaxSize()
@@ -2694,7 +2696,7 @@ val activeRoom by jamViewModel.activeRoom.collectAsStateWithLifecycle()
                     } else if (key == "jam_room" && activeRoom != null) {
                         com.music.bitchord.ui.social.JamRoomScreen(
                             room = activeRoom!!,
-                            currentUserId = "local_user_id",
+                            currentUserId = authStore.localUserId,
                             jamViewModel = jamViewModel,
                             onLeave = { jamViewModel.leaveRoom() },
                             modifier = Modifier.fillMaxSize()

@@ -10,7 +10,7 @@ data class JamRoom(
     @SerialName("host_id") val hostId: String = "",
     val privacy: String = "everyone",
     @SerialName("created_at") val createdAt: String = "",
-    @SerialName("is_active") val isActive: Boolean = true,
+    @SerialName("is_active") val isActive: Boolean? = null,
     @SerialName("allow_others_to_play")
         val allowOthersToPlay: Boolean = false,
     @SerialName("allow_invite") val allowInvite: Boolean = true
