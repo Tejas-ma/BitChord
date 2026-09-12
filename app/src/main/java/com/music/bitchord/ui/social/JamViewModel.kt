@@ -9,6 +9,12 @@ import com.music.bitchord.data.jam.JamQueueItem
 import com.music.bitchord.supabase
 import io.github.jan.supabase.postgrest.postgrest
 import io.github.jan.supabase.postgrest.query.filter.FilterOperator
+import io.github.jan.supabase.realtime.RealtimeChannel
+import io.github.jan.supabase.realtime.channel
+import io.github.jan.supabase.realtime.broadcastFlow
+import io.github.jan.supabase.realtime.realtime
+import io.github.jan.supabase.realtime.broadcast
+import io.github.jan.supabase.realtime.realtime
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -39,6 +45,18 @@ class JamViewModel(application: Application) : AndroidViewModel(application) {
     private val _isLoading = MutableStateFlow(false)
     val isLoading: StateFlow<Boolean> = _isLoading.asStateFlow()
 
+    private val _nowPlayingVideoId = MutableStateFlow<String?>(null)
+    val nowPlayingVideoId: StateFlow<String?> = _nowPlayingVideoId.asStateFlow()
+
+    private val _nowPlayingTitle = MutableStateFlow<String?>(null)
+    val nowPlayingTitle: StateFlow<String?> = _nowPlayingTitle.asStateFlow()
+
+    private val _nowPlayingArtist = MutableStateFlow<String?>(null)
+    val nowPlayingArtist: StateFlow<String?> = _nowPlayingArtist.asStateFlow()
+
+    private var broadcastChannel: RealtimeChannel? = null
+
+
     fun createRoom(name: String, isPrivate: Boolean, maxMembers: Int) {
         viewModelScope.launch {
             _isLoading.value = true
@@ -53,6 +71,8 @@ class JamViewModel(application: Application) : AndroidViewModel(application) {
                         put("allow_invite", true)
                     }
                 ).decodeAs<JamRoom>()
+                _rooms.value = _rooms.value + room
+                _myRooms.value = _myRooms.value + room
                 _activeRoom.value = room
                 loadQueue(room.id)
                 loadRooms()
@@ -68,15 +88,18 @@ class JamViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             _activeRoom.value = room
             loadQueue(room.id)
+            startBroadcast(room.id)
         }
     }
 
     fun leaveRoom() {
+        stopBroadcast()
         _activeRoom.value = null
         _queue.value = emptyList()
     }
 
     fun endRoom(roomId: String) {
+        stopBroadcast()
         viewModelScope.launch {
             try {
                 supabase.postgrest["queue"]
@@ -149,7 +172,64 @@ class JamViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    fun startBroadcast(roomId: String) {
+        viewModelScope.launch {
+            try {
+                broadcastChannel = supabase.channel("room:$roomId")
+                broadcastChannel?.subscribe()
+                val flow = broadcastChannel?.broadcastFlow<Map<String, String>>("playback")
+                flow?.collect { payload ->
+                    val videoId = payload["videoId"]
+                    val title = payload["title"]
+                    val artist = payload["artist"]
+                    _nowPlayingVideoId.value = videoId
+                    _nowPlayingTitle.value = title
+                    _nowPlayingArtist.value = artist
+                }
+            } catch (e: Exception) {
+                _error.value = "Could not connect to room"
+            }
+        }
+    }
+
+    fun broadcastNowPlaying(videoId: String, title: String, artist: String) {
+        viewModelScope.launch {
+            try {
+                broadcastChannel?.broadcast(
+                    event = "playback",
+                    message = mapOf("videoId" to videoId, "title" to title, "artist" to artist)
+                )
+            } catch (e: Exception) {
+                // silent fail — broadcast is best effort
+            }
+        }
+    }
+
+    fun stopBroadcast() {
+        viewModelScope.launch {
+            try {
+                broadcastChannel?.let { supabase.realtime.removeChannel(it) }
+                broadcastChannel = null
+            } catch (e: Exception) {
+                // silent
+            }
+        }
+    }
+
+    override fun onCleared() {
+        super.onCleared()
+        stopBroadcast()
+    }
+
     fun clearError() { _error.value = null }
 
-    init { loadRooms() }
+    init {
+        loadRooms()
+        viewModelScope.launch {
+            while (true) {
+                kotlinx.coroutines.delay(30_000)
+                loadRooms()
+            }
+        }
+    }
 }
