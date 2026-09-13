@@ -48,6 +48,19 @@ class JamViewModel(application: Application) : AndroidViewModel(application) {
     val error: StateFlow<String?> = _error.asStateFlow()
 
     private val _isLoading = MutableStateFlow(false)
+
+    private val discoveryManager = JamDiscoveryManager(
+        application.applicationContext
+    )
+
+    val nearbyRoomIds: StateFlow<List<String>> =
+        discoveryManager.nearbyRoomIds
+    val isScanning: StateFlow<Boolean> =
+        discoveryManager.isScanning
+    val isBluetoothAvailable: StateFlow<Boolean> =
+        discoveryManager.isBluetoothAvailable
+
+
     val isLoading: StateFlow<Boolean> = _isLoading.asStateFlow()
 
     private val _nowPlayingVideoId = MutableStateFlow<String?>(null)
@@ -81,6 +94,23 @@ class JamViewModel(application: Application) : AndroidViewModel(application) {
     private var broadcastChannel: RealtimeChannel? = null
 
 
+
+    fun startRoomDiscovery() {
+        discoveryManager.startScanning()
+    }
+
+    fun stopRoomDiscovery() {
+        discoveryManager.stopScanning()
+    }
+
+    fun startAdvertisingRoom(roomId: String) {
+        discoveryManager.startAdvertising(roomId)
+    }
+
+    fun stopAdvertisingRoom() {
+        discoveryManager.stopAdvertising()
+    }
+
     fun createRoom(name: String, isPrivate: Boolean, maxMembers: Int) {
         viewModelScope.launch {
             _isLoading.value = true
@@ -98,12 +128,32 @@ class JamViewModel(application: Application) : AndroidViewModel(application) {
                 _rooms.value = _rooms.value + room
                 _myRooms.value = _myRooms.value + room
                 _activeRoom.value = room
+                startAdvertisingRoom(room.id)
                 loadQueue(room.id)
                 loadRooms()
             } catch (e: Exception) {
                 _error.value = "Could not create room: ${e.message}"
             } finally {
                 _isLoading.value = false
+            }
+        }
+    }
+
+
+    fun joinRoomByCode(code: String) {
+        viewModelScope.launch {
+            try {
+                val room = _rooms.value.firstOrNull {
+                    it.id.take(6).uppercase() ==
+                        code.trim().uppercase()
+                }
+                if (room != null) {
+                    joinRoom(room)
+                } else {
+                    _error.value = "Room not found"
+                }
+            } catch (e: Exception) {
+                _error.value = "Could not join room"
             }
         }
     }
@@ -117,12 +167,14 @@ class JamViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun leaveRoom() {
+        stopAdvertisingRoom()
         stopBroadcast()
         _activeRoom.value = null
         _queue.value = emptyList()
     }
 
     fun endRoom(roomId: String) {
+        stopAdvertisingRoom()
         stopBroadcast()
         viewModelScope.launch {
             try {
