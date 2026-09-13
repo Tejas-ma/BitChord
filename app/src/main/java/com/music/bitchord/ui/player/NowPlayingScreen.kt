@@ -196,11 +196,7 @@ import coil3.compose.AsyncImage
 import coil3.compose.AsyncImagePainter
 import coil3.toBitmap
 import coil3.request.ImageRequest
-import coil3.request.SuccessResult
 import coil3.request.allowHardware
-import coil3.toBitmap
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
 import com.music.bitchord.ui.theme.SystemBarIcons
 import com.music.bitchord.ui.rememberIsForeground
 import com.music.bitchord.ui.components.thumbnailBorder
@@ -232,7 +228,6 @@ import dev.chrisbanes.haze.materials.ExperimentalHazeMaterialsApi
 import dev.chrisbanes.haze.materials.HazeMaterials
 import java.util.Locale
 import java.util.concurrent.TimeUnit
-import kotlin.math.abs
 import kotlin.math.roundToInt
 
 enum class LoopMode { OFF, REPEAT_ONE, REPEAT_ALL, AUTOPLAY }

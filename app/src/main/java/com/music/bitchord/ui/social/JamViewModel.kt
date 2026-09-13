@@ -59,6 +59,25 @@ class JamViewModel(application: Application) : AndroidViewModel(application) {
     private val _nowPlayingArtist = MutableStateFlow<String?>(null)
     val nowPlayingArtist: StateFlow<String?> = _nowPlayingArtist.asStateFlow()
 
+    
+    private val _remotePlayPause = 
+        MutableStateFlow<Boolean?>(null)
+    val remotePlayPause: StateFlow<Boolean?> = 
+        _remotePlayPause.asStateFlow()
+
+    private val _remoteSkipNext = MutableStateFlow(0)
+    val remoteSkipNext: StateFlow<Int> = 
+        _remoteSkipNext.asStateFlow()
+
+    private val _remoteSkipPrevious = MutableStateFlow(0)
+    val remoteSkipPrevious: StateFlow<Int> = 
+        _remoteSkipPrevious.asStateFlow()
+
+    private val _remoteSeekPosition = 
+        MutableStateFlow<Long?>(null)
+    val remoteSeekPosition: StateFlow<Long?> = 
+        _remoteSeekPosition.asStateFlow()
+
     private var broadcastChannel: RealtimeChannel? = null
 
 
@@ -195,6 +214,68 @@ class JamViewModel(application: Application) : AndroidViewModel(application) {
                 _error.value = "Could not connect to room"
             }
         }
+    }
+
+    
+    fun broadcastPlayPause(isPlaying: Boolean) {
+        viewModelScope.launch {
+            try {
+                broadcastChannel?.broadcast(
+                    event = "playback_control",
+                    message = mapOf(
+                        "action" to "play_pause",
+                        "is_playing" to isPlaying.toString()
+                    )
+                )
+            } catch (e: Exception) { }
+        }
+    }
+
+    fun broadcastSkipNext() {
+        viewModelScope.launch {
+            try {
+                broadcastChannel?.broadcast(
+                    event = "playback_control",
+                    message = mapOf(
+                        "action" to "skip_next"
+                    )
+                )
+            } catch (e: Exception) { }
+        }
+    }
+
+    fun broadcastSkipPrevious() {
+        viewModelScope.launch {
+            try {
+                broadcastChannel?.broadcast(
+                    event = "playback_control",
+                    message = mapOf(
+                        "action" to "skip_previous"
+                    )
+                )
+            } catch (e: Exception) { }
+        }
+    }
+
+    fun broadcastSeek(positionMs: Long) {
+        viewModelScope.launch {
+            try {
+                broadcastChannel?.broadcast(
+                    event = "playback_control",
+                    message = mapOf(
+                        "action" to "seek",
+                        "position_ms" to positionMs.toString()
+                    )
+                )
+            } catch (e: Exception) { }
+        }
+    }
+
+    fun clearRemoteSeek() { 
+        _remoteSeekPosition.value = null 
+    }
+    fun clearRemotePlayPause() { 
+        _remotePlayPause.value = null 
     }
 
     fun broadcastNowPlaying(videoId: String, title: String, artist: String) {
