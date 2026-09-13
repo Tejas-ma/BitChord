@@ -124,6 +124,24 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     private val _query = MutableStateFlow("")
     val query: StateFlow<String> = _query.asStateFlow()
+    private val _charts = MutableStateFlow<UiState<List<HomeShelf>>>(UiState.Loading)
+    val charts: StateFlow<UiState<List<HomeShelf>>> = _charts.asStateFlow()
+
+    fun loadCharts() {
+        if (_charts.value is UiState.Success) return
+        _charts.value = UiState.Loading
+        viewModelScope.launch {
+            val state = runCatching { YtMusicRepository.shelvesOf("FEmusic_charts") }.fold(
+                onSuccess = { shelves ->
+                    if (shelves.isEmpty()) UiState.Error(text(R.string.nothing_to_explore))
+                    else UiState.Success(shelves)
+                },
+                onFailure = { UiState.Error(it.friendly()) },
+            )
+            _charts.value = state
+        }
+    }
+
 
     private val _results = MutableStateFlow<UiState<List<SearchResult>>?>(null)
     val results: StateFlow<UiState<List<SearchResult>>?> = _results.asStateFlow()
@@ -1023,6 +1041,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     init {
+        loadCharts()
         startSearchPipeline()
         startSuggestPipeline()
         loadHome()
