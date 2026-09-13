@@ -1421,24 +1421,6 @@ fun NowPlayingScreen(
                                 bandBottom = dismissBandBottom
                             }
                             if (y >= bandTop && y <= bandBottom) {
-                                if (!panelUp) {
-                                    dragQueueIn(
-                                        down = down,
-                                        travel = bandBottom - bandTop -
-                                            HEADER_HEIGHT.toPx(),
-                                        slide = queueSlide,
-                                        onHold = { queueDragging = it },
-                                        onSettle = { open ->
-                                            if (open != queueOpen) {
-                                                haptics.play(
-                                                    if (open) Haptic.Expand else Haptic.Tap,
-                                                )
-                                                queueOpen = open
-                                            }
-                                            queueReleased++
-                                        },
-                                    )
-                                }
                                 return@awaitEachGesture
                             }
                             // What detectVerticalDragGestures does, minus the
