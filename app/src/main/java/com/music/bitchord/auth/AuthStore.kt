@@ -40,6 +40,9 @@ class AuthStore(context: Context) {
         get() = prefs.getString(KEY_COOKIE, null)
         set(value) = prefs.edit().putString(KEY_COOKIE, value).apply()
 
+    val friendCode: String
+        get() = localUserId.take(6).uppercase()
+
     var localUserId: String
         get() {
             val existing = prefs.getString(KEY_LOCAL_USER_ID, null)
