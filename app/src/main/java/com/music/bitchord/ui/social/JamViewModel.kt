@@ -202,7 +202,7 @@ class JamViewModel(application: Application) : AndroidViewModel(application) {
                 broadcastChannel = supabase.channel("room:$roomId")
                 broadcastChannel?.subscribe()
                 val flow = broadcastChannel?.broadcastFlow<Map<String, String>>("playback")
-
+                
                 launch {
                     val controlFlow = broadcastChannel?.broadcastFlow<Map<String, String>>("playback_control")
                     controlFlow?.collect { payload ->
@@ -371,10 +371,10 @@ class JamViewModel(application: Application) : AndroidViewModel(application) {
                 ) { table = "rooms" }
                 .onEach { change ->
                     try {
-                        val newRoom =
+                        val newRoom = 
                             change.decodeRecord<JamRoom>()
                         if (newRoom.isActive != false) {
-                            _rooms.value =
+                            _rooms.value = 
                                 (_rooms.value + newRoom)
                                 .distinctBy { it.id }
                             if (newRoom.hostId == localUserId) {
@@ -393,14 +393,14 @@ class JamViewModel(application: Application) : AndroidViewModel(application) {
                 ) { table = "rooms" }
                 .onEach { change ->
                     try {
-                        val updated =
+                        val updated = 
                             change.decodeRecord<JamRoom>()
                         _rooms.value = _rooms.value.map {
-                            if (it.id == updated.id)
+                            if (it.id == updated.id) 
                                 updated else it
                         }
                         _myRooms.value = _myRooms.value.map {
-                            if (it.id == updated.id)
+                            if (it.id == updated.id) 
                                 updated else it
                         }
                         if (updated.isActive == false) {
