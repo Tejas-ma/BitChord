@@ -202,6 +202,41 @@ class JamViewModel(application: Application) : AndroidViewModel(application) {
                 broadcastChannel = supabase.channel("room:$roomId")
                 broadcastChannel?.subscribe()
                 val flow = broadcastChannel?.broadcastFlow<Map<String, String>>("playback")
+                
+                launch {
+                    val controlFlow = broadcastChannel?.broadcastFlow<Map<String, String>>("playback_control")
+                    controlFlow?.collect { payload ->
+                        val isHost = _activeRoom.value?.hostId == localUserId
+                        if (!isHost) {
+                            val action = payload["action"]
+                                ?.toString()?.trim('"')
+                            when (action) {
+                                "play_pause" -> {
+                                    val isPlaying = payload["is_playing"]
+                                        ?.toString()?.trim('"') == "true"
+                                    _remotePlayPause.value = isPlaying
+                                }
+                                "skip_next" -> {
+                                    _remoteSkipNext.value =
+                                        _remoteSkipNext.value + 1
+                                }
+                                "skip_previous" -> {
+                                    _remoteSkipPrevious.value =
+                                        _remoteSkipPrevious.value + 1
+                                }
+                                "seek" -> {
+                                    val posMs = payload["position_ms"]
+                                        ?.toString()?.trim('"')
+                                        ?.toLongOrNull()
+                                    if (posMs != null) {
+                                        _remoteSeekPosition.value = posMs
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
                 flow?.collect { payload ->
                     val videoId = payload["videoId"]
                     val title = payload["title"]
@@ -209,39 +244,6 @@ class JamViewModel(application: Application) : AndroidViewModel(application) {
                     _nowPlayingVideoId.value = videoId
                     _nowPlayingTitle.value = title
                     _nowPlayingArtist.value = artist
-                }
-
-                broadcastChannel?.onBroadcast(
-                    event = "playback_control"
-                ) { payload ->
-                    val isHost = _activeRoom.value?.hostId == localUserId
-                    if (!isHost) {
-                        val action = payload["action"]
-                            ?.toString()?.trim('"')
-                        when (action) {
-                            "play_pause" -> {
-                                val isPlaying = payload["is_playing"]
-                                    ?.toString()?.trim('"') == "true"
-                                _remotePlayPause.value = isPlaying
-                            }
-                            "skip_next" -> {
-                                _remoteSkipNext.value =
-                                    _remoteSkipNext.value + 1
-                            }
-                            "skip_previous" -> {
-                                _remoteSkipPrevious.value =
-                                    _remoteSkipPrevious.value + 1
-                            }
-                            "seek" -> {
-                                val posMs = payload["position_ms"]
-                                    ?.toString()?.trim('"')
-                                    ?.toLongOrNull()
-                                if (posMs != null) {
-                                    _remoteSeekPosition.value = posMs
-                                }
-                            }
-                        }
-                    }
                 }
             } catch (e: Exception) {
                 _error.value = "Could not connect to room"
@@ -255,7 +257,7 @@ class JamViewModel(application: Application) : AndroidViewModel(application) {
             try {
                 broadcastChannel?.broadcast(
                     event = "playback_control",
-                    payload = mapOf(
+                    message = mapOf(
                         "action" to "play_pause",
                         "is_playing" to isPlaying.toString()
                     )
@@ -269,7 +271,7 @@ class JamViewModel(application: Application) : AndroidViewModel(application) {
             try {
                 broadcastChannel?.broadcast(
                     event = "playback_control",
-                    payload = mapOf(
+                    message = mapOf(
                         "action" to "skip_next"
                     )
                 )
@@ -282,7 +284,7 @@ class JamViewModel(application: Application) : AndroidViewModel(application) {
             try {
                 broadcastChannel?.broadcast(
                     event = "playback_control",
-                    payload = mapOf(
+                    message = mapOf(
                         "action" to "skip_previous"
                     )
                 )
@@ -295,7 +297,7 @@ class JamViewModel(application: Application) : AndroidViewModel(application) {
             try {
                 broadcastChannel?.broadcast(
                     event = "playback_control",
-                    payload = mapOf(
+                    message = mapOf(
                         "action" to "seek",
                         "position_ms" to positionMs.toString()
                     )
