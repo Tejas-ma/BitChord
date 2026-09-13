@@ -364,28 +364,26 @@ class JamViewModel(application: Application) : AndroidViewModel(application) {
 
     private suspend fun subscribeToRooms() {
         try {
-            roomsChannel = supabase.channel(
-                "public:rooms"
-            )
+            roomsChannel = supabase.channel("public:rooms")
             roomsChannel!!
                 .postgresChangeFlow<PostgresAction.Insert>(
                     schema = "public"
                 ) { table = "rooms" }
                 .onEach { change ->
                     try {
-                        val newRoom = change.decodeRecord<JamRoom>()
+                        val newRoom = 
+                            change.decodeRecord<JamRoom>()
                         if (newRoom.isActive != false) {
-                            _rooms.value = (_rooms.value + newRoom)
+                            _rooms.value = 
+                                (_rooms.value + newRoom)
                                 .distinctBy { it.id }
                             if (newRoom.hostId == localUserId) {
-                                _myRooms.value = 
+                                _myRooms.value =
                                     (_myRooms.value + newRoom)
                                     .distinctBy { it.id }
                             }
                         }
-                    } catch (e: Exception) {
-                        // ignore parse errors
-                    }
+                    } catch (e: Exception) { }
                 }
                 .launchIn(viewModelScope)
 
@@ -395,16 +393,23 @@ class JamViewModel(application: Application) : AndroidViewModel(application) {
                 ) { table = "rooms" }
                 .onEach { change ->
                     try {
-                        val updated = change.decodeRecord<JamRoom>()
+                        val updated = 
+                            change.decodeRecord<JamRoom>()
                         _rooms.value = _rooms.value.map {
-                            if (it.id == updated.id) updated else it
+                            if (it.id == updated.id) 
+                                updated else it
                         }
                         _myRooms.value = _myRooms.value.map {
-                            if (it.id == updated.id) updated else it
+                            if (it.id == updated.id) 
+                                updated else it
                         }
-                    } catch (e: Exception) {
-                        // ignore
-                    }
+                        if (updated.isActive == false) {
+                            _rooms.value = _rooms.value
+                                .filter { it.id != updated.id }
+                            _myRooms.value = _myRooms.value
+                                .filter { it.id != updated.id }
+                        }
+                    } catch (e: Exception) { }
                 }
                 .launchIn(viewModelScope)
 
