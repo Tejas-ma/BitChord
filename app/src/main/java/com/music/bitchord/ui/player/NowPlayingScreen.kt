@@ -89,6 +89,7 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.People
 import androidx.compose.material.icons.rounded.RepeatOne
 import androidx.compose.material.icons.automirrored.rounded.QueueMusic
 import androidx.compose.material.icons.automirrored.rounded.Undo
@@ -675,6 +676,8 @@ fun NowPlayingScreen(
     modifier: Modifier = Modifier,
     isJamMember: Boolean = false,
     jamAllowsControl: Boolean = true,
+    isInJam: Boolean = false,
+    onJamClick: () -> Unit = {},
 ) {
     val context = LocalContext.current
     val density = LocalDensity.current
@@ -2562,6 +2565,15 @@ fun NowPlayingScreen(
                 horizontalArrangement = Arrangement.SpaceEvenly,
                 verticalAlignment = Alignment.CenterVertically,
             ) {
+                BottomGlyph(
+                    icon = Icons.Rounded.People,
+                    contentDescription = if (isInJam)
+                        "In Jam" else "Join Jam",
+                    onClick = onJamClick,
+                    highlighted = isInJam,
+                    haptic = if (isInJam)
+                        Haptic.ToggleOff else Haptic.ToggleOn,
+                )
                 if (!isJamMember) {
                     BottomGlyph(
                         icon = BitChordIcons.Shuffle,
