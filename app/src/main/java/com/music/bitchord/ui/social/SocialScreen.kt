@@ -16,6 +16,11 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.music.bitchord.R
 import com.music.bitchord.data.jam.JamRoom
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.material.icons.rounded.People
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.ui.draw.clip
+import androidx.compose.foundation.background
 
 @Composable
 fun SocialScreen(
@@ -98,11 +103,23 @@ fun SocialScreen(
             Spacer(modifier = Modifier.height(8.dp))
 
             // Active Rooms section
-            Text(
-                text = "Active Rooms",
-                style = MaterialTheme.typography.titleMedium,
-                modifier = Modifier.padding(vertical = 8.dp)
-            )
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Text(
+                    text = "Active Rooms",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold
+                )
+                HorizontalDivider(
+                    modifier = Modifier.weight(1f),
+                    color = MaterialTheme.colorScheme.outlineVariant
+                )
+            }
             if (rooms.isEmpty()) {
                 SectionEmptyBox(text = "No active rooms")
             } else {
@@ -118,21 +135,45 @@ fun SocialScreen(
             HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
 
             // Friends section
-            Text(
-                text = "Friends",
-                style = MaterialTheme.typography.titleMedium,
-                modifier = Modifier.padding(vertical = 8.dp)
-            )
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Text(
+                    text = "Friends",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold
+                )
+                HorizontalDivider(
+                    modifier = Modifier.weight(1f),
+                    color = MaterialTheme.colorScheme.outlineVariant
+                )
+            }
             SectionEmptyBox(text = "No friends listening")
 
             HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
 
             // My Rooms section
-            Text(
-                text = "My Rooms",
-                style = MaterialTheme.typography.titleMedium,
-                modifier = Modifier.padding(vertical = 8.dp)
-            )
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Text(
+                    text = "My Rooms",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold
+                )
+                HorizontalDivider(
+                    modifier = Modifier.weight(1f),
+                    color = MaterialTheme.colorScheme.outlineVariant
+                )
+            }
             if (myRooms.isEmpty()) {
                 SectionEmptyBox(text = "No rooms yet")
             } else {
@@ -214,29 +255,60 @@ fun SocialScreen(
 @Composable
 fun RoomCard(room: JamRoom, onJoin: () -> Unit) {
     Surface(
-        shape = RoundedCornerShape(16.dp),
+        shape = RoundedCornerShape(20.dp),
         color = MaterialTheme.colorScheme.surfaceVariant,
+        tonalElevation = 4.dp,
         modifier = Modifier.fillMaxWidth()
     ) {
         Row(
-            modifier = Modifier.padding(16.dp),
+            modifier = Modifier.padding(
+                horizontal = 16.dp,
+                vertical = 12.dp
+            ),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Column {
-                Text(
-                    text = room.name,
-                    style = MaterialTheme.typography.titleSmall
-                )
-                Text(
-                    text = if (room.privacy == "private") "Private" else "Public",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(48.dp)
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(
+                            MaterialTheme.colorScheme.primary
+                                .copy(alpha = 0.15f)
+                        ),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        imageVector = Icons.Rounded.People,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(24.dp)
+                    )
+                }
+                Column {
+                    Text(
+                        text = room.name,
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    Text(
+                        text = if (room.privacy == "private")
+                            "🔒 Private" else "🌐 Public",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
             }
             FilledTonalButton(
                 onClick = onJoin,
-                shape = RoundedCornerShape(12.dp)
+                shape = RoundedCornerShape(12.dp),
+                contentPadding = PaddingValues(
+                    horizontal = 16.dp, vertical = 8.dp
+                )
             ) {
                 Text("Join")
             }
@@ -246,19 +318,18 @@ fun RoomCard(room: JamRoom, onJoin: () -> Unit) {
 
 @Composable
 fun SectionEmptyBox(text: String) {
-    Surface(
-        shape = RoundedCornerShape(12.dp),
-        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+    Box(
         modifier = Modifier
             .fillMaxWidth()
-            .height(64.dp)
+            .padding(vertical = 8.dp),
+        contentAlignment = Alignment.CenterStart
     ) {
-        Box(contentAlignment = Alignment.Center) {
-            Text(
-                text = text,
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-        }
+        Text(
+            text = text,
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+                .copy(alpha = 0.6f),
+            modifier = Modifier.padding(horizontal = 4.dp)
+        )
     }
 }
