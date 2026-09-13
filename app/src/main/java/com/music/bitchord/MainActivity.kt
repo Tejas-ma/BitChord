@@ -1461,6 +1461,8 @@ private fun BitChordApp(
             ?.let { (_, name) -> song.copy(radioName = name) }
             ?: song
         NowPlayingScreen(
+            isJamMember = activeRoom != null && activeRoom?.hostId != authStore.localUserId,
+            jamAllowsControl = activeRoom?.allowOthersToPlay == true,
             song = displayedSong,
             windowWidth = windowWidth,
             isPlaying = player.isPlaying,

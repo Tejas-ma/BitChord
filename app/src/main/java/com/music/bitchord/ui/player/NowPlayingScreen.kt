@@ -134,6 +134,7 @@ import androidx.compose.runtime.snapshotFlow
 import kotlinx.coroutines.flow.first
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.res.stringArrayResource
 import androidx.compose.ui.draw.clip
@@ -672,10 +673,14 @@ fun NowPlayingScreen(
      */
     docked: Boolean = false,
     modifier: Modifier = Modifier,
+    isJamMember: Boolean = false,
+    jamAllowsControl: Boolean = true,
 ) {
     val context = LocalContext.current
     val density = LocalDensity.current
     val haptics = rememberHaptics()
+    val controlEnabled = !isJamMember || jamAllowsControl
+    val onSeek = if (controlEnabled) onSeek else { _ -> }
 
     // A docked pane sits beside the page rather than covering the screen, so
     // the status bar it's under belongs to the page, not this artwork — only
@@ -2464,6 +2469,7 @@ fun NowPlayingScreen(
                     // step to, or enough elapsed for it to restart this one.
                     enabled = hasPrevious || positionMs > BACK_RESTARTS_AFTER_MS,
                     haptic = Haptic.SkipPrevious,
+                    modifier = Modifier.alpha(if (controlEnabled) 1f else 0.4f),
                 )
                 // While the stream URL resolves and buffers, the play glyph
                 // would be a lie — show progress instead.
@@ -2484,6 +2490,7 @@ fun NowPlayingScreen(
                         size = 62.dp,
                         onClick = onPlayPause,
                         haptic = if (isPlaying) Haptic.Pause else Haptic.Resume,
+                        modifier = Modifier.alpha(if (controlEnabled) 1f else 0.4f),
                     )
                 }
                 TransportGlyph(
@@ -2493,6 +2500,7 @@ fun NowPlayingScreen(
                     onClick = onNext,
                     enabled = hasNext,
                     haptic = Haptic.SkipNext,
+                    modifier = Modifier.alpha(if (controlEnabled) 1f else 0.4f),
                 )
             }
 
@@ -2554,72 +2562,76 @@ fun NowPlayingScreen(
                 horizontalArrangement = Arrangement.SpaceEvenly,
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                BottomGlyph(
-                    icon = BitChordIcons.Shuffle,
-                    contentDescription = stringResource(
-                        if (shuffleEnabled) R.string.shuffle_on else R.string.shuffle_off,
-                    ),
-                    onClick = onToggleShuffle,
-                    highlighted = shuffleEnabled,
-                    haptic = if (shuffleEnabled) Haptic.ToggleOff else Haptic.ToggleOn,
-                    tapWindowMs = SHUFFLE_TAP_WINDOW_MS,
-                )
-
-                var loopMode by remember(repeatMode, autoplayEnabled) {
-                    mutableStateOf(
-                        when {
-                            autoplayEnabled -> LoopMode.AUTOPLAY
-                            repeatMode == Player.REPEAT_MODE_ONE -> LoopMode.REPEAT_ONE
-                            repeatMode == Player.REPEAT_MODE_ALL -> LoopMode.REPEAT_ALL
-                            else -> LoopMode.OFF
-                        }
+                if (!isJamMember) {
+                    BottomGlyph(
+                        icon = BitChordIcons.Shuffle,
+                        contentDescription = stringResource(
+                            if (shuffleEnabled) R.string.shuffle_on else R.string.shuffle_off,
+                        ),
+                        onClick = onToggleShuffle,
+                        highlighted = shuffleEnabled,
+                        haptic = if (shuffleEnabled) Haptic.ToggleOff else Haptic.ToggleOn,
+                        tapWindowMs = SHUFFLE_TAP_WINDOW_MS,
                     )
                 }
 
-                IconButton(onClick = {
-                    val nextMode = when (loopMode) {
-                        LoopMode.OFF -> LoopMode.REPEAT_ONE
-                        LoopMode.REPEAT_ONE -> LoopMode.REPEAT_ALL
-                        LoopMode.REPEAT_ALL -> LoopMode.AUTOPLAY
-                        LoopMode.AUTOPLAY -> LoopMode.OFF
-                    }
-                    loopMode = nextMode
-
-                    when (nextMode) {
-                        LoopMode.OFF -> {
-                            if (repeatMode != Player.REPEAT_MODE_OFF) onCycleRepeat()
-                            if (autoplayEnabled) onToggleAutoplay()
-                        }
-                        LoopMode.REPEAT_ONE -> {
-                            if (repeatMode != Player.REPEAT_MODE_ONE) onCycleRepeat()
-                            if (autoplayEnabled) onToggleAutoplay()
-                        }
-                        LoopMode.REPEAT_ALL -> {
-                            if (repeatMode != Player.REPEAT_MODE_ALL) onCycleRepeat()
-                            if (autoplayEnabled) onToggleAutoplay()
-                        }
-                        LoopMode.AUTOPLAY -> {
-                            if (repeatMode != Player.REPEAT_MODE_OFF) {
-                                // Needs to be OFF
-                                onCycleRepeat()
+                if (!isJamMember) {
+                    var loopMode by remember(repeatMode, autoplayEnabled) {
+                        mutableStateOf(
+                            when {
+                                autoplayEnabled -> LoopMode.AUTOPLAY
+                                repeatMode == Player.REPEAT_MODE_ONE -> LoopMode.REPEAT_ONE
+                                repeatMode == Player.REPEAT_MODE_ALL -> LoopMode.REPEAT_ALL
+                                else -> LoopMode.OFF
                             }
-                            if (!autoplayEnabled) onToggleAutoplay()
-                        }
+                        )
                     }
-                }) {
-                    Icon(
-                        imageVector = when (loopMode) {
-                            LoopMode.OFF -> BitChordIcons.Repeat
-                            LoopMode.REPEAT_ONE -> Icons.Rounded.RepeatOne
-                            LoopMode.REPEAT_ALL -> BitChordIcons.Repeat
-                            LoopMode.AUTOPLAY -> BitChordIcons.Infinity
-                        },
-                        contentDescription = loopMode.name,
-                        tint = when (loopMode) {
-                            LoopMode.OFF -> MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f)
-                            else -> MaterialTheme.colorScheme.primary
+
+                    IconButton(onClick = {
+                        val nextMode = when (loopMode) {
+                            LoopMode.OFF -> LoopMode.REPEAT_ONE
+                            LoopMode.REPEAT_ONE -> LoopMode.REPEAT_ALL
+                            LoopMode.REPEAT_ALL -> LoopMode.AUTOPLAY
+                            LoopMode.AUTOPLAY -> LoopMode.OFF
                         }
-                    )
+                        loopMode = nextMode
+
+                        when (nextMode) {
+                            LoopMode.OFF -> {
+                                if (repeatMode != Player.REPEAT_MODE_OFF) onCycleRepeat()
+                                if (autoplayEnabled) onToggleAutoplay()
+                            }
+                            LoopMode.REPEAT_ONE -> {
+                                if (repeatMode != Player.REPEAT_MODE_ONE) onCycleRepeat()
+                                if (autoplayEnabled) onToggleAutoplay()
+                            }
+                            LoopMode.REPEAT_ALL -> {
+                                if (repeatMode != Player.REPEAT_MODE_ALL) onCycleRepeat()
+                                if (autoplayEnabled) onToggleAutoplay()
+                            }
+                            LoopMode.AUTOPLAY -> {
+                                if (repeatMode != Player.REPEAT_MODE_OFF) {
+                                    // Needs to be OFF
+                                    onCycleRepeat()
+                                }
+                                if (!autoplayEnabled) onToggleAutoplay()
+                            }
+                        }
+                    }) {
+                        Icon(
+                            imageVector = when (loopMode) {
+                                LoopMode.OFF -> BitChordIcons.Repeat
+                                LoopMode.REPEAT_ONE -> Icons.Rounded.RepeatOne
+                                LoopMode.REPEAT_ALL -> BitChordIcons.Repeat
+                                LoopMode.AUTOPLAY -> BitChordIcons.Infinity
+                            },
+                            contentDescription = loopMode.name,
+                            tint = when (loopMode) {
+                                LoopMode.OFF -> MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f)
+                                else -> MaterialTheme.colorScheme.primary
+                            }
+                        )
+                    }
                 }
 
                 BottomGlyph(
@@ -3703,6 +3715,7 @@ private fun TransportGlyph(
     onClick: () -> Unit,
     enabled: Boolean = true,
     haptic: Haptic = Haptic.Tap,
+    modifier: Modifier = Modifier,
 ) {
     val haptics = rememberHaptics()
     // Faded rather than hidden: the row keeps its shape at the ends of a queue.
@@ -3711,7 +3724,7 @@ private fun TransportGlyph(
         label = "transportAlpha",
     )
     Box(
-        modifier = Modifier
+        modifier = modifier
             .size(size + 12.dp)
             .clip(CircleShape)
             .clickable(
