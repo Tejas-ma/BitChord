@@ -1382,7 +1382,43 @@ private fun BitChordApp(
         links = YtMusicRepository.trackLinks(current.videoId).getOrNull()
         linksLoading = false
     }
-val activeRoom by jamViewModel.activeRoom.collectAsStateWithLifecycle()
+    val remoteSkipNext by jamViewModel.remoteSkipNext
+        .collectAsStateWithLifecycle()
+    val remoteSkipPrevious by jamViewModel.remoteSkipPrevious
+        .collectAsStateWithLifecycle()
+    val remoteSeekPosition by jamViewModel.remoteSeekPosition
+        .collectAsStateWithLifecycle()
+    val remotePlayPause by jamViewModel.remotePlayPause
+        .collectAsStateWithLifecycle()
+    val activeRoom by jamViewModel.activeRoom
+        .collectAsStateWithLifecycle()
+
+    LaunchedEffect(remoteSkipNext) {
+        if (remoteSkipNext > 0) {
+            controller?.seekToNextMediaItem()
+        }
+    }
+
+    LaunchedEffect(remoteSkipPrevious) {
+        if (remoteSkipPrevious > 0) {
+            controller?.seekToPreviousMediaItem()
+        }
+    }
+
+    LaunchedEffect(remoteSeekPosition) {
+        remoteSeekPosition?.let { pos ->
+            controller?.seekTo(pos)
+            jamViewModel.clearRemoteSeek()
+        }
+    }
+
+    LaunchedEffect(remotePlayPause) {
+        remotePlayPause?.let { shouldPlay ->
+            if (shouldPlay) controller?.play()
+            else controller?.pause()
+            jamViewModel.clearRemotePlayPause()
+        }
+    }
 
     LaunchedEffect(player.song, activeRoom) {
         val song = player.song ?: return@LaunchedEffect
@@ -1477,10 +1513,36 @@ val activeRoom by jamViewModel.activeRoom.collectAsStateWithLifecycle()
                 }
             },
             onPlayPause = {
-                controller?.let { if (it.isPlaying) it.pause() else it.play() }
+                val room = jamViewModel.activeRoom.value
+                val isHost = room?.hostId == authStore.localUserId
+                if (room == null || isHost ||
+                    room.allowOthersToPlay == true) {
+                    controller?.run {
+                        if (isPlaying) pause() else play()
+                    }
+                    jamViewModel.broadcastPlayPause(
+                        controller?.isPlaying != true
+                    )
+                }
             },
-            onNext = { controller?.seekToNextMediaItem() },
-            onPrevious = { controller?.seekToPrevious() },
+            onNext = {
+                val room = jamViewModel.activeRoom.value
+                val isHost = room?.hostId == authStore.localUserId
+                if (room == null || isHost ||
+                    room.allowOthersToPlay == true) {
+                    controller?.seekToNextMediaItem()
+                    jamViewModel.broadcastSkipNext()
+                }
+            },
+            onPrevious = {
+                val room = jamViewModel.activeRoom.value
+                val isHost = room?.hostId == authStore.localUserId
+                if (room == null || isHost ||
+                    room.allowOthersToPlay == true) {
+                    controller?.seekToPreviousMediaItem()
+                    jamViewModel.broadcastSkipPrevious()
+                }
+            },
             onSeekFraction = { fraction ->
                 controller?.let { player ->
                     // Read at the moment of the seek, not from the
@@ -1498,28 +1560,13 @@ val activeRoom by jamViewModel.activeRoom.collectAsStateWithLifecycle()
                     }
                 }
             },
-            onSeek = { target ->
-                controller?.let { player ->
-                    // Clamped here rather than at each caller because
-                    // not every caller can clamp. The scrubber's target
-                    // is a fraction of the duration and cannot overrun,
-                    // but a tapped lyric line seeks to a timestamp from
-                    // whichever transcription matched on title, artist
-                    // and duration — and a match against a slightly
-                    // longer master puts every line late, so a tap near
-                    // the end asks for a position past the end of this
-                    // stream. Media3 answers that by clamping to the
-                    // final millisecond, which ends the track and starts
-                    // the next one: tapping the last line of a song
-                    // skipped it.
-                    val duration = player.duration
-                    player.seekTo(
-                        if (duration > 0) {
-                            target.coerceIn(0L, (duration - SEEK_END_GUARD_MS).coerceAtLeast(0L))
-                        } else {
-                            target.coerceAtLeast(0L)
-                        },
-                    )
+            onSeek = { positionMs ->
+                val room = jamViewModel.activeRoom.value
+                val isHost = room?.hostId == authStore.localUserId
+                if (room == null || isHost ||
+                    room.allowOthersToPlay == true) {
+                    controller?.seekTo(positionMs)
+                    jamViewModel.broadcastSeek(positionMs)
                 }
             },
             queue = player.queue,
@@ -2452,7 +2499,15 @@ val activeRoom by jamViewModel.activeRoom.collectAsStateWithLifecycle()
                         onPlayPause = {
                             controller?.let { if (it.isPlaying) it.pause() else it.play() }
                         },
-                        onNext = { controller?.seekToNextMediaItem() },
+                        onNext = {
+                val room = jamViewModel.activeRoom.value
+                val isHost = room?.hostId == authStore.localUserId
+                if (room == null || isHost ||
+                    room.allowOthersToPlay == true) {
+                    controller?.seekToNextMediaItem()
+                    jamViewModel.broadcastSkipNext()
+                }
+            },
                         onExpand = { showNowPlaying = true },
                         modifier = Modifier
                             .align(Alignment.BottomCenter)
@@ -2504,7 +2559,15 @@ val activeRoom by jamViewModel.activeRoom.collectAsStateWithLifecycle()
                             onPlayPause = {
                                 controller?.let { if (it.isPlaying) it.pause() else it.play() }
                             },
-                            onNext = { controller?.seekToNextMediaItem() },
+                            onNext = {
+                val room = jamViewModel.activeRoom.value
+                val isHost = room?.hostId == authStore.localUserId
+                if (room == null || isHost ||
+                    room.allowOthersToPlay == true) {
+                    controller?.seekToNextMediaItem()
+                    jamViewModel.broadcastSkipNext()
+                }
+            },
                             onExpand = { showNowPlaying = true },
                             modifier = Modifier.fillMaxWidth()
                         )
@@ -3305,7 +3368,15 @@ val activeRoom by jamViewModel.activeRoom.collectAsStateWithLifecycle()
                         onPlayPause = {
                             controller?.let { if (it.isPlaying) it.pause() else it.play() }
                         },
-                        onNext = { controller?.seekToNextMediaItem() },
+                        onNext = {
+                val room = jamViewModel.activeRoom.value
+                val isHost = room?.hostId == authStore.localUserId
+                if (room == null || isHost ||
+                    room.allowOthersToPlay == true) {
+                    controller?.seekToNextMediaItem()
+                    jamViewModel.broadcastSkipNext()
+                }
+            },
                         onExpand = { showNowPlaying = true },
                         modifier = Modifier
                             .align(Alignment.BottomCenter)
@@ -3357,7 +3428,15 @@ val activeRoom by jamViewModel.activeRoom.collectAsStateWithLifecycle()
                             onPlayPause = {
                                 controller?.let { if (it.isPlaying) it.pause() else it.play() }
                             },
-                            onNext = { controller?.seekToNextMediaItem() },
+                            onNext = {
+                val room = jamViewModel.activeRoom.value
+                val isHost = room?.hostId == authStore.localUserId
+                if (room == null || isHost ||
+                    room.allowOthersToPlay == true) {
+                    controller?.seekToNextMediaItem()
+                    jamViewModel.broadcastSkipNext()
+                }
+            },
                             onExpand = { showNowPlaying = true },
                             modifier = Modifier.fillMaxWidth()
                         )
