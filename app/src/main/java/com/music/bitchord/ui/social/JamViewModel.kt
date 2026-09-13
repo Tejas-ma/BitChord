@@ -59,6 +59,25 @@ class JamViewModel(application: Application) : AndroidViewModel(application) {
     private val _nowPlayingArtist = MutableStateFlow<String?>(null)
     val nowPlayingArtist: StateFlow<String?> = _nowPlayingArtist.asStateFlow()
 
+    
+    private val _remotePlayPause = 
+        MutableStateFlow<Boolean?>(null)
+    val remotePlayPause: StateFlow<Boolean?> = 
+        _remotePlayPause.asStateFlow()
+
+    private val _remoteSkipNext = MutableStateFlow(0)
+    val remoteSkipNext: StateFlow<Int> = 
+        _remoteSkipNext.asStateFlow()
+
+    private val _remoteSkipPrevious = MutableStateFlow(0)
+    val remoteSkipPrevious: StateFlow<Int> = 
+        _remoteSkipPrevious.asStateFlow()
+
+    private val _remoteSeekPosition = 
+        MutableStateFlow<Long?>(null)
+    val remoteSeekPosition: StateFlow<Long?> = 
+        _remoteSeekPosition.asStateFlow()
+
     private var broadcastChannel: RealtimeChannel? = null
 
 
@@ -183,6 +202,41 @@ class JamViewModel(application: Application) : AndroidViewModel(application) {
                 broadcastChannel = supabase.channel("room:$roomId")
                 broadcastChannel?.subscribe()
                 val flow = broadcastChannel?.broadcastFlow<Map<String, String>>("playback")
+
+                launch {
+                    val controlFlow = broadcastChannel?.broadcastFlow<Map<String, String>>("playback_control")
+                    controlFlow?.collect { payload ->
+                        val isHost = _activeRoom.value?.hostId == localUserId
+                        if (!isHost) {
+                            val action = payload["action"]
+                                ?.toString()?.trim('"')
+                            when (action) {
+                                "play_pause" -> {
+                                    val isPlaying = payload["is_playing"]
+                                        ?.toString()?.trim('"') == "true"
+                                    _remotePlayPause.value = isPlaying
+                                }
+                                "skip_next" -> {
+                                    _remoteSkipNext.value =
+                                        _remoteSkipNext.value + 1
+                                }
+                                "skip_previous" -> {
+                                    _remoteSkipPrevious.value =
+                                        _remoteSkipPrevious.value + 1
+                                }
+                                "seek" -> {
+                                    val posMs = payload["position_ms"]
+                                        ?.toString()?.trim('"')
+                                        ?.toLongOrNull()
+                                    if (posMs != null) {
+                                        _remoteSeekPosition.value = posMs
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
                 flow?.collect { payload ->
                     val videoId = payload["videoId"]
                     val title = payload["title"]
@@ -195,6 +249,68 @@ class JamViewModel(application: Application) : AndroidViewModel(application) {
                 _error.value = "Could not connect to room"
             }
         }
+    }
+
+    
+    fun broadcastPlayPause(isPlaying: Boolean) {
+        viewModelScope.launch {
+            try {
+                broadcastChannel?.broadcast(
+                    event = "playback_control",
+                    message = mapOf(
+                        "action" to "play_pause",
+                        "is_playing" to isPlaying.toString()
+                    )
+                )
+            } catch (e: Exception) { }
+        }
+    }
+
+    fun broadcastSkipNext() {
+        viewModelScope.launch {
+            try {
+                broadcastChannel?.broadcast(
+                    event = "playback_control",
+                    message = mapOf(
+                        "action" to "skip_next"
+                    )
+                )
+            } catch (e: Exception) { }
+        }
+    }
+
+    fun broadcastSkipPrevious() {
+        viewModelScope.launch {
+            try {
+                broadcastChannel?.broadcast(
+                    event = "playback_control",
+                    message = mapOf(
+                        "action" to "skip_previous"
+                    )
+                )
+            } catch (e: Exception) { }
+        }
+    }
+
+    fun broadcastSeek(positionMs: Long) {
+        viewModelScope.launch {
+            try {
+                broadcastChannel?.broadcast(
+                    event = "playback_control",
+                    message = mapOf(
+                        "action" to "seek",
+                        "position_ms" to positionMs.toString()
+                    )
+                )
+            } catch (e: Exception) { }
+        }
+    }
+
+    fun clearRemoteSeek() { 
+        _remoteSeekPosition.value = null 
+    }
+    fun clearRemotePlayPause() { 
+        _remotePlayPause.value = null 
     }
 
     fun broadcastNowPlaying(videoId: String, title: String, artist: String) {
@@ -248,28 +364,26 @@ class JamViewModel(application: Application) : AndroidViewModel(application) {
 
     private suspend fun subscribeToRooms() {
         try {
-            roomsChannel = supabase.channel(
-                "public:rooms"
-            )
+            roomsChannel = supabase.channel("public:rooms")
             roomsChannel!!
                 .postgresChangeFlow<PostgresAction.Insert>(
                     schema = "public"
                 ) { table = "rooms" }
                 .onEach { change ->
                     try {
-                        val newRoom = change.decodeRecord<JamRoom>()
+                        val newRoom =
+                            change.decodeRecord<JamRoom>()
                         if (newRoom.isActive != false) {
-                            _rooms.value = (_rooms.value + newRoom)
+                            _rooms.value =
+                                (_rooms.value + newRoom)
                                 .distinctBy { it.id }
                             if (newRoom.hostId == localUserId) {
-                                _myRooms.value = 
+                                _myRooms.value =
                                     (_myRooms.value + newRoom)
                                     .distinctBy { it.id }
                             }
                         }
-                    } catch (e: Exception) {
-                        // ignore parse errors
-                    }
+                    } catch (e: Exception) { }
                 }
                 .launchIn(viewModelScope)
 
@@ -279,16 +393,23 @@ class JamViewModel(application: Application) : AndroidViewModel(application) {
                 ) { table = "rooms" }
                 .onEach { change ->
                     try {
-                        val updated = change.decodeRecord<JamRoom>()
+                        val updated =
+                            change.decodeRecord<JamRoom>()
                         _rooms.value = _rooms.value.map {
-                            if (it.id == updated.id) updated else it
+                            if (it.id == updated.id)
+                                updated else it
                         }
                         _myRooms.value = _myRooms.value.map {
-                            if (it.id == updated.id) updated else it
+                            if (it.id == updated.id)
+                                updated else it
                         }
-                    } catch (e: Exception) {
-                        // ignore
-                    }
+                        if (updated.isActive == false) {
+                            _rooms.value = _rooms.value
+                                .filter { it.id != updated.id }
+                            _myRooms.value = _myRooms.value
+                                .filter { it.id != updated.id }
+                        }
+                    } catch (e: Exception) { }
                 }
                 .launchIn(viewModelScope)
 
