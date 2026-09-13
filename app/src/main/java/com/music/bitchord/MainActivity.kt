@@ -7,6 +7,7 @@ import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import com.music.bitchord.auth.AuthStore
+import com.music.bitchord.ui.social.JamEntrySheet
 import android.view.View
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
@@ -341,6 +342,9 @@ private fun BitChordApp(
     val authStore = androidx.compose.runtime.remember { AuthStore(context.applicationContext) }
     val clipboard = LocalClipboardManager.current
     val hazeState = remember { HazeState() }
+    var showJamEntrySheet by remember {
+        mutableStateOf(false)
+    }
     // Recording the backdrop layer costs a draw pass, so it only runs when the
     // nav bar's glass surface actually has something to sample.
     val glassActive = LocalLiquidGlassEnabled.current && isGlassSupported()
@@ -1461,6 +1465,15 @@ private fun BitChordApp(
             ?.let { (_, name) -> song.copy(radioName = name) }
             ?: song
         NowPlayingScreen(
+            isInJam = jamViewModel.activeRoom.value != null,
+            onJamClick = {
+                if (jamViewModel.activeRoom.value != null) {
+                    // activeRoom is not null so JamRoomScreen
+                    // is already showing via existing logic
+                } else {
+                    showJamEntrySheet = true
+                }
+            },
             song = displayedSong,
             windowWidth = windowWidth,
             isPlaying = player.isPlaying,
@@ -4010,6 +4023,16 @@ private fun BitChordApp(
                     showSettings = true
                 },
                 onDismiss = { showAccountSelector = false },
+            )
+        }
+
+
+        if (showJamEntrySheet) {
+            JamEntrySheet(
+                jamViewModel = jamViewModel,
+                friendCode = authStore.friendCode,
+                onDismiss = { showJamEntrySheet = false },
+                onRoomJoined = { showJamEntrySheet = false }
             )
         }
 
