@@ -5,6 +5,7 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.music.bitchord.auth.AuthStore
 import com.music.bitchord.data.jam.JamRoom
+import com.music.bitchord.data.jam.Friendship
 import com.music.bitchord.data.jam.JamQueueItem
 import com.music.bitchord.supabase
 import io.github.jan.supabase.postgrest.postgrest
@@ -46,6 +47,21 @@ class JamViewModel(application: Application) : AndroidViewModel(application) {
 
     private val _error = MutableStateFlow<String?>(null)
     val error: StateFlow<String?> = _error.asStateFlow()
+
+    private val _friends =
+        MutableStateFlow<List<Friendship>>(emptyList())
+    val friends: StateFlow<List<Friendship>> =
+        _friends.asStateFlow()
+
+    private val _pendingRequests =
+        MutableStateFlow<List<Friendship>>(emptyList())
+    val pendingRequests: StateFlow<List<Friendship>> =
+        _pendingRequests.asStateFlow()
+
+    private val _showFriendRequestBanner =
+        MutableStateFlow<Friendship?>(null)
+    val showFriendRequestBanner: StateFlow<Friendship?> =
+        _showFriendRequestBanner.asStateFlow()
 
     private val _isLoading = MutableStateFlow(false)
 
@@ -94,6 +110,107 @@ class JamViewModel(application: Application) : AndroidViewModel(application) {
     private var broadcastChannel: RealtimeChannel? = null
 
 
+
+
+    fun sendFriendRequest(targetFriendCode: String) {
+        viewModelScope.launch {
+            try {
+                val myCode = authStore.friendCode
+                if (targetFriendCode == myCode) {
+                    _error.value = "Cannot add yourself"
+                    return@launch
+                }
+                supabase.postgrest["friendships"].insert(
+                    buildJsonObject {
+                        put("user_id", localUserId)
+                        put("friend_id", targetFriendCode)
+                        put("status", "pending")
+                        put("friend_code", myCode)
+                    }
+                )
+            } catch (e: Exception) {
+                _error.value = "Could not send request"
+            }
+        }
+    }
+
+    fun acceptFriendRequest(friendship: Friendship) {
+        viewModelScope.launch {
+            try {
+                supabase.postgrest["friendships"]
+                    .update({ set("status", "accepted") }) {
+                        filter { eq("id", friendship.id) }
+                    }
+                _pendingRequests.value =
+                    _pendingRequests.value
+                    .filter { it.id != friendship.id }
+                _showFriendRequestBanner.value = null
+                loadFriends()
+            } catch (e: Exception) {
+                _error.value = "Could not accept request"
+            }
+        }
+    }
+
+    fun rejectFriendRequest(friendship: Friendship) {
+        viewModelScope.launch {
+            try {
+                supabase.postgrest["friendships"]
+                    .update({ set("status", "rejected") }) {
+                        filter { eq("id", friendship.id) }
+                    }
+                _pendingRequests.value =
+                    _pendingRequests.value
+                    .filter { it.id != friendship.id }
+                _showFriendRequestBanner.value = null
+            } catch (e: Exception) {
+                _error.value = "Could not reject request"
+            }
+        }
+    }
+
+    fun loadFriends() {
+        viewModelScope.launch {
+            try {
+                val myCode = authStore.friendCode
+                val accepted = supabase
+                    .postgrest["friendships"]
+                    .select {
+                        filter {
+                            eq("status", "accepted")
+                        }
+                    }
+                    .decodeList<Friendship>()
+                    .filter {
+                        it.userId == localUserId ||
+                        it.friendId == myCode
+                    }
+                _friends.value = accepted
+
+                val pending = supabase
+                    .postgrest["friendships"]
+                    .select {
+                        filter {
+                            eq("friend_id", myCode)
+                            eq("status", "pending")
+                        }
+                    }
+                    .decodeList<Friendship>()
+                _pendingRequests.value = pending
+                if (pending.isNotEmpty() &&
+                    _showFriendRequestBanner.value == null) {
+                    _showFriendRequestBanner.value =
+                        pending.first()
+                }
+            } catch (e: Exception) {
+                _error.value = "Could not load friends"
+            }
+        }
+    }
+
+    fun dismissFriendRequestBanner() {
+        _showFriendRequestBanner.value = null
+    }
 
     fun startRoomDiscovery() {
         discoveryManager.startScanning()
@@ -409,9 +526,44 @@ class JamViewModel(application: Application) : AndroidViewModel(application) {
 
     init {
         loadRooms()
+        loadFriends()
         viewModelScope.launch {
             subscribeToRooms()
+            subscribeToFriendRequests()
         }
+    }
+
+
+    private suspend fun subscribeToFriendRequests() {
+        try {
+            val myCode = authStore.friendCode
+            val channel = supabase.channel("friendships:$myCode")
+            channel
+                .postgresChangeFlow<PostgresAction.Insert>(
+                    schema = "public"
+                ) {
+                    table = "friendships"
+                    filter("friend_id", FilterOperator.EQ, myCode)
+                }
+                .onEach { change ->
+                    try {
+                        val request =
+                            change.decodeRecord<Friendship>()
+                        if (request.status == "pending") {
+                            _pendingRequests.value =
+                                _pendingRequests.value +
+                                request
+                            if (_showFriendRequestBanner
+                                    .value == null) {
+                                _showFriendRequestBanner
+                                    .value = request
+                            }
+                        }
+                    } catch (e: Exception) { }
+                }
+                .launchIn(viewModelScope)
+            channel.subscribe()
+        } catch (e: Exception) { }
     }
 
     private suspend fun subscribeToRooms() {
