@@ -121,7 +121,7 @@ class JamViewModel(application: Application) : AndroidViewModel(application) {
                     _error.value = "Cannot add yourself"
                     return@launch
                 }
-                supabase.postgrest["friendships"].insert(
+                supabase.from("friendships").insert(
                     buildJsonObject {
                         put("user_id", myId)
                         put("friend_id", 
