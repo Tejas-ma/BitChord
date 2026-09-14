@@ -320,7 +320,7 @@ fun JamEntrySheet(
                     shape = RoundedCornerShape(12.dp)
                 ) {
                     Text(
-                        if (friendRequestSent) "Sent!"
+                        if (friendRequestSent) "Sent!" 
                         else "Add"
                     )
                 }
