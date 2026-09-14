@@ -1,5 +1,13 @@
 package com.music.bitchord.ui.social
 
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.runtime.rememberCoroutineScope
+import kotlinx.coroutines.launch
+import com.music.bitchord.data.YtMusicRepository
+import com.music.bitchord.data.model.SearchResult
+import com.music.bitchord.data.model.Song
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -32,6 +40,8 @@ fun JamRoomScreen(
     currentUserId: String?,
     jamViewModel: JamViewModel,
     onLeave: () -> Unit,
+    onAddSong: (videoId: String, title: String) -> Unit = 
+        { _, _ -> },
     modifier: Modifier = Modifier
 ) {
     val queue by jamViewModel.queue.collectAsStateWithLifecycle()
@@ -284,31 +294,140 @@ fun JamRoomScreen(
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(16.dp),
-                verticalArrangement = 
-                    Arrangement.spacedBy(12.dp)
+                verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
                 Text(
                     text = "Add to Queue",
-                    style = MaterialTheme.typography
-                        .titleMedium
+                    style = MaterialTheme.typography.titleMedium
                 )
-                var searchQuery by remember { 
-                    mutableStateOf("") 
+                var searchQuery by remember {
+                    mutableStateOf("")
                 }
+                var searchResults by remember {
+                    mutableStateOf<List<Song>>(emptyList())
+                }
+                var isSearching by remember {
+                    mutableStateOf(false)
+                }
+                val scope = rememberCoroutineScope()
+
                 OutlinedTextField(
                     value = searchQuery,
-                    onValueChange = { searchQuery = it },
+                    onValueChange = { query ->
+                        searchQuery = query
+                        if (query.length >= 2) {
+                            isSearching = true
+                            scope.launch {
+                                try {
+                                    val results = 
+                                        YtMusicRepository
+                                        .search(query)
+                                        .getOrNull()
+                                    searchResults = results
+                                        ?.items
+                                        ?.filterIsInstance<
+                                            SearchResult.Track>()
+                                        ?.map { track ->
+                                            Song(
+                                                videoId = 
+                                                    track.videoId,
+                                                title = track.title,
+                                                artist = track
+                                                    .artists
+                                                    .firstOrNull()
+                                                    ?.name ?: "",
+                                                thumbnailUrl = 
+                                                    track.thumbnail,
+                                                durationText = 
+                                                    track.duration,
+                                                isVideo = false
+                                            )
+                                        } ?: emptyList()
+                                } catch (e: Exception) {
+                                    searchResults = emptyList()
+                                } finally {
+                                    isSearching = false
+                                }
+                            }
+                        } else {
+                            searchResults = emptyList()
+                        }
+                    },
                     label = { Text("Search songs") },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth()
                 )
-                Text(
-                    text = "Search coming in next update",
-                    style = MaterialTheme.typography
-                        .bodySmall,
-                    color = MaterialTheme.colorScheme
-                        .onSurfaceVariant
-                )
+
+                if (isSearching) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.align(
+                            Alignment.CenterHorizontally
+                        )
+                    )
+                }
+
+                LazyColumn(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(max = 400.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    items(searchResults) { song ->
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 4.dp),
+                            horizontalArrangement =
+                                Arrangement.SpaceBetween,
+                            verticalAlignment =
+                                Alignment.CenterVertically
+                        ) {
+                            Column(
+                                modifier = Modifier.weight(1f)
+                            ) {
+                                Text(
+                                    text = song.title,
+                                    style = MaterialTheme
+                                        .typography.bodyMedium,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                                Text(
+                                    text = song.artist,
+                                    style = MaterialTheme
+                                        .typography.bodySmall,
+                                    color = MaterialTheme
+                                        .colorScheme
+                                        .onSurfaceVariant,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
+                            IconButton(
+                                onClick = {
+                                    onAddSong(
+                                        song.videoId,
+                                        song.title
+                                    )
+                                    showAddSongs = false
+                                }
+                            ) {
+                                Icon(
+                                    imageVector = 
+                                        Icons.Default.Add,
+                                    contentDescription = 
+                                        "Add to queue",
+                                    tint = MaterialTheme
+                                        .colorScheme.primary
+                                )
+                            }
+                        }
+                        HorizontalDivider(
+                            color = MaterialTheme.colorScheme
+                                .outlineVariant.copy(alpha = 0.5f)
+                        )
+                    }
+                }
             }
         }
     }
