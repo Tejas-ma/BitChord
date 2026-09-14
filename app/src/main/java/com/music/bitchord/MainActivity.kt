@@ -1760,8 +1760,18 @@ private fun BitChordApp(
                 room = activeRoom!!,
                 currentUserId = authStore.localUserId,
                 jamViewModel = jamViewModel,
-                onLeave = { jamViewModel.leaveRoom() },
-                modifier = Modifier.fillMaxSize()
+                    onLeave = { jamViewModel.leaveRoom() },
+                    onAddSong = { videoId, title ->
+                        activeRoom?.let { room ->
+                            jamViewModel.addToJamQueue(
+                                roomId = room.id,
+                                videoId = videoId,
+                                title = title,
+                                addedBy = authStore.localUserId
+                            )
+                        }
+                    },
+                    modifier = Modifier.fillMaxSize()
             )
         } else if (isWideScreen) {
             Row(modifier = Modifier.fillMaxSize()) {
@@ -1953,6 +1963,16 @@ private fun BitChordApp(
                             currentUserId = authStore.localUserId,
                             jamViewModel = jamViewModel,
                             onLeave = { jamViewModel.leaveRoom() },
+                            onAddSong = { videoId, title ->
+                                activeRoom?.let { room ->
+                                    jamViewModel.addToJamQueue(
+                                        roomId = room.id,
+                                        videoId = videoId,
+                                        title = title,
+                                        addedBy = authStore.localUserId
+                                    )
+                                }
+                            },
                             modifier = Modifier.fillMaxSize()
                         )
                     } else if (key == "sources") {
@@ -2822,6 +2842,16 @@ private fun BitChordApp(
                             currentUserId = authStore.localUserId,
                             jamViewModel = jamViewModel,
                             onLeave = { jamViewModel.leaveRoom() },
+                            onAddSong = { videoId, title ->
+                                activeRoom?.let { room ->
+                                    jamViewModel.addToJamQueue(
+                                        roomId = room.id,
+                                        videoId = videoId,
+                                        title = title,
+                                        addedBy = authStore.localUserId
+                                    )
+                                }
+                            },
                             modifier = Modifier.fillMaxSize()
                         )
                     } else if (key == "sources") {
