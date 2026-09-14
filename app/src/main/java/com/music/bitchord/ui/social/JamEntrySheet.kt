@@ -273,6 +273,58 @@ fun JamEntrySheet(
                     Text("Join")
                 }
             }
+
+            HorizontalDivider()
+
+            Text(
+                text = "Add a Friend",
+                style = MaterialTheme.typography.titleSmall
+            )
+
+            var friendCodeInput by remember {
+                mutableStateOf("")
+            }
+            var friendRequestSent by remember {
+                mutableStateOf(false)
+            }
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement =
+                    Arrangement.spacedBy(8.dp),
+                verticalAlignment =
+                    Alignment.CenterVertically
+            ) {
+                OutlinedTextField(
+                    value = friendCodeInput,
+                    onValueChange = {
+                        friendCodeInput =
+                            it.uppercase().take(6)
+                        friendRequestSent = false
+                    },
+                    label = { Text("Friend's code") },
+                    singleLine = true,
+                    modifier = Modifier.weight(1f)
+                )
+                FilledTonalButton(
+                    onClick = {
+                        if (friendCodeInput.length == 6) {
+                            jamViewModel.sendFriendRequest(
+                                friendCodeInput
+                            )
+                            friendRequestSent = true
+                            friendCodeInput = ""
+                        }
+                    },
+                    enabled = friendCodeInput.length == 6,
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    Text(
+                        if (friendRequestSent) "Sent!" 
+                        else "Add"
+                    )
+                }
+            }
         }
     }
 }
