@@ -116,20 +116,23 @@ class JamViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             try {
                 val myCode = authStore.friendCode
-                if (targetFriendCode == myCode) {
+                val myId = localUserId
+                if (targetFriendCode.trim() == myCode.trim()) {
                     _error.value = "Cannot add yourself"
                     return@launch
                 }
                 supabase.postgrest["friendships"].insert(
                     buildJsonObject {
-                        put("user_id", localUserId)
-                        put("friend_id", targetFriendCode)
+                        put("user_id", myId)
+                        put("friend_id",
+                            targetFriendCode.trim().uppercase())
                         put("status", "pending")
                         put("friend_code", myCode)
                     }
                 )
+                _error.value = "Friend request sent!"
             } catch (e: Exception) {
-                _error.value = "Could not send request"
+                _error.value = "Error: ${e.message}"
             }
         }
     }
