@@ -256,6 +256,7 @@ class JamViewModel(application: Application) : AndroidViewModel(application) {
                 _activeRoom.value = room
                 startAdvertisingRoom(room.id)
                 loadQueue(room.id)
+                subscribeToQueue(room.id)
                 loadRooms()
             } catch (e: Exception) {
                 _error.value = "Could not create room: ${e.message}"
@@ -265,6 +266,34 @@ class JamViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+
+
+    private fun subscribeToQueue(roomId: String) {
+        viewModelScope.launch {
+            try {
+                val queueChannel = supabase.realtime
+                    .createChannel("public:queue:$roomId")
+                queueChannel
+                    .postgresChangeFlow<PostgresAction.Insert>(
+                        schema = "public"
+                    ) { table = "queue" }
+                    .onEach { change ->
+                        try {
+                            val item = change
+                                .decodeRecord<JamQueueItem>()
+                            if (item.roomId == roomId) {
+                                _queue.value =
+                                    (_queue.value + item)
+                                    .distinctBy { it.id }
+                                    .sortedBy { it.position }
+                            }
+                        } catch (e: Exception) { }
+                    }
+                    .launchIn(viewModelScope)
+                queueChannel.subscribe()
+            } catch (e: Exception) { }
+        }
+    }
 
     fun joinRoomByCode(code: String) {
         viewModelScope.launch {
@@ -285,11 +314,16 @@ class JamViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun joinRoom(room: JamRoom) {
-        viewModelScope.launch {
-            _activeRoom.value = room
-            loadQueue(room.id)
-            startBroadcast(room.id)
+        if (room.privacy == "private" &&
+            room.hostId != localUserId) {
+            _error.value = 
+                "This room is private. Enter room code."
+            return
         }
+        _activeRoom.value = room
+        loadQueue(room.id)
+        subscribeToQueue(room.id)
+        startBroadcast(room.id)
     }
 
     fun leaveRoom() {
