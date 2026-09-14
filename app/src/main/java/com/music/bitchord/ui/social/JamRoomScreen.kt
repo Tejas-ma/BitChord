@@ -17,6 +17,11 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.material3.rememberModalBottomSheetState
+import androidx.compose.material3.ModalBottomSheet
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.music.bitchord.data.jam.JamRoom
 import com.music.bitchord.data.jam.JamQueueItem
@@ -40,6 +45,7 @@ fun JamRoomScreen(
     var allowInvite by remember {
         mutableStateOf(room.allowInvite)
     }
+    var showAddSongs by remember { mutableStateOf(false) }
 
     Column(
         modifier = modifier
@@ -75,6 +81,12 @@ fun JamRoomScreen(
                         "Private" else "Public",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Text(
+                    text = "Code: ${room.id.take(6).uppercase()}",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.primary,
+                    letterSpacing = 2.sp
                 )
             }
             Box {
@@ -223,7 +235,7 @@ fun JamRoomScreen(
                 text = "Next from ${room.name}",
                 style = MaterialTheme.typography.titleSmall
             )
-            TextButton(onClick = { /* open search — PR 6 */ }) {
+            TextButton(onClick = { showAddSongs = true }) {
                 Text("+ Add songs")
             }
         }
@@ -256,6 +268,47 @@ fun JamRoomScreen(
                 itemsIndexed(queue) { index, item ->
                     JamQueueRow(item = item, index = index)
                 }
+            }
+        }
+    }
+
+    if (showAddSongs) {
+        @OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
+        ModalBottomSheet(
+            onDismissRequest = { showAddSongs = false },
+            sheetState = rememberModalBottomSheetState(
+                skipPartiallyExpanded = true
+            )
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(16.dp),
+                verticalArrangement =
+                    Arrangement.spacedBy(12.dp)
+            ) {
+                Text(
+                    text = "Add to Queue",
+                    style = MaterialTheme.typography
+                        .titleMedium
+                )
+                var searchQuery by remember {
+                    mutableStateOf("")
+                }
+                OutlinedTextField(
+                    value = searchQuery,
+                    onValueChange = { searchQuery = it },
+                    label = { Text("Search songs") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Text(
+                    text = "Search coming in next update",
+                    style = MaterialTheme.typography
+                        .bodySmall,
+                    color = MaterialTheme.colorScheme
+                        .onSurfaceVariant
+                )
             }
         }
     }
