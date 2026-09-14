@@ -16,6 +16,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.music.bitchord.R
 import com.music.bitchord.data.jam.JamRoom
+import com.music.bitchord.data.jam.Friendship
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.material.icons.rounded.People
 import androidx.compose.foundation.layout.PaddingValues
@@ -31,6 +32,12 @@ fun SocialScreen(
     val myRooms by jamViewModel.myRooms.collectAsStateWithLifecycle()
     val isLoading by jamViewModel.isLoading.collectAsStateWithLifecycle()
     val activeRoom by jamViewModel.activeRoom.collectAsStateWithLifecycle()
+
+    val friends by jamViewModel.friends
+        .collectAsStateWithLifecycle()
+    val showBanner by jamViewModel.showFriendRequestBanner
+        .collectAsStateWithLifecycle()
+
 
     var showCreateRoomDialog by remember { mutableStateOf(false) }
     var sessionName by remember { mutableStateOf("") }
@@ -102,6 +109,75 @@ fun SocialScreen(
         ) {
             Spacer(modifier = Modifier.height(8.dp))
 
+            androidx.compose.animation.AnimatedVisibility(
+                visible = showBanner != null
+            ) {
+                showBanner?.let { request ->
+                    Surface(
+                        shape = RoundedCornerShape(16.dp),
+                        color = MaterialTheme.colorScheme
+                            .primaryContainer,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(bottom = 8.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(12.dp),
+                            horizontalArrangement =
+                                Arrangement.SpaceBetween,
+                            verticalAlignment =
+                                Alignment.CenterVertically
+                        ) {
+                            Column(
+                                modifier = Modifier.weight(1f)
+                            ) {
+                                Text(
+                                    text = "Friend Request",
+                                    style = MaterialTheme.typography
+                                        .labelSmall,
+                                    color = MaterialTheme.colorScheme
+                                        .onPrimaryContainer
+                                )
+                                Text(
+                                    text = "Code: ${request.friendCode}",
+                                    style = MaterialTheme.typography
+                                        .bodyMedium,
+                                    color = MaterialTheme.colorScheme
+                                        .onPrimaryContainer
+                                )
+                            }
+                            Row(
+                                horizontalArrangement =
+                                    Arrangement.spacedBy(8.dp)
+                            ) {
+                                TextButton(onClick = {
+                                    jamViewModel
+                                        .rejectFriendRequest(request)
+                                }) {
+                                    Text(
+                                        "Decline",
+                                        color = MaterialTheme
+                                            .colorScheme
+                                            .onPrimaryContainer
+                                    )
+                                }
+                                FilledTonalButton(
+                                    onClick = {
+                                        jamViewModel
+                                            .acceptFriendRequest(
+                                                request
+                                            )
+                                    },
+                                    shape = RoundedCornerShape(8.dp)
+                                ) {
+                                    Text("Accept")
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
             // Active Rooms section
             Row(
                 modifier = Modifier
@@ -152,7 +228,14 @@ fun SocialScreen(
                     color = MaterialTheme.colorScheme.outlineVariant
                 )
             }
-            SectionEmptyBox(text = "No friends listening")
+            if (friends.isEmpty()) {
+                SectionEmptyBox(text = "No friends yet")
+            } else {
+                friends.forEach { friend ->
+                    FriendCard(friendship = friend)
+                    Spacer(modifier = Modifier.height(8.dp))
+                }
+            }
 
             HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
 
@@ -331,5 +414,53 @@ fun SectionEmptyBox(text: String) {
                 .copy(alpha = 0.6f),
             modifier = Modifier.padding(horizontal = 4.dp)
         )
+    }
+}
+
+
+@Composable
+fun FriendCard(friendship: Friendship) {
+    Surface(
+        shape = RoundedCornerShape(16.dp),
+        color = MaterialTheme.colorScheme.surfaceVariant,
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Row(
+            modifier = Modifier.padding(12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement =
+                Arrangement.spacedBy(12.dp)
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(40.dp)
+                    .clip(androidx.compose.foundation
+                        .shape.CircleShape)
+                    .background(
+                        MaterialTheme.colorScheme.primary
+                            .copy(alpha = 0.2f)
+                    ),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    text = friendship.friendCode.take(1),
+                    style = MaterialTheme.typography
+                        .titleMedium,
+                    color = MaterialTheme.colorScheme.primary
+                )
+            }
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = friendship.friendCode,
+                    style = MaterialTheme.typography.bodyMedium
+                )
+                Text(
+                    text = "Friend",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme
+                        .onSurfaceVariant
+                )
+            }
+        }
     }
 }
