@@ -527,8 +527,8 @@ class JamViewModel(application: Application) : AndroidViewModel(application) {
     init {
         loadRooms()
         loadFriends()
+        subscribeToRooms()
         viewModelScope.launch {
-            subscribeToRooms()
             subscribeToFriendRequests()
         }
     }
@@ -566,60 +566,72 @@ class JamViewModel(application: Application) : AndroidViewModel(application) {
         } catch (e: Exception) { }
     }
 
-    private suspend fun subscribeToRooms() {
-        try {
-            roomsChannel = supabase.channel("public:rooms")
-            roomsChannel!!
-                .postgresChangeFlow<PostgresAction.Insert>(
-                    schema = "public"
-                ) { table = "rooms" }
-                .onEach { change ->
-                    try {
-                        val newRoom = 
-                            change.decodeRecord<JamRoom>()
-                        if (newRoom.isActive != false) {
-                            _rooms.value = 
-                                (_rooms.value + newRoom)
-                                .distinctBy { it.id }
-                            if (newRoom.hostId == localUserId) {
-                                _myRooms.value =
-                                    (_myRooms.value + newRoom)
+    private fun subscribeToRooms() {
+        viewModelScope.launch {
+            try {
+                supabase.realtime.connect()
+                roomsChannel = supabase.realtime
+                    .channel("public:rooms")
+                roomsChannel!!
+                    .postgresChangeFlow<PostgresAction.Insert>(
+                        schema = "public"
+                    ) { table = "rooms" }
+                    .onEach { change ->
+                        try {
+                            val newRoom =
+                                change.decodeRecord<JamRoom>()
+                            if (newRoom.isActive != false) {
+                                _rooms.value =
+                                    (_rooms.value + newRoom)
                                     .distinctBy { it.id }
+                                if (newRoom.hostId ==
+                                    localUserId) {
+                                    _myRooms.value =
+                                        (_myRooms.value +
+                                        newRoom)
+                                        .distinctBy { it.id }
+                                }
                             }
-                        }
-                    } catch (e: Exception) { }
-                }
-                .launchIn(viewModelScope)
+                        } catch (e: Exception) { }
+                    }
+                    .launchIn(viewModelScope)
 
-            roomsChannel!!
-                .postgresChangeFlow<PostgresAction.Update>(
-                    schema = "public"
-                ) { table = "rooms" }
-                .onEach { change ->
-                    try {
-                        val updated = 
-                            change.decodeRecord<JamRoom>()
-                        _rooms.value = _rooms.value.map {
-                            if (it.id == updated.id) 
-                                updated else it
-                        }
-                        _myRooms.value = _myRooms.value.map {
-                            if (it.id == updated.id) 
-                                updated else it
-                        }
-                        if (updated.isActive == false) {
-                            _rooms.value = _rooms.value
-                                .filter { it.id != updated.id }
-                            _myRooms.value = _myRooms.value
-                                .filter { it.id != updated.id }
-                        }
-                    } catch (e: Exception) { }
-                }
-                .launchIn(viewModelScope)
+                roomsChannel!!
+                    .postgresChangeFlow<PostgresAction.Update>(
+                        schema = "public"
+                    ) { table = "rooms" }
+                    .onEach { change ->
+                        try {
+                            val updated =
+                                change.decodeRecord<JamRoom>()
+                            _rooms.value = _rooms.value.map {
+                                if (it.id == updated.id)
+                                    updated else it
+                            }
+                            _myRooms.value =
+                                _myRooms.value.map {
+                                if (it.id == updated.id)
+                                    updated else it
+                            }
+                            if (updated.isActive == false) {
+                                _rooms.value = _rooms.value
+                                    .filter {
+                                        it.id != updated.id
+                                    }
+                                _myRooms.value =
+                                    _myRooms.value
+                                    .filter {
+                                        it.id != updated.id
+                                    }
+                            }
+                        } catch (e: Exception) { }
+                    }
+                    .launchIn(viewModelScope)
 
-            roomsChannel!!.subscribe()
-        } catch (e: Exception) {
-            _error.value = "Could not subscribe to rooms"
+                roomsChannel!!.subscribe()
+            } catch (e: Exception) {
+                _error.value = "Could not subscribe to rooms"
+            }
         }
     }
 }
