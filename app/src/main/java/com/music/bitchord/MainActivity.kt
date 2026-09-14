@@ -1394,6 +1394,8 @@ private fun BitChordApp(
         .collectAsStateWithLifecycle()
     val remotePlayPause by jamViewModel.remotePlayPause
         .collectAsStateWithLifecycle()
+    val remoteVideoId by jamViewModel.remoteVideoId
+        .collectAsStateWithLifecycle()
     val activeRoom by jamViewModel.activeRoom
         .collectAsStateWithLifecycle()
 
@@ -1424,16 +1426,39 @@ private fun BitChordApp(
         }
     }
 
-    LaunchedEffect(player.song, activeRoom) {
-        val song = player.song ?: return@LaunchedEffect
-        val room = activeRoom ?: return@LaunchedEffect
-        val isHost = room.hostId == authStore.localUserId
-        if (isHost) {
-            jamViewModel.broadcastNowPlaying(
-                videoId = song.videoId,
-                title = song.title,
-                artist = song.artist
-            )
+    LaunchedEffect(remoteVideoId) {
+        remoteVideoId?.let { videoId ->
+            val room = jamViewModel.activeRoom.value
+            val isHost = room?.hostId == authStore.localUserId
+            if (!isHost && room != null) {
+                try {
+                    val song = YtMusicRepository
+                        .trackLinks(videoId)
+                        .getOrNull()
+                    if (song != null) {
+                        controller?.playSongs(
+                            listOf(song), 0
+                        )
+                    }
+                } catch (e: Exception) {
+                    // silent — sync is best effort
+                }
+            }
+            jamViewModel.clearRemoteVideoId()
+        }
+    }
+
+    LaunchedEffect(player.song?.videoId) {
+        player.song?.let { song ->
+            val room = jamViewModel.activeRoom.value
+            val isHost = room?.hostId == authStore.localUserId
+            if (isHost && room != null) {
+                jamViewModel.broadcastNowPlaying(
+                    videoId = song.videoId,
+                    title = song.title,
+                    artist = song.artist
+                )
+            }
         }
     }
 

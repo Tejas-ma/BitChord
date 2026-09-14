@@ -102,6 +102,12 @@ class JamViewModel(application: Application) : AndroidViewModel(application) {
     val remoteSkipPrevious: StateFlow<Int> = 
         _remoteSkipPrevious.asStateFlow()
 
+    private val _remoteVideoId = MutableStateFlow<String?>(null)
+    val remoteVideoId: StateFlow<String?> = _remoteVideoId.asStateFlow()
+
+    fun clearRemoteVideoId() {
+        _remoteVideoId.value = null
+    }
     private val _remoteSeekPosition = 
         MutableStateFlow<Long?>(null)
     val remoteSeekPosition: StateFlow<Long?> = 
@@ -414,6 +420,9 @@ class JamViewModel(application: Application) : AndroidViewModel(application) {
                     val title = payload["title"]
                     val artist = payload["artist"]
                     _nowPlayingVideoId.value = videoId
+                    if (videoId != null) {
+                        _remoteVideoId.value = videoId
+                    }
                     _nowPlayingTitle.value = title
                     _nowPlayingArtist.value = artist
                 }
