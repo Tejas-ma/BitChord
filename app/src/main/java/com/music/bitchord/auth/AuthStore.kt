@@ -40,9 +40,6 @@ class AuthStore(context: Context) {
         get() = prefs.getString(KEY_COOKIE, null)
         set(value) = prefs.edit().putString(KEY_COOKIE, value).apply()
 
-    val friendCode: String
-        get() = localUserId.take(6).uppercase()
-
     var localUserId: String
         get() {
             val existing = prefs.getString(KEY_LOCAL_USER_ID, null)
@@ -53,6 +50,23 @@ class AuthStore(context: Context) {
         }
         private set(value) =
             prefs.edit().putString(KEY_LOCAL_USER_ID, value).apply()
+
+    val friendCode: String
+        get() {
+            val existing = prefs.getString(
+                KEY_FRIEND_CODE, null
+            )
+            if (existing != null) return existing
+            val chars =
+                "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+            val newCode = (1..6)
+                .map { chars.random() }
+                .joinToString("")
+            prefs.edit()
+                .putString(KEY_FRIEND_CODE, newCode)
+                .apply()
+            return newCode
+        }
 
 
     /**
@@ -232,5 +246,6 @@ class AuthStore(context: Context) {
         private const val KEY_CHANNEL_NAME = "channel_name"
         private const val KEY_CHANNEL_AUTH_USER = "channel_auth_user"
         private const val KEY_DISCORD_TOKEN = "discord_token"
+        private const val KEY_FRIEND_CODE = "friend_code"
     }
 }
