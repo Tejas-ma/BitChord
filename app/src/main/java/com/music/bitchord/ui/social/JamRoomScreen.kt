@@ -319,29 +319,13 @@ fun JamRoomScreen(
                             isSearching = true
                             scope.launch {
                                 try {
-                                    val results = 
-                                        YtMusicRepository
-                                        .search(query)
+                                    val results = YtMusicRepository
+                                        .search(query, com.music.bitchord.data.model.SearchFilter.SONGS)
                                         .getOrNull()
                                     searchResults = results
-                                        ?.items
-                                        ?.filterIsInstance<
-                                            SearchResult.Track>()
+                                        ?.filterIsInstance<com.music.bitchord.data.model.SearchResult.Track>()
                                         ?.map { track ->
-                                            Song(
-                                                videoId = 
-                                                    track.videoId,
-                                                title = track.title,
-                                                artist = track
-                                                    .artists
-                                                    .firstOrNull()
-                                                    ?.name ?: "",
-                                                thumbnailUrl = 
-                                                    track.thumbnail,
-                                                durationText = 
-                                                    track.duration,
-                                                isVideo = false
-                                            )
+                                            track.song
                                         } ?: emptyList()
                                 } catch (e: Exception) {
                                     searchResults = emptyList()
@@ -372,7 +356,10 @@ fun JamRoomScreen(
                         .heightIn(max = 400.dp),
                     verticalArrangement = Arrangement.spacedBy(4.dp)
                 ) {
-                    items(searchResults) { song ->
+                    items(
+                        items = searchResults,
+                        key = { it.videoId }
+                    ) { song ->
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -413,9 +400,9 @@ fun JamRoomScreen(
                                 }
                             ) {
                                 Icon(
-                                    imageVector = 
+                                    imageVector =
                                         Icons.Default.Add,
-                                    contentDescription = 
+                                    contentDescription =
                                         "Add to queue",
                                     tint = MaterialTheme
                                         .colorScheme.primary
