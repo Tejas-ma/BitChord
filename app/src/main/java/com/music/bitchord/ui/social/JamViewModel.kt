@@ -271,7 +271,7 @@ class JamViewModel(application: Application) : AndroidViewModel(application) {
     private fun subscribeToQueue(roomId: String) {
         viewModelScope.launch {
             try {
-                val queueChannel = supabase.realtime.createChannel("public:queue:$roomId")
+                val queueChannel = supabase.channel("public:queue:$roomId")
                 queueChannel
                     .postgresChangeFlow<PostgresAction.Insert>(
                         schema = "public"
