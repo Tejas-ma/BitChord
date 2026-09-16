@@ -389,6 +389,30 @@ class JamViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    fun addToJamQueue(
+        roomId: String,
+        videoId: String,
+        title: String,
+        addedBy: String
+    ) {
+        viewModelScope.launch {
+            try {
+                val position = (_queue.value.maxOfOrNull { it.position } ?: 0) + 1
+                supabase.postgrest["queue"].insert(
+                    buildJsonObject {
+                        put("room_id", roomId)
+                        put("video_id", videoId)
+                        put("title", title)
+                        put("added_by", addedBy)
+                        put("position", position)
+                    }
+                )
+            } catch (e: Exception) {
+                _error.value = "Could not add song: ${e.message}"
+            }
+        }
+    }
+
     fun loadRooms() {
         viewModelScope.launch {
             try {
