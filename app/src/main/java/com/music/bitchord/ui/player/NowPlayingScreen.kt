@@ -1,5 +1,14 @@
 package com.music.bitchord.ui.player
 
+import android.widget.Toast
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.Dispatchers
+import androidx.core.app.ShareCompat
+import android.content.Intent
+import androidx.core.content.FileProvider
+import coil3.imageLoader
+import coil3.request.SuccessResult
+
 import com.music.bitchord.R
 import com.music.bitchord.ui.components.ExplicitSongTitle
 
@@ -52,10 +61,11 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.animateScrollBy
 import androidx.compose.foundation.gestures.awaitEachGesture
-import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.awaitVerticalTouchSlopOrCancellation
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.waitForUpOrCancellation
 import androidx.compose.foundation.gestures.verticalDrag
 import androidx.compose.foundation.interaction.DragInteraction
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -99,6 +109,8 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.People
+import androidx.compose.material.icons.rounded.RepeatOne
 import androidx.compose.material.icons.automirrored.rounded.QueueMusic
 import androidx.compose.material.icons.automirrored.rounded.Undo
 import androidx.compose.material.icons.automirrored.rounded.VolumeDown
@@ -113,9 +125,13 @@ import androidx.compose.material.icons.rounded.Headphones
 import androidx.compose.material.icons.rounded.Person
 import androidx.compose.material.icons.rounded.MoreHoriz
 import androidx.compose.material.icons.rounded.Translate
+import androidx.compose.material.icons.rounded.Pause
+import androidx.compose.material.icons.rounded.PlayArrow
+import androidx.compose.material.icons.rounded.Share
 import androidx.compose.material.icons.rounded.Videocam
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -143,6 +159,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.res.stringArrayResource
 import androidx.compose.ui.draw.clip
@@ -209,12 +226,9 @@ import androidx.media3.common.Player
 import coil3.SingletonImageLoader
 import coil3.compose.AsyncImage
 import coil3.compose.AsyncImagePainter
-import coil3.request.ImageRequest
-import coil3.request.SuccessResult
-import coil3.request.allowHardware
 import coil3.toBitmap
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
+import coil3.request.ImageRequest
+import coil3.request.allowHardware
 import com.music.bitchord.ui.theme.SystemBarIcons
 import com.music.bitchord.ui.rememberIsForeground
 import com.music.bitchord.ui.components.thumbnailBorder
@@ -261,6 +275,8 @@ import kotlin.math.PI
 import kotlin.math.roundToInt
 import kotlin.math.sin
 import kotlin.random.Random
+
+enum class LoopMode { OFF, REPEAT_ONE, REPEAT_ALL, AUTOPLAY }
 
 /** Collapsed-header geometry, shared by the layout and its animation. */
 /**
@@ -943,6 +959,7 @@ fun NowPlayingScreen(
     isPlaying: Boolean,
     isLoading: Boolean,
     positionMs: Long,
+    currentPositionProvider: () -> Long = { positionMs },
     durationMs: Long,
     /** True only while this current item is the manual catalogue-audio match. */
     isAudioVersion: Boolean,
@@ -1024,10 +1041,16 @@ fun NowPlayingScreen(
      */
     docked: Boolean = false,
     modifier: Modifier = Modifier,
+    isJamMember: Boolean = false,
+    jamAllowsControl: Boolean = true,
+    isInJam: Boolean = false,
+    onJamClick: () -> Unit = {},
 ) {
     val context = LocalContext.current
     val density = LocalDensity.current
     val haptics = rememberHaptics()
+    val controlEnabled = !isJamMember || jamAllowsControl
+    val onSeek = if (controlEnabled) onSeek else { _ -> }
 
     // Keep the header caption and the system glyphs on the same contrast
     // decision. The caption sits over the same upper part of the cover as the
@@ -1425,6 +1448,14 @@ fun NowPlayingScreen(
     // follows the finger so the gesture has something to hold on to.
     val swipeThreshold = with(density) { 72.dp.toPx() }
     var swipeOffset by remember { mutableFloatStateOf(0f) }
+    var seekOverlayText by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(seekOverlayText) {
+        if (seekOverlayText != null) {
+            kotlinx.coroutines.delay(600)
+            seekOverlayText = null
+        }
+    }
+    val hapticFeedback = androidx.compose.ui.platform.LocalHapticFeedback.current
     val swipeSettle by animateFloatAsState(
         targetValue = swipeOffset,
         animationSpec = spring(stiffness = Spring.StiffnessMediumLow),
@@ -2380,24 +2411,6 @@ fun NowPlayingScreen(
                                 bandBottom = dismissBandBottom
                             }
                             if (y >= bandTop && y <= bandBottom) {
-                                if (!panelUp) {
-                                    dragQueueIn(
-                                        down = down,
-                                        travel = bandBottom - bandTop -
-                                            HEADER_HEIGHT.toPx(),
-                                        slide = queueSlide,
-                                        onHold = { queueDragging = it },
-                                        onSettle = { open ->
-                                            if (open != queueOpen) {
-                                                haptics.play(
-                                                    if (open) Haptic.Expand else Haptic.Tap,
-                                                )
-                                                queueOpen = open
-                                            }
-                                            queueReleased++
-                                        },
-                                    )
-                                }
                                 return@awaitEachGesture
                             }
                             // What detectVerticalDragGestures does, minus the
@@ -2740,6 +2753,65 @@ fun NowPlayingScreen(
                     // evidence, and the two no longer swap for each other on a
                     // tap. Fades out with the sleeve as it collapses to a
                     // thumbnail, where there's no room to read it anyway.
+                                    Box(modifier = Modifier
+                    .matchParentSize()
+                    .zIndex(10f)
+                    .pointerInput(Unit) {
+                        var lastTapTime = 0L
+                        var lastTapPos = androidx.compose.ui.geometry.Offset.Zero
+                        var tapJob: kotlinx.coroutines.Job? = null
+                        awaitPointerEventScope {
+                            while (true) {
+                                val down = awaitFirstDown(requireUnconsumed = false)
+                                val up = waitForUpOrCancellation()
+                                if (up != null) {
+                                    val now = System.currentTimeMillis()
+                                    if (now - lastTapTime < 300) {
+                                        val dx = kotlin.math.abs(up.position.x - lastTapPos.x)
+                                        if (dx < with(density) { 10.dp.toPx() }) {
+                                            tapJob?.cancel()
+                                            lastTapTime = 0L
+                                            val offset = up.position
+                                            val currentPos = currentPositionProvider()
+                                            val target = if (offset.x < size.width / 2) currentPos - 10000 else currentPos + 10000
+                                            onSeek(target.coerceIn(0L, durationMs))
+                                            hapticFeedback.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
+                                            seekOverlayText = if (offset.x < size.width / 2) "-10s" else "+10s"
+                                        } else {
+                                            lastTapTime = now
+                                            lastTapPos = up.position
+                                            tapJob = scope.launch {
+                                                kotlinx.coroutines.delay(300)
+                                            }
+                                        }
+                                    } else {
+                                        lastTapTime = now
+                                        lastTapPos = up.position
+                                        tapJob = scope.launch {
+                                            kotlinx.coroutines.delay(300)
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                ) {
+                    seekOverlayText?.let { text ->
+                        Box(
+                            modifier = Modifier
+                                .align(Alignment.Center)
+                                .background(Color.Black.copy(alpha = 0.6f), RoundedCornerShape(16.dp))
+                                .padding(horizontal = 24.dp, vertical = 12.dp)
+                        ) {
+                            Text(
+                                text = text,
+                                color = Color.White,
+                                style = MaterialTheme.typography.titleLarge
+                            )
+                        }
+                    }
+                }
+
                     if (showNerdStats && p < 0.5f) {
                         // A plain white line reads fine over the usual dark
                         // tile, but a light stretch of an animated cover — sky,
@@ -2942,6 +3014,61 @@ fun NowPlayingScreen(
                         )
                         Spacer(Modifier.width(8.dp))
                     }
+
+                    val scope = rememberCoroutineScope()
+                    val context = LocalContext.current
+
+                    CircleGlyph(
+                        icon = Icons.Rounded.Share,
+                        contentDescription = "Share",
+                        onClick = {
+                            Toast.makeText(context, "Preparing card...", Toast.LENGTH_SHORT).show()
+                            scope.launch {
+                                try {
+                                    val file = withContext(Dispatchers.IO) {
+                                        val request = ImageRequest.Builder(context)
+                                            .data(song.artworkAt(1200))
+                                            .size(1200)
+                                            .build()
+                                        val result = context.imageLoader.execute(request)
+                                        val bitmap = if (result is SuccessResult) {
+                                            result.image.toBitmap()
+                                        } else null
+
+                                        ShareCardGenerator.generateShareCard(
+                                            context = context,
+                                            artwork = bitmap,
+                                            title = song.title,
+                                            artist = song.artist
+                                        )
+                                    }
+
+                                    if (file != null) {
+                                        val uri = FileProvider.getUriForFile(
+                                            context,
+                                            "${context.packageName}.fileprovider",
+                                            file
+                                        )
+
+                                        withContext(Dispatchers.Main) {
+                                            val intent = ShareCompat.IntentBuilder(context)
+                                                .setType("image/png")
+                                                .setStream(uri)
+                                                .createChooserIntent()
+                                            intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                                            context.startActivity(intent)
+                                        }
+                                    }
+                                } catch (e: Exception) {
+                                    e.printStackTrace()
+                                    withContext(Dispatchers.Main) {
+                                        Toast.makeText(context, "Failed to share", Toast.LENGTH_SHORT).show()
+                                    }
+                                }
+                            }
+                        },
+                    )
+                    Spacer(Modifier.width(8.dp))
                     CircleGlyph(
                         icon = if (showRevertCue) Icons.AutoMirrored.Rounded.Undo else Icons.Rounded.MoreHoriz,
                         contentDescription = stringResource(R.string.more),
@@ -3264,6 +3391,7 @@ fun NowPlayingScreen(
                     // step to, or enough elapsed for it to restart this one.
                     enabled = hasPrevious || positionMs > BACK_RESTARTS_AFTER_MS,
                     haptic = Haptic.SkipPrevious,
+                    modifier = Modifier.alpha(if (controlEnabled) 1f else 0.4f),
                 )
                 // While the stream URL resolves and buffers, the play glyph
                 // would be a lie — show progress instead.
@@ -3285,6 +3413,7 @@ fun NowPlayingScreen(
                         touchSize = 100.dp,
                         onClick = onPlayPause,
                         haptic = if (isPlaying) Haptic.Pause else Haptic.Resume,
+                        modifier = Modifier.alpha(if (controlEnabled) 1f else 0.4f),
                     )
                 }
                 TransportGlyph(
@@ -3294,6 +3423,7 @@ fun NowPlayingScreen(
                     onClick = onNext,
                     enabled = hasNext,
                     haptic = Haptic.SkipNext,
+                    modifier = Modifier.alpha(if (controlEnabled) 1f else 0.4f),
                 )
             }
 
@@ -3439,6 +3569,86 @@ fun NowPlayingScreen(
                         )
                     }
                 }
+                    icon = Icons.Rounded.People,
+                    contentDescription = if (isInJam)
+                        "In Jam" else "Join Jam",
+                    onClick = onJamClick,
+                    highlighted = isInJam,
+                    haptic = if (isInJam)
+                        Haptic.ToggleOff else Haptic.ToggleOn,
+                )
+                if (!isJamMember) {
+                    BottomGlyph(
+                        icon = BitChordIcons.Shuffle,
+                        contentDescription = stringResource(
+                            if (shuffleEnabled) R.string.shuffle_on else R.string.shuffle_off,
+                        ),
+                        onClick = onToggleShuffle,
+                        highlighted = shuffleEnabled,
+                        haptic = if (shuffleEnabled) Haptic.ToggleOff else Haptic.ToggleOn,
+                        tapWindowMs = SHUFFLE_TAP_WINDOW_MS,
+                    )
+                }
+
+                if (!isJamMember) {
+                    var loopMode by remember(repeatMode, autoplayEnabled) {
+                        mutableStateOf(
+                            when {
+                                autoplayEnabled -> LoopMode.AUTOPLAY
+                                repeatMode == Player.REPEAT_MODE_ONE -> LoopMode.REPEAT_ONE
+                                repeatMode == Player.REPEAT_MODE_ALL -> LoopMode.REPEAT_ALL
+                                else -> LoopMode.OFF
+                            }
+                        )
+                    }
+
+                    IconButton(onClick = {
+                        val nextMode = when (loopMode) {
+                            LoopMode.OFF -> LoopMode.REPEAT_ONE
+                            LoopMode.REPEAT_ONE -> LoopMode.REPEAT_ALL
+                            LoopMode.REPEAT_ALL -> LoopMode.AUTOPLAY
+                            LoopMode.AUTOPLAY -> LoopMode.OFF
+                        }
+                        loopMode = nextMode
+
+                        when (nextMode) {
+                            LoopMode.OFF -> {
+                                if (repeatMode != Player.REPEAT_MODE_OFF) onCycleRepeat()
+                                if (autoplayEnabled) onToggleAutoplay()
+                            }
+                            LoopMode.REPEAT_ONE -> {
+                                if (repeatMode != Player.REPEAT_MODE_ONE) onCycleRepeat()
+                                if (autoplayEnabled) onToggleAutoplay()
+                            }
+                            LoopMode.REPEAT_ALL -> {
+                                if (repeatMode != Player.REPEAT_MODE_ALL) onCycleRepeat()
+                                if (autoplayEnabled) onToggleAutoplay()
+                            }
+                            LoopMode.AUTOPLAY -> {
+                                if (repeatMode != Player.REPEAT_MODE_OFF) {
+                                    // Needs to be OFF
+                                    onCycleRepeat()
+                                }
+                                if (!autoplayEnabled) onToggleAutoplay()
+                            }
+                        }
+                    }) {
+                        Icon(
+                            imageVector = when (loopMode) {
+                                LoopMode.OFF -> BitChordIcons.Repeat
+                                LoopMode.REPEAT_ONE -> Icons.Rounded.RepeatOne
+                                LoopMode.REPEAT_ALL -> BitChordIcons.Repeat
+                                LoopMode.AUTOPLAY -> BitChordIcons.Infinity
+                            },
+                            contentDescription = loopMode.name,
+                            tint = when (loopMode) {
+                                LoopMode.OFF -> MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f)
+                                else -> MaterialTheme.colorScheme.primary
+                            }
+                        )
+                    }
+                }
+
                 BottomGlyph(
                     icon = BitChordIcons.Queue,
                     contentDescription = stringResource(R.string.up_next),
@@ -5992,6 +6202,7 @@ private fun CircleGlyph(
     active: Boolean = false,
     haptic: Haptic = Haptic.Tap,
 ) {
+    val hapticFeedback = androidx.compose.ui.platform.LocalHapticFeedback.current
     val haptics = rememberHaptics()
     val discAlpha by animateFloatAsState(
         targetValue = if (active) 0.34f else 0.18f,
@@ -6040,6 +6251,7 @@ private fun TransportGlyph(
     onClick: () -> Unit,
     enabled: Boolean = true,
     haptic: Haptic = Haptic.Tap,
+    modifier: Modifier = Modifier,
 ) {
     val haptics = rememberHaptics()
     // Faded rather than hidden: the row keeps its shape at the ends of a queue.
@@ -6048,8 +6260,9 @@ private fun TransportGlyph(
         label = "transportAlpha",
     )
     Box(
-        modifier = Modifier
-            .size(touchSize)
+        modifier = modifier
+            .size(size + 12.dp)
+            .clip(CircleShape)
             .clickable(
                 interactionSource = remember { MutableInteractionSource() },
                 indication = null,

@@ -432,7 +432,7 @@ class PlaybackService : MediaLibraryService() {
      * [adoptPlayer] — so anything reading it must read it *now* rather than
      * capturing it.
      */
-    private var player: ExoPlayer? = null
+    var player: ExoPlayer? = null
 
     /**
      * The idle player. Between transitions it holds nothing; to arm one,
@@ -631,6 +631,7 @@ class PlaybackService : MediaLibraryService() {
             // The player this fired on, which is by definition the one the
             // session is currently pointed at.
             val exoPlayer = player ?: return
+
             // The only number that describes what a listener actually
             // waits through. Every other timing in this app measures one
             // leg of getting a track started — a resolve, a client walk, an
@@ -733,6 +734,7 @@ class PlaybackService : MediaLibraryService() {
             reason: Int,
         ) {
             val exoPlayer = player ?: return
+
             if (reason == Player.DISCONTINUITY_REASON_SEEK) {
                 if (exoPlayer.isPlaying) pushDiscordPresence(exoPlayer)
                 updateLyricSubtitle()
@@ -743,6 +745,7 @@ class PlaybackService : MediaLibraryService() {
             // The player this fired on, which is by definition the one the
             // session is currently pointed at.
             val exoPlayer = player ?: return
+
             // A quality swap replaces the playing item, which Media3
             // reports here as a playlist change — indistinguishable, from
             // this callback's point of view, from the queue moving on. It
@@ -800,6 +803,7 @@ class PlaybackService : MediaLibraryService() {
             // The player this fired on, which is by definition the one the
             // session is currently pointed at.
             val exoPlayer = player ?: return
+
             recoverFrom(error, exoPlayer)
         }
 
@@ -809,6 +813,7 @@ class PlaybackService : MediaLibraryService() {
             // The player this fired on, which is by definition the one the
             // session is currently pointed at.
             val exoPlayer = player ?: return
+
             if (state == Player.STATE_ENDED) {
                 SleepTimer.cancel()
                 // The queue ran dry, so no transition will ever close the last
@@ -871,6 +876,7 @@ class PlaybackService : MediaLibraryService() {
             // The player this fired on, which is by definition the one the
             // session is currently pointed at.
             val exoPlayer = player ?: return
+
             if (exoPlayer.isPlaying) prefetchAround(exoPlayer)
             if (reason == Player.TIMELINE_CHANGE_REASON_PLAYLIST_CHANGED) {
                 saveQueueSnapshot(exoPlayer)
@@ -1342,6 +1348,7 @@ class PlaybackService : MediaLibraryService() {
             ownsSession = false,
         )
         player = exoPlayer
+        globalPlayer = exoPlayer
         spare = sparePlayer
         // Both sinks feed the same session id, so the system equalizer and any
         // other effect attached to the app applies to whichever player happens
@@ -1590,6 +1597,7 @@ class PlaybackService : MediaLibraryService() {
      */
     private fun loadAutoplayForCurrentTrack() {
         val exoPlayer = player ?: return
+
         if (!AppSettings.autoplay.value || exoPlayer.repeatMode == Player.REPEAT_MODE_ALL) {
             return
         }
@@ -1682,7 +1690,7 @@ class PlaybackService : MediaLibraryService() {
      * in again.
      */
     private fun dropAutoplayTracksFromQueue(): List<MediaItem> {
-        val exoPlayer = player ?: return emptyList()
+        val exoPlayer = player ?: return emptyList<MediaItem>()
         val dropped = mutableListOf<MediaItem>()
         for (index in exoPlayer.mediaItemCount - 1 downTo exoPlayer.currentMediaItemIndex + 1) {
             val item = exoPlayer.getMediaItemAt(index)
@@ -1696,6 +1704,7 @@ class PlaybackService : MediaLibraryService() {
     /** Clears the queue's AutoPlay tail for the duration of repeat-all, keeping it to put back. */
     private fun stashAutoplayTracks() {
         val exoPlayer = player ?: return
+
         // Only ever taken once per stretch of repeat-all: cycling
         // OFF -> ALL -> ONE -> OFF sets the mode three times, and the second
         // and third of those must not overwrite a full stash with the empty
@@ -1717,6 +1726,7 @@ class PlaybackService : MediaLibraryService() {
      */
     private fun restoreAutoplayTracks() {
         val exoPlayer = player ?: return
+
         val stashed = repeatAllStash
         val seed = repeatAllStashSeed
         repeatAllStash = emptyList()
@@ -1853,6 +1863,12 @@ class PlaybackService : MediaLibraryService() {
      * the song you are listening to, which is whichever one the session is on.
      */
     private fun setSessionOwner(target: ExoPlayer, owns: Boolean) {
+        // Resetting to an empty builder first forces ExoPlayer to completely release
+        // the existing audio focus and audio session, so the subsequent request for
+        // AUDIO_ATTRIBUTES is seen as a new session. Without this, Media3 can
+        // mistakenly retain the previous track's focus state across the gap,
+        // leaving the new track playing with no audible output.
+        target.setAudioAttributes(androidx.media3.common.AudioAttributes.Builder().build(), false)
         target.setAudioAttributes(AUDIO_ATTRIBUTES, /* handleAudioFocus = */ owns)
         target.setHandleAudioBecomingNoisy(owns)
     }
@@ -1910,6 +1926,14 @@ class PlaybackService : MediaLibraryService() {
         alreadyAudible: Boolean = false,
     ) {
         val exoPlayer = player ?: return
+
+
+        if (mediaItem != null) {
+            val genre = mediaItem.mediaMetadata.genre?.toString()
+            val bpm = mediaItem.mediaMetadata.extras?.getInt("bpm") ?: 120
+            MoodDetector.onTrackPlayed(genre, bpm, this@PlaybackService)
+        }
+
 
         // A crossfade handoff never fires [formatListener] for the entering
         // track — [CrossfadeController] starts its decoder during ARMING,
@@ -2128,7 +2152,7 @@ class PlaybackService : MediaLibraryService() {
             return false
         }
 
-        private companion object {
+        companion object {
             /** Media3 and the coroutine machinery both wrap; nothing nests deeper than this. */
             const val CAUSE_DEPTH = 8
         }
@@ -2538,6 +2562,7 @@ class PlaybackService : MediaLibraryService() {
      */
     private fun skipPastUnplayable(mediaId: String, reason: String) {
         val exoPlayer = player ?: return
+
         if (exoPlayer.currentMediaItem?.mediaId != mediaId) return
         if (!exoPlayer.hasNextMediaItem()) {
             TrackLog.w("BitChord", "$reason — and nothing after it in the queue", about = mediaId)
@@ -3917,6 +3942,7 @@ class PlaybackService : MediaLibraryService() {
      */
     private fun publishWidgetState(playing: Boolean? = null) {
         val exoPlayer = player ?: return
+
         val song = exoPlayer.currentMediaItem?.toSong() ?: return
         MediaWidgetSnapshot.save(
             this,
@@ -4923,6 +4949,7 @@ class PlaybackService : MediaLibraryService() {
 
     private fun updateLyricSubtitle() {
         val exoPlayer = player ?: return
+
         val currentSong = exoPlayer.currentMediaItem?.toSong() ?: return
         val lines = serviceLyrics
         val pos = exoPlayer.currentPosition
@@ -5920,21 +5947,7 @@ class PlaybackService : MediaLibraryService() {
             )
             .build()
 
-    private fun createInfoItem(mediaId: String, title: String, subtitle: String? = null): MediaItem =
-        MediaItem.Builder()
-            .setMediaId(mediaId)
-            .setMediaMetadata(
-                MediaMetadata.Builder()
-                    .setTitle(title)
-                    .setSubtitle(subtitle)
-                    .setIsBrowsable(false)
-                    .setIsPlayable(false)
-                    .setExtras(buildContentStyleBundle(CONTENT_STYLE_LIST_ITEM_HINT_VALUE, CONTENT_STYLE_LIST_ITEM_HINT_VALUE))
-                    .build(),
-            )
-            .build()
-
-    private companion object {
+    internal companion object {
         const val MEDIA_ROOT_ID = "root"
         const val MEDIA_RECENTS_ID = "recents"
         const val MEDIA_QUICK_PICKS_ID = "quick_picks"
@@ -5996,6 +6009,11 @@ class PlaybackService : MediaLibraryService() {
          * because whatever is tearing down is waiting on it.
          */
         const val DISCORD_TEARDOWN_TIMEOUT_MS = 3_000L
+
+        /**
+         * Global exo player instance for MediaLibraryService.
+         */
+        var globalPlayer: androidx.media3.exoplayer.ExoPlayer? = null
 
         /**
          * Size of each range the player fetches. The same figure read-ahead
@@ -6227,5 +6245,36 @@ class PlaybackService : MediaLibraryService() {
 
         /** One fresh request is the fallback; normal track/queue changes re-arm it. */
         const val MAX_AUTOPLAY_EMPTY_REFRESHES = 1
+    }
+}
+
+
+object MoodDetector {
+    private var currentMood: String? = null
+
+    fun onTrackPlayed(genre: String?, bpm: Int?, context: android.content.Context) {
+        val mood = determineMood(genre, bpm)
+        if (mood != currentMood) {
+            currentMood = mood
+            sendNotification(context, mood)
+        }
+    }
+
+    private fun determineMood(genre: String?, bpm: Int?): String {
+        val effectiveBpm = bpm ?: 120
+        val effectiveGenre = genre ?: "pop"
+        
+        return if (effectiveBpm > 120 || effectiveGenre.equals("rock", ignoreCase = true)) "Energetic" else "Chill"
+    }
+
+    private fun sendNotification(context: android.content.Context, mood: String) {
+        val manager = context.getSystemService(android.app.NotificationManager::class.java)
+        val notification = androidx.core.app.NotificationCompat.Builder(context, PlaybackService.CHANNEL_ID)
+            .setSmallIcon(com.music.bitchord.R.drawable.ic_notification_logo)
+            .setContentTitle("Mood Update")
+            .setContentText("You're feeling " + mood + " today")
+            .setPriority(androidx.core.app.NotificationCompat.PRIORITY_LOW)
+            .build()
+        manager?.notify(2001, notification)
     }
 }

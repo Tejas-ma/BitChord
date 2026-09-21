@@ -24,6 +24,16 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.material.icons.rounded.People
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.height
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.rememberUpdatedState
@@ -151,7 +161,7 @@ internal fun Modifier.miniPlayerTrackSwipe(
 }
 
 /** Frosted mini player that rides just above the floating tab bar. */
-@OptIn(ExperimentalHazeMaterialsApi::class)
+@OptIn(ExperimentalHazeMaterialsApi::class, ExperimentalMaterial3Api::class)
 @Composable
 fun MiniPlayer(
     song: Song,
@@ -170,6 +180,8 @@ fun MiniPlayer(
     // height if the row's contents ever change it — which is what keeps a pill
     // a pill instead of a rounded rectangle. Same idiom as [FloatingBottomBar]
     // directly below it, so the two shapes are the same family.
+    
+
     val shape = RoundedCornerShape(percent = 50)
     Box(
         modifier = modifier
@@ -273,6 +285,9 @@ fun MiniPlayer(
                     modifier = Modifier.size(GLYPH_SIZE),
                 )
             }
+
+
         }
     }
+
 }

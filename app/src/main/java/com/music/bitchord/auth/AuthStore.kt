@@ -40,6 +40,35 @@ class AuthStore(context: Context) {
         get() = prefs.getString(KEY_COOKIE, null)
         set(value) = prefs.edit().putString(KEY_COOKIE, value).apply()
 
+    var localUserId: String
+        get() {
+            val existing = prefs.getString(KEY_LOCAL_USER_ID, null)
+            if (existing != null) return existing
+            val newId = java.util.UUID.randomUUID().toString()
+            prefs.edit().putString(KEY_LOCAL_USER_ID, newId).apply()
+            return newId
+        }
+        private set(value) =
+            prefs.edit().putString(KEY_LOCAL_USER_ID, value).apply()
+
+    val friendCode: String
+        get() {
+            val existing = prefs.getString(
+                KEY_FRIEND_CODE, null
+            )
+            if (existing != null) return existing
+            val chars =
+                "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+            val newCode = (1..6)
+                .map { chars.random() }
+                .joinToString("")
+            prefs.edit()
+                .putString(KEY_FRIEND_CODE, newCode)
+                .apply()
+            return newCode
+        }
+
+
     /**
      * The durable account registry. Credentials remain in this encrypted store;
      * the old single-cookie entry is migrated lazily so an update never logs a
@@ -208,6 +237,7 @@ class AuthStore(context: Context) {
             setOf("SAPISID", "__Secure-3PAPISID", "__Secure-1PAPISID")
 
         private const val KEY_COOKIE = "cookie"
+        private const val KEY_LOCAL_USER_ID = "local_user_id"
         private const val KEY_SESSIONS = "google_account_sessions_v2"
         private const val KEY_ACTIVE_ACCOUNT = "active_google_account_id_v2"
         private const val KEY_ACTIVE_PROFILE = "active_youtube_profile_id_v2"
@@ -216,5 +246,6 @@ class AuthStore(context: Context) {
         private const val KEY_CHANNEL_NAME = "channel_name"
         private const val KEY_CHANNEL_AUTH_USER = "channel_auth_user"
         private const val KEY_DISCORD_TOKEN = "discord_token"
+        private const val KEY_FRIEND_CODE = "friend_code"
     }
 }

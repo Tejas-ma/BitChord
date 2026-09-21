@@ -52,6 +52,17 @@ val listenTogetherServer: String = (
         ?: ""
     ).trim().trimEnd('/')
 
+val supabaseUrl: String = (
+    localProps.getProperty("SUPABASE_URL")
+        ?: System.getenv("SUPABASE_URL")
+        ?: ""
+    ).trim()
+val supabaseAnonKey: String = (
+    localProps.getProperty("SUPABASE_ANON_KEY")
+        ?: System.getenv("SUPABASE_ANON_KEY")
+        ?: ""
+    ).trim()
+
 android {
     namespace = "com.music.bitchord"
     compileSdk = 36
@@ -75,6 +86,9 @@ android {
             "LISTEN_TOGETHER_SERVER",
             "\"${listenTogetherServer.replace("\\", "\\\\").replace("\"", "\\\"")}\"",
         )
+        buildConfigField("String", "SUPABASE_URL", "\"${supabaseUrl.replace("\\", "\\\\").replace("\"", "\\\"")}\"")
+        buildConfigField("String", "SUPABASE_ANON_KEY", "\"${supabaseAnonKey.replace("\\", "\\\\").replace("\"", "\\\"")}\"")
+
     }
 
     splits {
@@ -110,23 +124,20 @@ android {
     }
 
     signingConfigs {
-        // Both halves have to be there, not just the properties file: it *names*
-        // the keystore rather than containing it, and both are gitignored
-        // separately, so a checkout can easily end up with the one and not the
-        // other. A signing config pointing at a keystore that is not on disk
-        // fails the release build outright at validateSigningRelease — which is
-        // exactly the failure the unsigned fallback above exists to avoid, so
-        // the keystore has to be looked for rather than assumed.
-        val store = signing.getProperty("storeFile")?.let { rootProject.file(it) }
-        if (store != null && store.exists()) {
-            create("release") {
-                storeFile = store
-                storePassword = signing.getProperty("storePassword")
-                keyAlias = signing.getProperty("keyAlias")
-                keyPassword = signing.getProperty("keyPassword")
-            }
+    val cmKeystorePath = System.getenv("CM_KEYSTORE_PATH")
+    val localStorePath = signing.getProperty("storeFile")
+    val storeFilePath = cmKeystorePath ?: localStorePath
+    val store = storeFilePath?.let { file(it) }
+
+    if (store != null && store.exists()) {
+        create("release") {
+            storeFile = store
+            storePassword = System.getenv("CM_KEYSTORE_PASSWORD") ?: signing.getProperty("storePassword")
+            keyAlias = System.getenv("CM_KEY_ALIAS") ?: signing.getProperty("keyAlias")
+            keyPassword = System.getenv("CM_KEY_PASSWORD") ?: signing.getProperty("keyPassword")
         }
     }
+}
 
     buildTypes {
         release {
@@ -196,6 +207,7 @@ val newPipeExtractorRaw: Configuration by configurations.creating {
     isCanBeConsumed = false
 }
 dependencies {
+    implementation("androidx.work:work-runtime-ktx:2.9.0")
     newPipeExtractorRaw("com.github.TeamNewPipe:NewPipeExtractor:v0.26.3")
 }
 val newPipeExtractorStripped = tasks.register<org.gradle.api.tasks.bundling.Jar>(
@@ -212,6 +224,7 @@ val newPipeExtractorStripped = tasks.register<org.gradle.api.tasks.bundling.Jar>
 }
 
 dependencies {
+    implementation("androidx.work:work-runtime-ktx:2.9.0")
     // ---- Compose (Material 3) ----
     val composeBom = platform("androidx.compose:compose-bom:2024.12.01")
     implementation(composeBom)
@@ -238,6 +251,7 @@ dependencies {
     // ---- Media playback: Media3 / ExoPlayer ----
     implementation("androidx.media3:media3-exoplayer:1.11.0")
     implementation("androidx.media3:media3-session:1.11.0")
+    implementation("androidx.car.app:app-automotive:1.4.0")
     implementation("androidx.media3:media3-common:1.11.0")
     implementation("androidx.media3:media3-datasource-okhttp:1.11.0")
     // Audio is progressive, but Apple serves its motion artwork as HLS — this
@@ -304,6 +318,10 @@ dependencies {
 
     // ---- JS module execution: QuickJS VM for style source plugins ----
     implementation("io.github.dokar3:quickjs-kt-android:1.0.5")
+
+    // ---- Supabase ----
+    implementation("io.github.jan-tennert.supabase:postgrest-kt:3.0.2")
+    implementation("io.github.jan-tennert.supabase:realtime-kt:3.0.2")
 
     // ---- Automix: on-device beat/downbeat model (Beat This!, MIT-licensed) ----
     // The full android artifact, not onnxruntime-mobile: mobile only loads .ort

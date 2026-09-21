@@ -1,4 +1,12 @@
 package com.music.bitchord.ui.screens
+import com.music.bitchord.data.model.UiState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
+import com.music.bitchord.data.YtMusicRepository
+import androidx.compose.runtime.produceState
+import androidx.compose.ui.focus.onFocusChanged
+import com.music.bitchord.data.model.MoodGenreSection
+import androidx.compose.material3.CircularProgressIndicator
 
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
@@ -14,6 +22,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -33,6 +42,7 @@ import androidx.compose.material.icons.rounded.NorthWest
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.automirrored.rounded.PlaylistAdd
 import androidx.compose.material.icons.rounded.Search
+import androidx.compose.material.icons.rounded.Mic
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -60,7 +70,6 @@ import com.music.bitchord.data.model.SearchFilter
 import com.music.bitchord.data.model.artworkAt
 import com.music.bitchord.data.model.SearchResult
 import com.music.bitchord.data.model.Song
-import com.music.bitchord.data.model.UiState
 import com.music.bitchord.R
 import com.music.bitchord.ui.components.MessageState
 import com.music.bitchord.ui.components.PAGE_GUTTER
@@ -73,6 +82,198 @@ import com.music.bitchord.ui.components.songListSkeleton
 import com.music.bitchord.ui.haptics.Haptic
 import com.music.bitchord.ui.haptics.rememberHaptics
 import java.util.Locale
+import androidx.compose.ui.graphics.Color
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.shrinkVertically
+import com.music.bitchord.data.model.HomeShelf
+import androidx.compose.foundation.clickable
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.fillMaxHeight
+
+data class CategoryCard(val title: String, val color: Color)
+
+val moodCards = listOf(
+    CategoryCard("Chill", Color(0xFFE64A19)),
+    CategoryCard("Commute", Color(0xFFEC0B65)),
+    CategoryCard("Energize", Color(0xFF8664AC)),
+    CategoryCard("Feel good", Color(0xFF6B4EFF)),
+    CategoryCard("Focus", Color(0xFFBE6100)),
+    CategoryCard("Gaming", Color(0xFF233C78)),
+    CategoryCard("Party", Color(0xFF4D97E5)),
+    CategoryCard("Romance", Color(0xFFAA267E)),
+    CategoryCard("Sad", Color(0xFF009688)),
+    CategoryCard("Sleep", Color(0xFF3F51B5)),
+    CategoryCard("Workout", Color(0xFFE91E63))
+)
+
+val genreCards = listOf(
+    CategoryCard("Pop", Color(0xFF4CAF50)),
+    CategoryCard("Hip Hop", Color(0xFFFF9800)),
+    CategoryCard("Rock", Color(0xFF9C27B0)),
+    CategoryCard("Classical", Color(0xFF795548)),
+    CategoryCard("Jazz", Color(0xFF00BCD4)),
+    CategoryCard("Electronic", Color(0xFF8BC34A)),
+    CategoryCard("Bollywood", Color(0xFFF44336)),
+    CategoryCard("Indie", Color(0xFF03A9F4)),
+    CategoryCard("R&B", Color(0xFFFF5722)),
+    CategoryCard("Metal", Color(0xFF607D8B))
+)
+
+
+
+@Composable
+private fun BrowseContent(
+    moodsState: UiState<List<MoodGenreSection>>?,
+    chartsState: UiState<List<HomeShelf>>?,
+    onCategoryClick: (String) -> Unit,
+    onSongClick: (Song) -> Unit,
+) {
+    if (moodsState is UiState.Loading || chartsState is UiState.Loading) {
+        Box(modifier = Modifier.fillMaxWidth().height(200.dp), contentAlignment = Alignment.Center) {
+            CircularProgressIndicator()
+        }
+        return
+    }
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = PAGE_GUTTER, vertical = 8.dp)
+    ) {
+        Text(
+            text = "Browse all",
+            style = MaterialTheme.typography.titleLarge,
+            fontWeight = FontWeight.Bold,
+            color = MaterialTheme.colorScheme.onBackground,
+            modifier = Modifier.padding(bottom = 16.dp)
+        )
+        
+        Text(
+            text = "Moods & Moments",
+            style = MaterialTheme.typography.titleMedium,
+            fontWeight = FontWeight.Bold,
+            color = MaterialTheme.colorScheme.onSurface,
+            modifier = Modifier.padding(bottom = 8.dp)
+        )
+        
+        CategoryGrid(moodCards, onCategoryClick)
+        
+        Spacer(Modifier.height(24.dp))
+        
+        Text(
+            text = "Genres",
+            style = MaterialTheme.typography.titleMedium,
+            fontWeight = FontWeight.Bold,
+            color = MaterialTheme.colorScheme.onSurface,
+            modifier = Modifier.padding(bottom = 8.dp)
+        )
+        
+        CategoryGrid(genreCards, onCategoryClick)
+        
+        if (chartsState is UiState.Success) {
+            Spacer(Modifier.height(24.dp))
+            Text(
+                text = "Charts",
+                style = MaterialTheme.typography.titleLarge,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.onBackground,
+                modifier = Modifier.padding(bottom = 16.dp)
+            )
+            chartsState.data.forEach { shelf ->
+                Text(
+                    text = shelf.title,
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    modifier = Modifier.padding(bottom = 8.dp)
+                )
+                LazyRow(
+                    horizontalArrangement = Arrangement.spacedBy(16.dp),
+                    contentPadding = PaddingValues(end = PAGE_GUTTER),
+                    modifier = Modifier.padding(bottom = 24.dp)
+                ) {
+                    items(shelf.items) { item ->
+                        Column(
+                            modifier = Modifier
+                                .width(160.dp)
+                                .clickable {
+                                    val videoId = item.browseId
+                                    if (videoId != null) {
+                                        onSongClick(Song(videoId = videoId, title = item.title, artist = "Chart", thumbnailUrl = item.thumbnailUrl, durationText = null, isVideo = false))
+                                    }
+                                }
+                        ) {
+                            AsyncImage(
+                                model = item.thumbnailUrl,
+                                contentDescription = null,
+                                modifier = Modifier
+                                    .size(160.dp)
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .background(MaterialTheme.colorScheme.surfaceVariant)
+                            )
+                            Spacer(Modifier.height(8.dp))
+                            Text(
+                                text = item.title,
+                                style = MaterialTheme.typography.titleMedium,
+                                color = MaterialTheme.colorScheme.onBackground,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                            Text(
+                                text = item.subtitle.ifBlank { "Chart" },
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun CategoryGrid(
+    cards: List<CategoryCard>,
+    onCategoryClick: (String) -> Unit
+) {
+    androidx.compose.foundation.lazy.grid.LazyVerticalGrid(
+        columns = GridCells.Fixed(2),
+        horizontalArrangement = Arrangement.spacedBy(16.dp),
+        verticalArrangement = Arrangement.spacedBy(16.dp),
+        modifier = Modifier.heightIn(max = 1000.dp) // arbitrary max so it doesn't complain about unbounded height
+    ) {
+        items(cards) { card ->
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(100.dp)
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(card.color)
+                    .clickable { onCategoryClick(card.title) }
+                    .padding(12.dp)
+            ) {
+                Text(
+                    text = card.title,
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = Color.White
+                )
+            }
+        }
+    }
+}
 
 @Composable
 fun SearchScreen(
@@ -91,7 +292,11 @@ fun SearchScreen(
     onSongSwipe: (Song) -> Unit,
     onTopResultPlay: (Song) -> Unit,
     onTopResultPlaylist: (Song) -> Unit,
+    
     onBrowseClick: (BrowseItem) -> Unit,
+    charts: UiState<List<HomeShelf>>? = null,
+    onCategoryClick: (String) -> Unit = {},
+
     /**
      * Holding an album or playlist hit rather than tapping it — the same menu
      * the shelves open, so a release found by searching can go on the queue
@@ -112,6 +317,26 @@ fun SearchScreen(
     contentPadding: PaddingValues,
 ) {
     val focusRequester = remember { FocusRequester() }
+    var isSearchActive by remember { androidx.compose.runtime.mutableStateOf(false) }
+
+    val moodsState by produceState<UiState<List<MoodGenreSection>>?>(initialValue = null) {
+        val result = runCatching { YtMusicRepository.moodAndGenres() }
+        val r = result.getOrNull()
+        if (r != null && r.isSuccess) {
+            value = UiState.Success(r.getOrNull() ?: emptyList())
+        } else {
+            value = UiState.Error("")
+        }
+    }
+
+    val chartsState by produceState<UiState<List<HomeShelf>>?>(initialValue = null) {
+        val result = runCatching { YtMusicRepository.shelvesOf("FEmusic_charts") }
+        if (result.isSuccess) {
+            value = UiState.Success(result.getOrNull() ?: emptyList())
+        } else {
+            value = UiState.Error("")
+        }
+    }
     val focusManager = LocalFocusManager.current
     // Re-tapping the search tab from the nav bar increments focusTrigger;
     // respond by focusing the field and opening the keyboard.
@@ -156,21 +381,37 @@ fun SearchScreen(
                 onQueryChange = onQueryChange,
                 onSubmit = onSubmit,
                 focusRequester = focusRequester,
+                isSearchActive = isSearchActive,
+                onSearchActiveChange = { isSearchActive = it },
                 modifier = Modifier.padding(start = PAGE_GUTTER, end = PAGE_GUTTER, bottom = 4.dp),
             )
             // The filters only mean something once there is a result set to narrow;
             // they stay up for an empty or failed search too, or picking a filter
             // that finds nothing would take away the control needed to leave it.
-            if (results != null && !suggesting) {
+            if (results != null && !suggesting && (query.isNotEmpty() || isSearchActive)) {
                 SearchFilterTabs(filter = filter, onFilterChange = onFilterChange)
             }
         }
-
-        LazyColumn(
-            state = listState,
-            modifier = Modifier.weight(1f).fillMaxWidth(),
-            contentPadding = PaddingValues(bottom = contentPadding.calculateBottomPadding()),
-        ) {
+        if (query.isEmpty() && !isSearchActive) {
+            LazyColumn(
+                modifier = Modifier.fillMaxHeight().weight(1f).fillMaxWidth(),
+                contentPadding = PaddingValues(bottom = contentPadding.calculateBottomPadding())
+            ) {
+                item {
+                    BrowseContent(
+                        moodsState = moodsState,
+                        chartsState = chartsState,
+                        onCategoryClick = { /* Handle category click */ },
+                        onSongClick = { song -> onTopResultPlay(song) }
+                    )
+                }
+            }
+        } else {
+            LazyColumn(
+                state = listState,
+                modifier = Modifier.fillMaxHeight().weight(1f).fillMaxWidth(),
+                contentPadding = PaddingValues(bottom = contentPadding.calculateBottomPadding()),
+            ) {
             when {
                 suggesting -> {
                     searchSuggestions(
@@ -271,6 +512,7 @@ fun SearchScreen(
                     }
                 }
             }
+        }
         }
     }
 }
@@ -732,3 +974,153 @@ private fun SearchFilterTabs(filter: SearchFilter, onFilterChange: (SearchFilter
 
 /** Rounded, but well short of a capsule — the corner reads as a cut, not a curve. */
 private val FILTER_PILL_SHAPE = RoundedCornerShape(12.dp)
+
+@Composable
+private fun SearchField(
+    query: String,
+    onQueryChange: (String) -> Unit,
+    onSubmit: () -> Unit,
+    focusRequester: FocusRequester = remember { FocusRequester() },
+    isSearchActive: Boolean = false,
+    onSearchActiveChange: (Boolean) -> Unit = {},
+    modifier: Modifier = Modifier,
+) {
+    val focusManager = LocalFocusManager.current
+
+    val voiceSearchLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
+        contract = androidx.activity.result.contract.ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        if (result.resultCode == android.app.Activity.RESULT_OK) {
+            val spokenText = result.data?.getStringArrayListExtra(android.speech.RecognizerIntent.EXTRA_RESULTS)?.firstOrNull()
+            if (spokenText != null) {
+                onQueryChange(spokenText)
+                onSubmit()
+                focusManager.clearFocus()
+            }
+        }
+    }
+
+    val permissionLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
+        contract = androidx.activity.result.contract.ActivityResultContracts.RequestPermission()
+    ) { isGranted ->
+        if (isGranted) {
+            val intent = android.content.Intent(android.speech.RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+                putExtra(android.speech.RecognizerIntent.EXTRA_LANGUAGE_MODEL, android.speech.RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+            }
+            try {
+                voiceSearchLauncher.launch(intent)
+            } catch (e: android.content.ActivityNotFoundException) {
+                // Ignore if no speech recognition app is installed
+            }
+        }
+    }
+
+    val context = androidx.compose.ui.platform.LocalContext.current
+    // Both ways of saying "search this" do the same two things, so they're
+    // written once here rather than twice.
+    val submit = {
+        onSubmit()
+        focusManager.clearFocus()
+    }
+    Row(
+        modifier = modifier
+            .fillMaxWidth()
+            // Fixed height prevents the row from growing when text is entered
+            .height(46.dp)
+            .background(MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(11.dp))
+            // Asymmetric: the magnifier is a button now and wants a real touch
+            // target, so it's given the room by pulling the field's own start
+            // padding in rather than by pushing the glyph and the text along.
+            .padding(start = 8.dp, end = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        // The search button. It reads as one — a magnifier at the head of a
+        // text field is the search affordance on every platform — and now that
+        // pressing it is the only thing that runs a search, leaving it
+        // decorative would mean the keyboard's own key was the single way in.
+        Icon(
+            Icons.Rounded.Search,
+            contentDescription = stringResource(R.string.search),
+            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier
+                .size(32.dp)
+                .clip(CircleShape)
+                .clickable(enabled = query.isNotBlank(), onClick = submit)
+                .padding(6.dp),
+        )
+        Spacer(Modifier.width(4.dp))
+        Box(Modifier.weight(1f)) {
+            if (query.isEmpty()) {
+                Text(
+                    text = stringResource(R.string.search_hint),
+                    style = MaterialTheme.typography.bodyLarge,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            BasicTextField(
+                value = query,
+                onValueChange = onQueryChange,
+                singleLine = true,
+                textStyle = MaterialTheme.typography.bodyLarge.copy(
+                    color = MaterialTheme.colorScheme.onBackground,
+                ),
+                cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
+                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+                keyboardActions = KeyboardActions(onSearch = { submit() }),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .focusRequester(focusRequester)
+                    .onFocusChanged { state -> onSearchActiveChange(state.isFocused) },
+            )
+        }
+        // Emptying the field is also how the recent searches are got back to,
+        // so it needs to be one tap rather than a held backspace.
+        if (query.isNotEmpty()) {
+            Box(
+                modifier = Modifier
+                    .size(28.dp)
+                    .clip(CircleShape)
+                    .clickable {
+                        onQueryChange("")
+                        focusManager.clearFocus()
+                    },
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    Icons.Rounded.Close,
+                    contentDescription = stringResource(R.string.clear_search),
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.size(18.dp),
+                )
+            }
+        } else {
+            Box(
+                modifier = Modifier
+                    .size(28.dp)
+                    .clip(CircleShape)
+                    .clickable {
+                        if (androidx.core.content.ContextCompat.checkSelfPermission(context, android.Manifest.permission.RECORD_AUDIO) == android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                            val intent = android.content.Intent(android.speech.RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+                                putExtra(android.speech.RecognizerIntent.EXTRA_LANGUAGE_MODEL, android.speech.RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+                            }
+                            try {
+                voiceSearchLauncher.launch(intent)
+            } catch (e: android.content.ActivityNotFoundException) {
+                // Ignore if no speech recognition app is installed
+            }
+                        } else {
+                            permissionLauncher.launch(android.Manifest.permission.RECORD_AUDIO)
+                        }
+                    },
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    Icons.Rounded.Mic,
+                    contentDescription = stringResource(R.string.voice_search),
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.size(18.dp),
+                )
+            }
+        }
+    }
+}
