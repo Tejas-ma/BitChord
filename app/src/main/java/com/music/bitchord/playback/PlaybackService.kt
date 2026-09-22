@@ -2152,7 +2152,7 @@ class PlaybackService : MediaLibraryService() {
             return false
         }
 
-        companion object {
+        internal companion object {
             /** Media3 and the coroutine machinery both wrap; nothing nests deeper than this. */
             const val CAUSE_DEPTH = 8
         }

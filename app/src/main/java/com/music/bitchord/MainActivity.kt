@@ -3034,6 +3034,7 @@ private fun BitChordApp(
                         onPlayPause = {
                             controller?.let { if (it.isPlaying) it.pause() else it.play() }
                         },
+                        onNext = { controller?.seekToNextMediaItem() },
                         onPrevious = { controller?.seekToPrevious() },
                         onNext = {
                 val room = jamViewModel.activeRoom.value
@@ -3092,6 +3093,7 @@ private fun BitChordApp(
                             onPlayPause = {
                                 controller?.let { if (it.isPlaying) it.pause() else it.play() }
                             },
+                            onNext = { controller?.seekToNextMediaItem() },
                             onPrevious = { controller?.seekToPrevious() },
                             onNext = {
                 val room = jamViewModel.activeRoom.value
@@ -3355,9 +3357,6 @@ private fun BitChordApp(
                             onSources = { showSources = true },
                             onSpotifyCanvasAuth = { showSpotifyCanvasAuth = true },
                             onAppLanguage = { showAppLanguage = true },
-                            onEqualizer = { },
-                            onTranslationLanguage = { },
-                            onListenTogether = { onListenTogether() },
                             contentPadding = listPadding,
                         )
                     } else if (page != null && page.browseId.isDeviceFolder()) {
@@ -3617,6 +3616,8 @@ private fun BitChordApp(
                             },
                             history = searchHistory,
                             suggestions = searchSuggestions,
+                            typeaheadResults = viewModel.typeaheadResults
+                                .collectAsStateWithLifecycle().value,
                             onSubmit = viewModel::submitSearch,
                             // A suggestion and a recent search are the same act — a
                             // term picked out of a list rather than typed — so they run
