@@ -5947,7 +5947,7 @@ class PlaybackService : MediaLibraryService() {
             )
             .build()
 
-    internal companion object {
+    private companion object {
         const val MEDIA_ROOT_ID = "root"
         const val MEDIA_RECENTS_ID = "recents"
         const val MEDIA_QUICK_PICKS_ID = "quick_picks"
