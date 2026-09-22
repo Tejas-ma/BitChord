@@ -862,6 +862,10 @@ private fun BitChordApp(
     val playLabel = stringResource(R.string.play)
     val socialLabel = stringResource(R.string.social)
     val libraryLabel = stringResource(R.string.library)
+    val queueLabel = stringResource(R.string.queue)
+    val sharedLinkLabel = stringResource(R.string.shared_link)
+    val historyLabel = stringResource(R.string.history)
+    val replayLabel = stringResource(R.string.replay)
     val searchLabel = stringResource(R.string.search)
     val tabs = remember(playLabel, socialLabel, libraryLabel, searchLabel) {
         listOf(
@@ -3030,7 +3034,6 @@ private fun BitChordApp(
                         onPlayPause = {
                             controller?.let { if (it.isPlaying) it.pause() else it.play() }
                         },
-                        onNext = { controller?.seekToNextMediaItem() },
                         onPrevious = { controller?.seekToPrevious() },
                         onNext = {
                 val room = jamViewModel.activeRoom.value
@@ -3089,7 +3092,6 @@ private fun BitChordApp(
                             onPlayPause = {
                                 controller?.let { if (it.isPlaying) it.pause() else it.play() }
                             },
-                            onNext = { controller?.seekToNextMediaItem() },
                             onPrevious = { controller?.seekToPrevious() },
                             onNext = {
                 val room = jamViewModel.activeRoom.value
@@ -3353,6 +3355,9 @@ private fun BitChordApp(
                             onSources = { showSources = true },
                             onSpotifyCanvasAuth = { showSpotifyCanvasAuth = true },
                             onAppLanguage = { showAppLanguage = true },
+                            onEqualizer = { },
+                            onTranslationLanguage = { },
+                            onListenTogether = { onListenTogether() },
                             contentPadding = listPadding,
                         )
                     } else if (page != null && page.browseId.isDeviceFolder()) {
@@ -5026,6 +5031,7 @@ private const val SEEK_END_GUARD_MS = 1_000L
 private val DETAIL_TITLE_DROP = 320.dp
 
 private const val TAB_HOME = 0
+private const val TAB_EXPLORE = 1
 private const val TAB_SOCIAL = 1
 private const val TAB_LIBRARY = 2
 private const val TAB_SEARCH = 3

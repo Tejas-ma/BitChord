@@ -22,7 +22,6 @@ import android.os.SystemClock
 import android.provider.Settings
 import android.util.LruCache
 import android.view.View
-import android.widget.Toast
 import android.window.OnBackInvokedCallback
 import android.window.OnBackInvokedDispatcher
 import androidx.activity.compose.BackHandler
@@ -3575,6 +3574,7 @@ fun NowPlayingScreen(
                         )
                     }
                 }
+                BottomGlyph(
                     icon = Icons.Rounded.People,
                     contentDescription = if (isInJam)
                         "In Jam" else "Join Jam",
