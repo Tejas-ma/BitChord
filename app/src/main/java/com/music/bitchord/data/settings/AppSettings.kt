@@ -237,6 +237,16 @@ object AppSettings {
     val wifiOnlyDownloads = MutableStateFlow(true)
 
     /**
+     * LAN Playback & Queue Sync, on by default.
+     *
+     * On because it cannot do anything on its own: a device only pairs with another
+     * BitChord signed into the same account on the same Wi-Fi, and there is no
+     * pairing step to complete first. Off is for the person who does not want the
+     * phone serving its queue on a shared network — the switch takes effect at once.
+     */
+    val lanSyncEnabled = MutableStateFlow(true)
+
+    /**
      * Keep ordinary downloads in Music/BitChord where other music apps can see
      * them. Off (the default) keeps downloads in this app's private storage.
      * HLS downloads always stay private because they are a playlist package,
@@ -970,6 +980,7 @@ object AppSettings {
         migrateDownloadQuality()
         downloadQuality.value = readDownloadQuality()
         wifiOnlyDownloads.value = prefs.getBoolean(KEY_WIFI_ONLY_DOWNLOADS, true)
+        lanSyncEnabled.value = prefs.getBoolean(KEY_LAN_SYNC, true)
         exportDownloads.value = prefs.getBoolean(KEY_EXPORT_DOWNLOADS, false)
         syncDownloadedPlaylists.value = prefs.getBoolean(KEY_SYNC_DOWNLOADED_PLAYLISTS, false)
         crossfadeSeconds.value = prefs.getInt(KEY_CROSSFADE, 0)
@@ -1285,6 +1296,11 @@ object AppSettings {
     fun setWifiOnlyDownloads(value: Boolean) {
         wifiOnlyDownloads.value = value
         prefs.edit().putBoolean(KEY_WIFI_ONLY_DOWNLOADS, value).apply()
+    }
+
+    fun setLanSyncEnabled(value: Boolean) {
+        lanSyncEnabled.value = value
+        prefs.edit().putBoolean(KEY_LAN_SYNC, value).apply()
     }
 
     fun setCrossfadeSeconds(value: Int) {
@@ -2253,6 +2269,7 @@ object AppSettings {
     private const val KEY_UPGRADE_LENGTH_SLACK_SECONDS = "upgrade_length_slack_seconds"
     private const val KEY_QUALITY_DOWNLOAD = "audio_quality_download"
     private const val KEY_WIFI_ONLY_DOWNLOADS = "wifi_only_downloads"
+    private const val KEY_LAN_SYNC = "lan_sync"
     private const val KEY_EXPORT_DOWNLOADS = "export_downloads"
     private const val KEY_SYNC_DOWNLOADED_PLAYLISTS = "sync_downloaded_playlists"
     private const val KEY_CROSSFADE = "crossfade_seconds"

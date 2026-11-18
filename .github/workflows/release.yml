@@ -1,0 +1,272 @@
+name: Release
+
+# Every v* tag builds the desktop installers for all three platforms and attaches
+# them to a GitHub release. The commands are the ones documented in DESKTOP.md and
+# desktopApp/BUILDING-WINDOWS.md — jpackage through Compose Desktop, plus the
+# AppImage wrapper and the portable zip the build defines itself.
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  JAVA_VERSION: "21"
+
+jobs:
+  # Fail on a broken tag before spending three runners on packaging.
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK ${{ env.JAVA_VERSION }}
+        uses: actions/setup-java@v4
+        with:
+          java-version: ${{ env.JAVA_VERSION }}
+          distribution: temurin
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - run: chmod +x gradlew
+
+      - name: Desktop tests
+        run: ./gradlew :desktopApp:test --console=plain
+
+  windows:
+    name: Windows · exe, msi, portable zip
+    needs: test
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK ${{ env.JAVA_VERSION }}
+        uses: actions/setup-java@v4
+        with:
+          java-version: ${{ env.JAVA_VERSION }}
+          distribution: temurin
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Read the version from the tag
+        id: version
+        shell: bash
+        run: echo "value=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+
+      # Same optional keys the Android job writes; the desktop build folds them into
+      # the launcher's JVM args, and builds without them when they are absent.
+      - name: Write local.properties
+        shell: bash
+        env:
+          LASTFM_API_KEY: ${{ secrets.LASTFM_API_KEY }}
+          LASTFM_SECRET: ${{ secrets.LASTFM_SECRET }}
+          LISTEN_TOGETHER_SERVER: ${{ secrets.LISTEN_TOGETHER_SERVER }}
+        run: |
+          : > local.properties
+          [ -n "$LASTFM_API_KEY" ] && echo "LASTFM_API_KEY=$LASTFM_API_KEY" >> local.properties
+          [ -n "$LASTFM_SECRET" ] && echo "LASTFM_SECRET=$LASTFM_SECRET" >> local.properties
+          [ -n "$LISTEN_TOGETHER_SERVER" ] && echo "LISTEN_TOGETHER_SERVER=$LISTEN_TOGETHER_SERVER" >> local.properties
+          exit 0
+
+      # packageMsi drives WiX's candle/light; the runner ships WiX 3 outside PATH.
+      - name: Put WiX 3 on PATH
+        shell: pwsh
+        run: |
+          $wix = Get-ChildItem "C:\Program Files (x86)" -Filter "WiX Toolset*" -Directory -ErrorAction SilentlyContinue |
+            Select-Object -First 1
+          if (-not $wix) {
+            choco install wixtoolset --no-progress -y
+            $wix = Get-ChildItem "C:\Program Files (x86)" -Filter "WiX Toolset*" -Directory | Select-Object -First 1
+          }
+          "$($wix.FullName)\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          if (-not (Get-Command candle.exe -ErrorAction SilentlyContinue)) {
+            throw "candle.exe is still not on PATH; packageMsi cannot run"
+          }
+
+      # packageExe and packageMsi build the natives (Automix analyser, SMTC) first and
+      # log which features the installer will be missing; windowsPortable zips the
+      # same app folder with a launcher batch file.
+      - name: Build the installers
+        run: >
+          ./gradlew :desktopApp:packageExe :desktopApp:packageMsi :desktopApp:windowsPortable
+          -Pbitchord.version=${{ steps.version.outputs.value }} --console=plain
+
+      - name: Collect
+        shell: bash
+        run: |
+          mkdir -p out
+          cp desktopApp/build/compose/binaries/main/exe/*.exe out/ 2>/dev/null || true
+          cp desktopApp/build/compose/binaries/main/msi/*.msi out/ 2>/dev/null || true
+          cp desktopApp/build/distributions/*portable.zip out/ 2>/dev/null || true
+          ls -l out
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows
+          path: out/*
+          if-no-files-found: error
+
+  macos:
+    name: macOS · ${{ matrix.arch }} dmg
+    needs: test
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15
+            arch: arm64
+          - runner: macos-15-intel
+            arch: x64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK ${{ env.JAVA_VERSION }}
+        uses: actions/setup-java@v4
+        with:
+          java-version: ${{ env.JAVA_VERSION }}
+          distribution: temurin
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Read the version from the tag
+        id: version
+        run: echo "value=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Write local.properties
+        env:
+          LASTFM_API_KEY: ${{ secrets.LASTFM_API_KEY }}
+          LASTFM_SECRET: ${{ secrets.LASTFM_SECRET }}
+          LISTEN_TOGETHER_SERVER: ${{ secrets.LISTEN_TOGETHER_SERVER }}
+        run: |
+          : > local.properties
+          [ -n "$LASTFM_API_KEY" ] && echo "LASTFM_API_KEY=$LASTFM_API_KEY" >> local.properties
+          [ -n "$LASTFM_SECRET" ] && echo "LASTFM_SECRET=$LASTFM_SECRET" >> local.properties
+          [ -n "$LISTEN_TOGETHER_SERVER" ] && echo "LISTEN_TOGETHER_SERVER=$LISTEN_TOGETHER_SERVER" >> local.properties
+          exit 0
+
+      - run: chmod +x gradlew
+
+      - name: Build the disk image
+        run: >-
+          ./gradlew :desktopApp:packageDmg
+          -Pbitchord.version=${{ steps.version.outputs.value }} --console=plain
+
+      - name: Collect
+        run: |
+          mkdir -p out
+          for dmg in desktopApp/build/compose/binaries/main/dmg/*.dmg; do
+            [ -e "$dmg" ] || continue
+            cp "$dmg" "out/BitChord-${{ steps.version.outputs.value }}-macos-${{ matrix.arch }}.dmg"
+          done
+          ls -l out
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos-${{ matrix.arch }}
+          path: out/*
+          if-no-files-found: error
+
+  linux:
+    name: Linux · deb, rpm, AppImage
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK ${{ env.JAVA_VERSION }}
+        uses: actions/setup-java@v4
+        with:
+          java-version: ${{ env.JAVA_VERSION }}
+          distribution: temurin
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Read the version from the tag
+        id: version
+        run: echo "value=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Write local.properties
+        env:
+          LASTFM_API_KEY: ${{ secrets.LASTFM_API_KEY }}
+          LASTFM_SECRET: ${{ secrets.LASTFM_SECRET }}
+          LISTEN_TOGETHER_SERVER: ${{ secrets.LISTEN_TOGETHER_SERVER }}
+        run: |
+          : > local.properties
+          [ -n "$LASTFM_API_KEY" ] && echo "LASTFM_API_KEY=$LASTFM_API_KEY" >> local.properties
+          [ -n "$LASTFM_SECRET" ] && echo "LASTFM_SECRET=$LASTFM_SECRET" >> local.properties
+          [ -n "$LISTEN_TOGETHER_SERVER" ] && echo "LISTEN_TOGETHER_SERVER=$LISTEN_TOGETHER_SERVER" >> local.properties
+          exit 0
+
+      - run: chmod +x gradlew
+
+      # rpm and fakeroot for the packages, file for the AppImage, and the tool that
+      # wraps jpackage's app folder — the one format Gradle cannot make itself.
+      - name: Install packaging tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends rpm fakeroot binutils file
+          curl -fsSL -o appimagetool \
+            https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage
+          chmod +x appimagetool
+
+      - name: Build the packages
+        run: >-
+          ./gradlew :desktopApp:packageDeb :desktopApp:packageRpm :desktopApp:createDistributable
+          -Pbitchord.version=${{ steps.version.outputs.value }} --console=plain
+
+      - name: Wrap the AppImage
+        run: |
+          ./desktopApp/packaging/appimage.sh \
+            desktopApp/build/compose/binaries/main/app/BitChord \
+            "desktopApp/build/distributions/BitChord-${{ steps.version.outputs.value }}-linux-x86_64.AppImage" \
+            ./appimagetool
+
+      - name: Collect
+        run: |
+          mkdir -p out
+          cp desktopApp/build/compose/binaries/main/deb/*.deb out/ 2>/dev/null || true
+          cp desktopApp/build/compose/binaries/main/rpm/*.rpm out/ 2>/dev/null || true
+          cp desktopApp/build/distributions/*.AppImage out/ 2>/dev/null || true
+          ls -l out
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux
+          path: out/*
+          if-no-files-found: error
+
+  publish:
+    name: Attach to the release
+    needs: [windows, macos, linux]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: List what will be published
+        run: ls -lR artifacts
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/*
+          fail_on_unmatched_files: true
+          # A tag with a suffix (v1.9.1-beta.1) is a pre-release.
+          prerelease: ${{ contains(github.ref_name, '-') }}
+          body: |
+            BitChord ${{ github.ref_name }} — desktop builds.
+
+            | Platform | File |
+            | --- | --- |
+            | Windows | `.exe` installer, `.msi`, portable `.zip` |
+            | macOS | `.dmg` (Apple Silicon and Intel) |
+            | Linux | `.deb`, `.rpm`, `.AppImage` |

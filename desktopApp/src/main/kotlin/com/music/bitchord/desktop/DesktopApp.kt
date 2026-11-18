@@ -6,6 +6,7 @@ import com.music.bitchord.ui.components.ShelfRowChrome
 import com.music.bitchord.ui.components.ShelfRow
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.ui.input.key.isAltPressed
+import androidx.compose.ui.input.key.isCtrlPressed
 import androidx.compose.ui.input.key.isMetaPressed
 import androidx.compose.ui.input.pointer.isBackPressed
 import androidx.compose.ui.input.pointer.isSecondaryPressed
@@ -48,6 +49,9 @@ import com.music.bitchord.data.lyrics.LyricsSource
 import com.music.bitchord.ui.player.LyricsSidePanel
 import com.music.bitchord.ui.player.NowPlayingScreen
 import com.music.bitchord.ui.player.QueueSidePanel
+import com.music.bitchord.lansync.LanSyncIdentity
+import com.music.bitchord.ui.palette.CommandPalette
+import com.music.bitchord.ui.palette.CommandPaletteItem
 import com.music.bitchord.ui.player.PlayerBack
 import com.music.bitchord.ui.player.RepeatModes
 import com.music.bitchord.ui.player.rememberMixPulse
@@ -627,6 +631,8 @@ fun BitChordDesktopApp() {
     var likedSyncJob by remember { mutableStateOf<Job?>(null) }
     var dislikedIds by remember { mutableStateOf(persistence.dislikedIds()) }
     val overlays = remember { DesktopOverlays() }
+    // The command palette, opened with ⌘K/Ctrl+K from anywhere — see the key handler below.
+    var paletteOpen by remember { mutableStateOf(false) }
     var downloads by remember { mutableStateOf(persistence.downloads()) }
     var localSongs by remember { mutableStateOf<List<Song>>(emptyList()) }
     val downloadQueue by DesktopDownloadQueue.active.collectAsState()
@@ -719,6 +725,14 @@ fun BitChordDesktopApp() {
     var fullBleedArtwork by remember { mutableStateOf(persistence.boolean("full_bleed_artwork", false)) }
     var accounts by remember { mutableStateOf(DesktopAccounts.accounts()) }
     var activeAccountId by remember { mutableStateOf(DesktopAccounts.activeAccountId()) }
+    // LAN sync: on by default and gated on being signed in — the account is the
+    // pairing, so there is no code to type. Keyed on the account hash, so signing out
+    // stops advertising and signing in starts discovering again on its own.
+    var lanSyncEnabled by remember { mutableStateOf(DesktopLanSync.enabled) }
+    val lanSyncAccount = LanSyncIdentity.accountHash(activeAccountId)
+    LaunchedEffect(lanSyncEnabled, lanSyncAccount) {
+        DesktopLanSync.apply(lanSyncEnabled, lanSyncAccount)
+    }
     var activeProfileId by remember { mutableStateOf(DesktopAccounts.activeProfileId()) }
     var signInBusy by remember { mutableStateOf<String?>(null) }
     var signInError by remember { mutableStateOf<String?>(null) }
@@ -3236,6 +3250,11 @@ fun BitChordDesktopApp() {
                             openSettings()
                             true
                         }
+                        // ⌘K on a Mac, Ctrl+K everywhere else: the command palette.
+                        (event.isCtrlPressed || event.isMetaPressed) && event.key == Key.K -> {
+                            paletteOpen = !paletteOpen
+                            true
+                        }
                         DesktopPlatform.isMac && event.isMetaPressed && event.key == Key.F -> {
                             searchFocusRequested = true
                             true
@@ -3605,6 +3624,168 @@ fun BitChordDesktopApp() {
                             )
                         }
                     }
+                    // Everything the palette can do or go to: transport, Automix, output
+                    // devices, pages, the LAN host being followed, the queue's tracks and the
+                    // local playlists. Built only while it is open, and rebuilt when any of
+                    // the state behind it changes.
+                    if (paletteOpen) {
+                        fun commandPaletteItems(): List<CommandPaletteItem> {
+                            val items = mutableListOf<CommandPaletteItem>()
+                            items += CommandPaletteItem(
+                                id = "player-play-pause",
+                                title = if (playback.isPlaying) "Pause" else "Play",
+                                section = "Player",
+                                subtitle = selectedSong?.let { "${it.title} · ${it.artist}" },
+                                keywords = "transport toggle play pause",
+                            ) { if (selectedSong != null) togglePlayPauseFromUser() }
+                            items += CommandPaletteItem(
+                                "player-next",
+                                "Next track",
+                                "Player",
+                                keywords = "skip forward",
+                            ) { playNext() }
+                            items += CommandPaletteItem(
+                                "player-previous",
+                                "Previous track",
+                                "Player",
+                                keywords = "back skip",
+                            ) { playPrevious() }
+                            items += CommandPaletteItem(
+                                "player-shuffle",
+                                if (shuffle) "Turn shuffle off" else "Turn shuffle on",
+                                "Player",
+                                keywords = "random shuffle",
+                                hint = if (shuffle) "On" else "Off",
+                            ) { shuffle = !shuffle }
+                            items += CommandPaletteItem(
+                                "player-repeat",
+                                "Cycle repeat mode",
+                                "Player",
+                                keywords = "loop repeat",
+                                hint = repeatMode.name.lowercase().replaceFirstChar { it.uppercase() },
+                            ) {
+                                repeatMode = when (repeatMode) {
+                                    DesktopRepeatMode.OFF -> DesktopRepeatMode.ALL
+                                    DesktopRepeatMode.ALL -> DesktopRepeatMode.ONE
+                                    DesktopRepeatMode.ONE -> DesktopRepeatMode.OFF
+                                }
+                            }
+                            items += CommandPaletteItem(
+                                "automix-toggle",
+                                if (automix) "Turn Automix off" else "Turn Automix on",
+                                "Automix",
+                                subtitle = "Beat-matched blends between tracks",
+                                keywords = "smart transition dj blend",
+                                hint = if (automix) "On" else "Off",
+                            ) { automix = !automix }
+                            listOf(0, 4, 8, 12).forEach { seconds ->
+                                items += CommandPaletteItem(
+                                    id = "automix-crossfade-$seconds",
+                                    title = if (seconds == 0) "Crossfade: off" else "Crossfade: ${seconds}s",
+                                    section = "Automix",
+                                    keywords = "fade transition crossfade",
+                                    hint = if (crossfadeSeconds == seconds) "Current" else null,
+                                ) { crossfadeSeconds = seconds }
+                            }
+                            DesktopAudioDevices.available().forEach { device ->
+                                items += CommandPaletteItem(
+                                    id = "output-${device.id}",
+                                    title = if (device.id.isBlank()) "Output: system default" else device.name,
+                                    section = "Output",
+                                    subtitle = device.description.takeIf { it.isNotBlank() },
+                                    keywords = "device speaker output",
+                                    hint = if (device.id == DesktopAudioDevices.selected.value) "Playing here" else null,
+                                ) { DesktopAudioDevices.select(device.id) }
+                            }
+                            items += CommandPaletteItem(
+                                "lan-toggle",
+                                if (lanSyncEnabled) "Turn LAN sync off" else "Turn LAN sync on",
+                                "LAN",
+                                subtitle = "Same-account devices on this Wi-Fi, no pairing",
+                                keywords = "sync phone android lan toggle",
+                                hint = if (lanSyncEnabled) "On" else "Off",
+                            ) {
+                                lanSyncEnabled = !lanSyncEnabled
+                                DesktopLanSync.setEnabled(lanSyncEnabled)
+                            }
+                            DesktopLanSync.peers.value.forEach { peer ->
+                                items += CommandPaletteItem(
+                                    id = "lan-${peer.id}",
+                                    title = "Follow ${peer.name}",
+                                    section = "LAN",
+                                    subtitle = "Queue, track and position from ${peer.host}",
+                                    keywords = "sync phone android mirror lan",
+                                ) { DesktopLanSync.follow(peer) }
+                            }
+                            if (DesktopLanSync.state.value != null) {
+                                items += CommandPaletteItem(
+                                    "lan-stop",
+                                    "Stop following",
+                                    "LAN",
+                                    keywords = "sync disconnect lan",
+                                ) { DesktopLanSync.forget() }
+                            }
+                            DesktopDestination.entries.forEach { target ->
+                                items += CommandPaletteItem(
+                                    id = "go-${target.id}",
+                                    title = "Go to ${target.label}",
+                                    section = "Go",
+                                    keywords = "page navigate open",
+                                ) { destination = target }
+                            }
+                            items += CommandPaletteItem(
+                                "go-settings",
+                                "Open settings",
+                                "Go",
+                                keywords = "preferences options",
+                            ) { openSettings() }
+                            liveQueue.songs.forEachIndexed { index, song ->
+                                items += CommandPaletteItem(
+                                    id = "track-$index-${song.videoId}",
+                                    title = song.title,
+                                    section = "Songs",
+                                    subtitle = song.artist,
+                                    keywords = song.albumName.orEmpty(),
+                                    hint = if (index == liveQueue.index) "Playing" else null,
+                                ) { playQueueIndex(index) }
+                            }
+                            playlists.forEach { playlist ->
+                                items += CommandPaletteItem(
+                                    id = "playlist-${playlist.id}",
+                                    title = playlist.title,
+                                    section = "Playlists",
+                                    subtitle = "${playlist.songs.size} songs",
+                                    keywords = "playlist local saved",
+                                ) { openPlaylist(playlist) }
+                            }
+                            return items
+                        }
+
+                        val items = remember(
+                            paletteOpen,
+                            liveQueue.index,
+                            liveQueue.songs.size,
+                            shuffle,
+                            repeatMode,
+                            automix,
+                            crossfadeSeconds,
+                            playlists.size,
+                            playback.isPlaying,
+                            selectedSong?.videoId,
+                            lanSyncEnabled,
+                        ) { commandPaletteItems() }
+                        CommandPalette(items = items, onDismiss = { paletteOpen = false })
+                    }
+
+                    // Says which other BitChord this desktop is following, if any.
+                    Box(Modifier.fillMaxSize()) {
+                        DesktopLanSyncBanner(
+                            modifier = Modifier
+                                .align(Alignment.TopCenter)
+                                .padding(top = 12.dp),
+                        )
+                    }
+
                     if (overlays.accounts) {
                         DesktopAccountSelector(
                             accounts = accounts,
@@ -3910,6 +4091,12 @@ fun BitChordDesktopApp() {
                                     onOpenEqualizer = { overlays.settingsPage = DesktopSettingsPage.EQUALIZER },
                                     onOpenAudioOutput = { overlays.settingsPage = DesktopSettingsPage.AUDIO_OUTPUT },
                                     onOpenListenTogether = { overlays.settingsPage = DesktopSettingsPage.LISTEN_TOGETHER },
+                                    lanSyncEnabled = lanSyncEnabled,
+                                    lanSyncStatus = DesktopLanSync.status.collectAsState().value,
+                                    onLanSyncEnabledChange = {
+                                        lanSyncEnabled = it
+                                        DesktopLanSync.setEnabled(it)
+                                    },
                                     onShowNerdStatsChange = {
                                         showNerdStats = it
                                         persistence.saveBoolean("show_nerd_stats", it)
@@ -5966,6 +6153,10 @@ private fun DesktopSettingsScreen(
     onOpenAudioOutput: () -> Unit,
     /** Opens the listening-together party. */
     onOpenListenTogether: () -> Unit,
+    /** LAN Playback & Queue Sync: on by default, and only meaningful when signed in. */
+    lanSyncEnabled: Boolean,
+    lanSyncStatus: DesktopLanSyncStatus,
+    onLanSyncEnabledChange: (Boolean) -> Unit,
     showNerdStats: Boolean,
     onShowNerdStatsChange: (Boolean) -> Unit,
     fullBleedArtwork: Boolean,
@@ -6544,6 +6735,25 @@ private fun DesktopSettingsScreen(
                         DesktopStrings["listen_together", "Listen together"],
                         DesktopStrings["listen_together_create_subtitle", "Start a party and share the code."],
                     ) { onOpenListenTogether() }
+                    // Same account is the whole handshake: no PIN, no QR, no pairing
+                    // screen. Off is a switch, not a sign-out.
+                    SettingsToggle(
+                        DesktopStrings["lan_sync", "LAN Playback & Queue Sync"],
+                        when (lanSyncStatus) {
+                            DesktopLanSyncStatus.OFF ->
+                                DesktopStrings["lan_sync_off", "Off — this device neither follows nor serves a queue"]
+                            DesktopLanSyncStatus.SIGNED_OUT ->
+                                DesktopStrings["lan_sync_signed_out", "Sign in to sync playback with your other devices on this Wi-Fi"]
+                            DesktopLanSyncStatus.SEARCHING ->
+                                DesktopStrings["lan_sync_searching", "Looking for another signed-in BitChord on this Wi-Fi"]
+                            DesktopLanSyncStatus.FOLLOWING ->
+                                DesktopStrings["lan_sync_following", "Following another signed-in BitChord on this Wi-Fi"]
+                            DesktopLanSyncStatus.REFUSED ->
+                                DesktopStrings["lan_sync_refused", "A device was found, but it is signed into another account"]
+                        },
+                        lanSyncEnabled,
+                        onLanSyncEnabledChange,
+                    )
                 }
             }
             if (section == DesktopSettingsSection.AUDIO_OUTPUT) item {

@@ -280,6 +280,7 @@ fun SettingsScreen(
     val showCacheFolder by AppSettings.showCacheFolder.collectAsStateWithLifecycle()
     val downloadQuality by AppSettings.downloadQuality.collectAsStateWithLifecycle()
     val wifiOnlyDownloads by AppSettings.wifiOnlyDownloads.collectAsStateWithLifecycle()
+    val lanSyncEnabled by AppSettings.lanSyncEnabled.collectAsStateWithLifecycle()
     val exportDownloads by AppSettings.exportDownloads.collectAsStateWithLifecycle()
     val syncDownloadedPlaylists by AppSettings.syncDownloadedPlaylists.collectAsStateWithLifecycle()
     val stopOnTaskRemoved by AppSettings.stopOnTaskRemoved.collectAsStateWithLifecycle()
@@ -495,6 +496,17 @@ fun SettingsScreen(
                         } ?: stringResource(R.string.listen_together_subtitle),
                         badge = party.members.size.takeIf { party.inParty && it > 1 }?.toString(),
                         onClick = onListenTogether,
+                    )
+                }
+                // The account is the pairing: two devices signed into the same one find
+                // each other on the Wi-Fi, so there is no code or PIN to enter here.
+                val lanSyncTitle = stringResource(R.string.lan_sync)
+                row(lanSyncTitle, "wi-fi", "sync", "devices", "lan", "queue") {
+                    SettingsSubRow(
+                        title = lanSyncTitle,
+                        checked = lanSyncEnabled,
+                        onCheckedChange = AppSettings::setLanSyncEnabled,
+                        subtitle = stringResource(R.string.lan_sync_subtitle),
                     )
                 }
             }

@@ -957,6 +957,8 @@
     <!-- Listen together -->
     <string name="listen_together">Listen together</string>
     <string name="listen_together_subtitle">Share a code and play the same music, in time</string>
+    <string name="lan_sync">LAN Playback &amp; Queue Sync</string>
+    <string name="lan_sync_subtitle">Follow your other signed-in devices on this Wi-Fi, no pairing</string>
     <string name="listen_together_in_party">In a party · %1$s</string>
     <string name="listen_together_sign_in_footer">Listening together needs an account, so everyone in the party can see who else is in it.</string>
     <string name="listen_together_server">Party server</string>
