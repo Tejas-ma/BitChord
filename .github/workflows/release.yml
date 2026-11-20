@@ -100,12 +100,23 @@ jobs:
           ./gradlew :desktopApp:packageExe :desktopApp:packageMsi :desktopApp:windowsPortable
           -Pbitchord.version=${{ steps.version.outputs.value }} --console=plain
 
+      # The names BUILDING-WINDOWS.md documents for the release assets. jpackage
+      # emits BitChord-<version>.exe / .msi, and the MSI carries the four-part
+      # version, so both are renamed rather than published as they come out; the
+      # portable zip is already named BitChord-<version>-windows-portable.zip.
       - name: Collect
         shell: bash
         run: |
+          v=${{ steps.version.outputs.value }}
           mkdir -p out
-          cp desktopApp/build/compose/binaries/main/exe/*.exe out/ 2>/dev/null || true
-          cp desktopApp/build/compose/binaries/main/msi/*.msi out/ 2>/dev/null || true
+          for f in desktopApp/build/compose/binaries/main/exe/*.exe; do
+            [ -e "$f" ] || continue
+            cp "$f" "out/BitChord-$v-windows-x64-setup.exe"
+          done
+          for f in desktopApp/build/compose/binaries/main/msi/*.msi; do
+            [ -e "$f" ] || continue
+            cp "$f" "out/BitChord-$v-windows-x64.msi"
+          done
           cp desktopApp/build/distributions/*portable.zip out/ 2>/dev/null || true
           ls -l out
 
