@@ -146,6 +146,9 @@ class BitChordApplication : Application(), SingletonImageLoader.Factory, Configu
         // LAN Playback & Queue Sync: on by default and gated on being signed in. It
         // watches the setting and the account itself, so nothing else has to start it.
         LanSyncAndroid.install(this)
+        // Voice search's platform recogniser needs a context to be constructed from,
+        // and the shared module cannot reach one from common code.
+        com.music.bitchord.audio.AndroidVoiceInput.install(this)
         // Restores the addon token, so the first search after a process restart
         // doesn't have to attest the device again.
         com.music.bitchord.data.sources.addon.AddonAuth.init(this)

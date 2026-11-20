@@ -72,6 +72,9 @@ import com.music.bitchord.data.model.SearchResult
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.model.playingRowMatcher
 import com.music.bitchord.data.model.UiState
+import com.music.bitchord.data.search.UnifiedSearchFailure
+import com.music.bitchord.data.search.UnifiedSearchHit
+import com.music.bitchord.data.search.UnifiedSearchSource
 import com.music.bitchord.data.model.SearchHistoryEntity
 import com.music.bitchord.data.model.EntityType
 import com.music.bitchord.ui.components.MessageState
@@ -161,6 +164,19 @@ fun SearchScreen(
      * about the results, and the switcher would just push them down.
      */
     sourceSwitcher: (@Composable () -> Unit)? = null,
+    /** The catalogues a search asked — YouTube Music and every configured source. */
+    unifiedSources: List<UnifiedSearchSource> = emptyList(),
+    /** Every source's rows for [query], merged round-robin as they arrived. */
+    unifiedHits: List<UnifiedSearchHit> = emptyList(),
+    unifiedFailures: List<UnifiedSearchFailure> = emptyList(),
+    /** Source ids the chips narrow the unified rows to; empty means all of them. */
+    unifiedSelected: Set<String> = emptySet(),
+    onUnifiedToggle: (String) -> Unit = {},
+    onUnifiedClear: () -> Unit = {},
+    onUnifiedPlay: (UnifiedSearchHit) -> Unit = {},
+    onUnifiedLongPress: ((Song) -> Unit)? = null,
+    /** True while at least one catalogue is still answering. */
+    unifiedLoading: Boolean = false,
 ) {
     val focusRequester = remember { FocusRequester() }
     val focusManager = LocalFocusManager.current
@@ -248,6 +264,47 @@ fun SearchScreen(
             modifier = Modifier.weight(1f).fillMaxWidth(),
             contentPadding = PaddingValues(bottom = contentPadding.calculateBottomPadding()),
         ) {
+            if (query.isNotBlank() && !suggesting && !searchingLibrary && !searchingAddons &&
+                (unifiedSources.isNotEmpty() || unifiedHits.isNotEmpty())
+            ) {
+                item(key = "unified:heading") {
+                    UnifiedSearchHeading(hits = unifiedHits, loading = unifiedLoading)
+                }
+                item(key = "unified:chips") {
+                    UnifiedSourceChips(
+                        sources = unifiedSources,
+                        hits = unifiedHits,
+                        failures = unifiedFailures,
+                        selected = unifiedSelected,
+                        onToggle = onUnifiedToggle,
+                        onClear = onUnifiedClear,
+                    )
+                }
+                val shown = if (unifiedSelected.isEmpty()) {
+                    unifiedHits
+                } else {
+                    unifiedHits.filter { it.sourceId in unifiedSelected }
+                }
+                itemsIndexed(
+                    items = shown,
+                    key = { index, hit -> "unified:${hit.sourceId}:${hit.song.videoId}:$index" },
+                ) { index, hit ->
+                    UnifiedSearchResultRow(
+                        hit = hit,
+                        currentSong = currentSong,
+                        isPlaying = isPlaying,
+                        onClick = { onUnifiedPlay(hit) },
+                        onLongPress = onUnifiedLongPress?.let { { it(hit.song) } },
+                    )
+                    if (index < shown.lastIndex) {
+                        HorizontalDivider(
+                            modifier = Modifier.padding(start = ROW_DIVIDER_INSET),
+                            thickness = 0.5.dp,
+                            color = MaterialTheme.colorScheme.outline,
+                        )
+                    }
+                }
+            }
             when {
                 searchingLibrary || searchingAddons -> librarySearchResults(
                     query = query.trim(),

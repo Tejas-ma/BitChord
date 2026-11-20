@@ -5,6 +5,7 @@ import com.music.bitchord.ui.components.LocalShelfRowChrome
 import com.music.bitchord.ui.components.ShelfRowChrome
 import com.music.bitchord.ui.components.ShelfRow
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
+import androidx.compose.material.icons.rounded.Mic
 import androidx.compose.ui.input.key.isAltPressed
 import androidx.compose.ui.input.key.isCtrlPressed
 import androidx.compose.ui.input.key.isMetaPressed
@@ -52,6 +53,14 @@ import com.music.bitchord.ui.player.QueueSidePanel
 import com.music.bitchord.lansync.LanSyncIdentity
 import com.music.bitchord.ui.palette.CommandPalette
 import com.music.bitchord.ui.palette.CommandPaletteItem
+import com.music.bitchord.data.search.UnifiedSearchBatch
+import com.music.bitchord.data.search.UnifiedSearchEngine
+import com.music.bitchord.data.search.UnifiedSearchEvent
+import com.music.bitchord.data.search.UnifiedSearchFailure
+import com.music.bitchord.data.search.UnifiedSearchHit
+import com.music.bitchord.data.search.UnifiedSearchSource
+import com.music.bitchord.ui.dialogs.VoiceAction
+import com.music.bitchord.ui.dialogs.VoiceSearchDialog
 import com.music.bitchord.ui.player.PlayerBack
 import com.music.bitchord.ui.player.RepeatModes
 import com.music.bitchord.ui.player.rememberMixPulse
@@ -570,6 +579,17 @@ fun BitChordDesktopApp() {
     var searchTyping by remember { mutableStateOf(false) }
     var searchLoading by remember { mutableStateOf(false) }
     var searchError by remember { mutableStateOf<String?>(null) }
+    // Every configured catalogue's answer for the same query, above YouTube's own rows — see
+    // [DesktopUnifiedSearch]. Batches land as each source replies, so the first catalogue to
+    // answer paints instead of waiting for the slowest addon.
+    var unifiedSources by remember { mutableStateOf<List<UnifiedSearchSource>>(emptyList()) }
+    var unifiedHits by remember { mutableStateOf<List<UnifiedSearchHit>>(emptyList()) }
+    var unifiedFailures by remember { mutableStateOf<List<UnifiedSearchFailure>>(emptyList()) }
+    var unifiedSelected by remember { mutableStateOf<Set<String>>(emptySet()) }
+    var unifiedLoading by remember { mutableStateOf(false) }
+    var unifiedJob by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
+    // The microphone dialog: null when closed, otherwise which of its two jobs it was opened for.
+    var voiceDialog by remember { mutableStateOf<VoiceAction?>(null) }
     var homeState by remember { mutableStateOf<UiState<List<HomeShelf>>>(UiState.Loading) }
     // The home feed is paged: `FEmusic_home` answers with a couple of shelves and a token, and
     // everything else arrives by following it.
@@ -2248,6 +2268,11 @@ fun BitChordDesktopApp() {
             searchCommitted = false
             searchRows = emptyList()
             searchError = null
+            unifiedJob?.cancel()
+            unifiedSources = emptyList()
+            unifiedHits = emptyList()
+            unifiedFailures = emptyList()
+            unifiedLoading = false
         }
     }
 
@@ -2271,6 +2296,40 @@ fun BitChordDesktopApp() {
         searchScrollReset++
         searchLoading = true
         searchError = null
+        // The unified pass, alongside YouTube's own: every configured source is asked at once and
+        // each batch is merged in as it arrives. The chips keep the listener's source choice
+        // across searches.
+        unifiedJob?.cancel()
+        unifiedSources = emptyList()
+        unifiedHits = emptyList()
+        unifiedFailures = emptyList()
+        unifiedLoading = true
+        val unifiedQuery = query
+        unifiedJob = scope.launch {
+            val batches = mutableListOf<UnifiedSearchBatch>()
+            val failures = mutableListOf<UnifiedSearchFailure>()
+            try {
+                DesktopUnifiedSearch.engine.search(unifiedQuery).collect { event ->
+                    when (event) {
+                        is UnifiedSearchEvent.Started -> unifiedSources = event.sources
+                        is UnifiedSearchEvent.Batch -> {
+                            batches += event.batch
+                            unifiedHits = UnifiedSearchEngine.interleave(batches)
+                        }
+                        is UnifiedSearchEvent.Failed -> {
+                            failures += event.failure
+                            unifiedFailures = failures.toList()
+                        }
+                        is UnifiedSearchEvent.Done -> {
+                            unifiedHits = event.hits
+                            unifiedFailures = event.failures
+                        }
+                    }
+                }
+            } finally {
+                unifiedLoading = false
+            }
+        }
         scope.launch {
             try {
                 DesktopMusicSources.search(query, searchFilter).fold(
@@ -3356,6 +3415,7 @@ fun BitChordDesktopApp() {
                         onOpenSettings = ::openSettings,
                         focusSearch = searchFocusRequested,
                         onSearchFocused = { searchFocusRequested = false },
+                        onMic = { voiceDialog = VoiceAction.IDENTIFY_SONG },
                     )
                 },
                 bottomBar = { compact ->
@@ -3725,6 +3785,21 @@ fun BitChordDesktopApp() {
                                     keywords = "sync disconnect lan",
                                 ) { DesktopLanSync.forget() }
                             }
+                            // The microphone, in the palette as well as the sidebar field.
+                            items += CommandPaletteItem(
+                                id = "mic-identify",
+                                title = "Identify song",
+                                section = "Search",
+                                subtitle = "Listen to what is playing and search every source for it",
+                                keywords = "shazam microphone recognise recognize listen ambient",
+                            ) { voiceDialog = VoiceAction.IDENTIFY_SONG }
+                            items += CommandPaletteItem(
+                                id = "mic-voice",
+                                title = "Voice search",
+                                section = "Search",
+                                subtitle = "Say what you want to hear",
+                                keywords = "speech dictation microphone talk",
+                            ) { voiceDialog = VoiceAction.VOICE_SEARCH }
                             DesktopDestination.entries.forEach { target ->
                                 items += CommandPaletteItem(
                                     id = "go-${target.id}",
@@ -3775,6 +3850,19 @@ fun BitChordDesktopApp() {
                             lanSyncEnabled,
                         ) { commandPaletteItems() }
                         CommandPalette(items = items, onDismiss = { paletteOpen = false })
+                    }
+
+                    // The two microphone jobs. Identify Song works here; Voice search says so
+                    // plainly when the platform has no recogniser.
+                    voiceDialog?.let { action ->
+                        VoiceSearchDialog(
+                            action = action,
+                            onDismiss = { voiceDialog = null },
+                            onQuery = { spoken ->
+                                voiceDialog = null
+                                runSearch(spoken)
+                            },
+                        )
                     }
 
                     // Says which other BitChord this desktop is following, if any.
@@ -4448,6 +4536,30 @@ fun BitChordDesktopApp() {
                                 recordBrowseSearch(item)
                                 openBrowseItem(item)
                             },
+                            unifiedSources = unifiedSources,
+                            unifiedHits = unifiedHits,
+                            unifiedFailures = unifiedFailures,
+                            unifiedSelected = unifiedSelected,
+                            unifiedLoading = unifiedLoading,
+                            onUnifiedToggle = { id ->
+                                unifiedSelected = if (id in unifiedSelected) {
+                                    unifiedSelected - id
+                                } else {
+                                    unifiedSelected + id
+                                }
+                            },
+                            onUnifiedClear = { unifiedSelected = emptySet() },
+                            onUnifiedPlay = { hit ->
+                                recordSongSearch(hit.song)
+                                playSong(
+                                    hit.song,
+                                    source = DesktopQueueSource(
+                                        DesktopStrings["search", "Search"],
+                                        PlaybackSourceType.SEARCH,
+                                    ),
+                                )
+                            },
+                            onUnifiedLongPress = ::openMenu,
                             history = searchHistory,
                             // The typed text leads the list, put there by the keystroke rather than
                             // taken from the response — the page drops it, as the phone's does.
@@ -4939,6 +5051,8 @@ private fun DesktopSidebar(
     /** Search was picked: the sidebar's box is the page's field, so it takes the focus. */
     focusSearch: Boolean,
     onSearchFocused: () -> Unit,
+    /** Opens the microphone — Identify Song, the one job the desktop can do. */
+    onMic: (() -> Unit)? = null,
 ) {
     val searchFocusRequester = remember { FocusRequester() }
     LaunchedEffect(focusSearch) {
@@ -4997,6 +5111,7 @@ private fun DesktopSidebar(
                 onSearch = onSearch,
                 focusRequester = searchFocusRequester,
                 onFocusChanged = { searchFocused = it },
+                onMic = onMic,
             )
             Spacer(Modifier.height(20.dp))
             DesktopSidebarItem(BitChordIcons.Home, DesktopStrings["home", "Home"], destination == DesktopDestination.LISTEN_NOW) {
@@ -5344,6 +5459,8 @@ internal fun DesktopSearchField(
     focusRequester: FocusRequester = remember { FocusRequester() },
     onFocusChanged: (Boolean) -> Unit = {},
     placeholder: String = "Search",
+    /** Opens the microphone; null leaves the field without one. */
+    onMic: (() -> Unit)? = null,
 ) {
     val searchShape = RoundedCornerShape(7.dp)
     Box(
@@ -5362,6 +5479,7 @@ internal fun DesktopSearchField(
             onValueChange = onQueryChange,
             modifier = Modifier
                 .fillMaxWidth()
+                .padding(end = if (onMic != null) 24.dp else 0.dp)
                 .focusRequester(focusRequester)
                 .onFocusChanged { onFocusChanged(it.isFocused) }
                 .onPreviewKeyEvent { event ->
@@ -5395,6 +5513,19 @@ internal fun DesktopSearchField(
                 }
             },
         )
+        if (onMic != null) {
+            Icon(
+                Icons.Rounded.Mic,
+                contentDescription = "Voice search or identify song",
+                tint = DesktopSecondary,
+                modifier = Modifier
+                    .align(Alignment.CenterEnd)
+                    .size(18.dp)
+                    .clip(CircleShape)
+                    .clickable(onClick = onMic)
+                    .padding(2.dp),
+            )
+        }
     }
 }
 

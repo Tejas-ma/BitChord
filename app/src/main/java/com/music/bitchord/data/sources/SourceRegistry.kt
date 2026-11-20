@@ -235,6 +235,18 @@ object SourceRegistry {
     }
 
     /**
+     * Every enabled, complete source, for search — the same set [active] holds
+     * before the connection's quality ceiling and the lossless gating are
+     * applied. A catalogue whose rows are not playable on this connection is
+     * still a catalogue: search shows its rows and says why a tap cannot play
+     * one, rather than pretending the track does not exist.
+     */
+    fun searchable(): List<MusicSource> =
+        enabledConfigs(configs.value)
+            .sortedBy { it.kind.rank }
+            .mapNotNull { instances[it.id] }
+
+    /**
      * [active], minus the addons whose manifest said `allowDownloads: 0`. A
      * download walks this instead, so the next source in line serves it.
      */

@@ -337,6 +337,14 @@ fun SongRow(
      * different catalogues sit side by side: the Addons search.
      */
     showSourceQuality: Boolean = false,
+    /**
+     * The catalogue this row came from, drawn as a small pill after the artist.
+     *
+     * Set by the unified search, where YouTube Music, JioSaavn, every addon and
+     * every module index answer the same query and a row has to say which of
+     * them it is before a tap means anything.
+     */
+    sourceBadge: String? = null,
 ) {
     val haptics = rememberHaptics()
     val swipeStateHolder = remember { mutableStateOf<SwipeToDismissBoxState?>(null) }
@@ -376,6 +384,7 @@ fun SongRow(
             searchPlayingStyle = searchPlayingStyle,
             selected = selected,
             showSourceQuality = showSourceQuality,
+            sourceBadge = sourceBadge,
         )
         return
     }
@@ -424,6 +433,7 @@ fun SongRow(
             searchPlayingStyle = searchPlayingStyle,
             selected = selected,
             showSourceQuality = showSourceQuality,
+            sourceBadge = sourceBadge,
         )
     }
 }
@@ -492,6 +502,7 @@ private fun SongRowContent(
     searchPlayingStyle: Boolean = false,
     selected: Boolean = false,
     showSourceQuality: Boolean = false,
+    sourceBadge: String? = null,
 ) {
     val titleColor by animateColorAsState(
         targetValue = if (isCurrent) activeTint else MaterialTheme.colorScheme.onBackground,
@@ -587,7 +598,23 @@ private fun SongRowContent(
                     color = subtitleColor,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
+                    // Weighted so the badge that follows keeps its room instead
+                    // of being pushed off a long byline.
+                    modifier = Modifier.weight(1f, fill = false),
                 )
+                sourceBadge?.takeIf(String::isNotBlank)?.let { label ->
+                    Spacer(Modifier.width(6.dp))
+                    Text(
+                        text = label,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = subtitleColor,
+                        maxLines = 1,
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(4.dp))
+                            .background(subtitleColor.copy(alpha = 0.14f))
+                            .padding(horizontal = 5.dp, vertical = 1.dp),
+                    )
+                }
             }
         }
         if (downloadedTint != null) {

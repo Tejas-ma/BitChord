@@ -1,0 +1,167 @@
+package com.music.bitchord.audio
+
+import io.ktor.client.HttpClient
+import io.ktor.client.engine.okhttp.OkHttp
+import io.ktor.client.plugins.HttpTimeout
+import io.ktor.client.request.header
+import io.ktor.client.request.post
+import io.ktor.client.request.setBody
+import io.ktor.client.statement.bodyAsText
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
+import java.util.TimeZone
+import java.util.UUID
+
+/** A song the recogniser matched, as Shazam named it. */
+data class RecognizedSong(
+    val title: String,
+    val artist: String,
+    val artworkUrl: String? = null,
+    val shazamId: String? = null,
+) {
+    /**
+     * What to type into the search field once this is identified: the title,
+     * and the artist when Shazam gave more than a bare name.
+     */
+    val searchQuery: String
+        get() = if (artist.isBlank() || artist.equals("Unknown", true)) title else "$title $artist"
+}
+
+/**
+ * What one listen produced.
+ *
+ * [NoMatch] is the ordinary answer for a hum, a conversation or a track
+ * Shazam does not have — kept apart from [Failed] so the UI does not offer a
+ * retry for something a retry cannot fix.
+ */
+sealed interface RecognitionResult {
+    data class Match(val song: RecognizedSong) : RecognitionResult
+
+    data object NoMatch : RecognitionResult
+
+    data object Silent : RecognitionResult
+
+    data object Unsupported : RecognitionResult
+
+    data class Failed(val reason: String) : RecognitionResult
+}
+
+/**
+ * Shazam's discovery endpoint, with no key and no account.
+ *
+ * This is the request Shazam's own mobile clients send: the signature URI
+ * built by [ShazamFingerprint] in a JSON body, to the same `discovery/v5`
+ * route. The answer's first `track` is the match; an empty `matches` list is
+ * a miss rather than an error.
+ */
+object ShazamClient {
+
+    private const val LANGUAGE = "en-US"
+    private const val COUNTRY = "GB"
+    private const val ENDPOINT =
+        "https://amp.shazam.com/discovery/v5/$LANGUAGE/$COUNTRY/iphone/-/tag"
+
+    private const val QUERY =
+        "?sync=true&webv3=true&sampling=true&connected=" +
+            "&shazamapiversion=v3&sharehub=true&hubv5minorversion=v5.1&hidelb=true&video=v3"
+
+    /**
+     * A current iPhone client's identity.
+     *
+     * The endpoint answers the same JSON to anything that looks like the app;
+     * `web` is a different, emptier shape and `android` returns intent:// deep
+     * links, so the iPhone profile is the one to present.
+     */
+    private const val USER_AGENT =
+        "Shazam/14.1.0 (iPhone; iOS 17.4; Scale/3.00)"
+
+    private val json = Json { ignoreUnknownKeys = true; isLenient = true }
+
+    private val client = HttpClient(OkHttp) {
+        install(HttpTimeout) {
+            requestTimeoutMillis = 20_000
+            connectTimeoutMillis = 10_000
+        }
+    }
+
+    /** Recognises [recording]'s audio, or answers null when Shazam has no match. */
+    suspend fun identify(recording: PcmRecording): Result<RecognizedSong?> = runCatching {
+        val signature = ShazamFingerprint.signature(recording.samples, recording.sampleRate)
+        if (signature.isEmpty) return@runCatching null
+        identify(signature.toUri(), recording.sampleRate, recording.samples.size)
+    }
+
+    /** The same, from a signature already built — for tests and for a re-send. */
+    suspend fun identify(uri: String, sampleRateHz: Int, sampleCount: Int): RecognizedSong? {
+        val body = buildString {
+            append("{\"timezone\":\"").append(escape(TimeZone.getDefault().id)).append("\",")
+            append("\"signature\":{\"uri\":\"").append(uri).append("\",")
+            append("\"samplems\":").append(sampleCount * 1_000L / sampleRateHz).append("},")
+            append("\"timestamp\":").append(System.currentTimeMillis()).append(',')
+            append("\"context\":{},\"geolocation\":{}}")
+        }
+        val response = client.post(
+            "$ENDPOINT/${UUID.randomUUID().toString().uppercase()}" +
+                "/${UUID.randomUUID().toString().uppercase()}$QUERY",
+        ) {
+            header("X-Shazam-Platform", "IPHONE")
+            header("X-Shazam-AppVersion", "14.1.0")
+            header("Accept", "*/*")
+            header("Accept-Language", LANGUAGE)
+            header("User-Agent", USER_AGENT)
+            header("Content-Type", "application/json")
+            setBody(body)
+        }
+        val text = response.bodyAsText()
+        val root = runCatching { json.parseToJsonElement(text).jsonObject }.getOrNull() ?: return null
+        val matches = runCatching { root["matches"] }.getOrNull()
+        val track = root["track"]?.jsonObject
+        // An empty matches array with a track in it is still a miss on some
+        // deployments; the track is the match, so take it when it is there.
+        val hasMatch = track != null && (
+            matches == null ||
+                runCatching { matches.toString() != "[]" }.getOrDefault(true)
+            )
+        if (!hasMatch) return null
+        val title = track?.get("title")?.jsonPrimitive?.contentOrNull?.trim().orEmpty()
+        if (title.isEmpty()) return null
+        val artist = track?.get("subtitle")?.jsonPrimitive?.contentOrNull?.trim().orEmpty()
+        val artwork = runCatching {
+            track?.get("images")?.jsonObject?.get("coverart")?.jsonPrimitive?.contentOrNull
+        }.getOrNull()
+        val id = track?.get("key")?.jsonPrimitive?.contentOrNull
+        return RecognizedSong(title, artist, artwork, id)
+    }
+
+    private fun escape(value: String): String =
+        value.replace("\\", "\\\\").replace("\"", "\\\"")
+}
+
+/**
+ * Listens once and recognizes what is playing.
+ *
+ * The only thing above the microphone and the network: capture → fingerprint →
+ * Shazam. A caller that wants the search to run afterwards does not need
+ * anything else from here; [RecognitionResult.Match.song] carries the query.
+ */
+class SongRecognition(
+    private val recorder: PcmRecorder = PcmRecorder(),
+) {
+
+    suspend fun listen(durationMs: Int = CAPTURE_MS): RecognitionResult {
+        if (!recorder.isAvailable) return RecognitionResult.Unsupported
+        val samples = recorder.record(durationMs) ?: return RecognitionResult.Failed(
+            "The microphone could not be opened",
+        )
+        if (samples.isEmpty()) return RecognitionResult.Failed("Nothing was recorded")
+        val recording = PcmRecording(samples)
+        if (!recording.hasSignal()) return RecognitionResult.Silent
+        return ShazamClient.identify(recording).fold(
+            onSuccess = { song -> if (song == null) RecognitionResult.NoMatch else RecognitionResult.Match(song) },
+            onFailure = { RecognitionResult.Failed(it.message ?: "Could not reach Shazam") },
+        )
+    }
+}

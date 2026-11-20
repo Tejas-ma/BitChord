@@ -22,6 +22,13 @@
     <uses-feature android:name="android.hardware.usb.host" android:required="false" />
 
     <!--
+      The search field's microphone: voice search and Shazam-style song
+      identification both record from it. Asked for at the moment the
+      microphone is tapped, not at launch.
+    -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+
+    <!--
       Asked for only when the output picker is first opened, and only on API 31+
       where it exists. Without it a paired headset is listed by the audio
       framework under a generic name rather than its own, which turns a list of

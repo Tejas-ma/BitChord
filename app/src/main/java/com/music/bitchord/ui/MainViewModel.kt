@@ -86,6 +86,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.debounce
@@ -96,7 +97,14 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
+import com.music.bitchord.data.search.UnifiedSearchBatch
+import com.music.bitchord.data.search.UnifiedSearchEngine
+import com.music.bitchord.data.search.UnifiedSearchEvent
+import com.music.bitchord.data.search.UnifiedSearchFailure
+import com.music.bitchord.data.search.UnifiedSearchHit
+import com.music.bitchord.data.search.UnifiedSearchSource
 import com.music.bitchord.data.sources.AddonSource
+import com.music.bitchord.data.sources.UnifiedSourceSearch
 import com.music.bitchord.data.sources.SourceKind
 import com.music.bitchord.data.sources.SourceRegistry
 import com.music.bitchord.data.sources.SourceResolver
@@ -240,6 +248,89 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private val _addonResults = MutableStateFlow<UiState<List<Song>>?>(null)
     val addonResults: StateFlow<UiState<List<Song>>?> = _addonResults.asStateFlow()
     private var addonSearchJob: Job? = null
+
+    /**
+     * Every configured source's answer to the committed query, as one stream
+     * of batches — see [UnifiedSourceSearch].
+     *
+     * The YouTube tab used to be YouTube's; these rows are the rest of the
+     * catalogues, each tagged with the source it came from so a tap plays that
+     * exact copy. Batches land as each source replies, so the first catalogue
+     * to answer paints instead of the page waiting for the slowest addon.
+     */
+    private val _unifiedSources = MutableStateFlow<List<UnifiedSearchSource>>(emptyList())
+    val unifiedSources: StateFlow<List<UnifiedSearchSource>> = _unifiedSources.asStateFlow()
+
+    private val _unifiedHits = MutableStateFlow<List<UnifiedSearchHit>>(emptyList())
+    val unifiedHits: StateFlow<List<UnifiedSearchHit>> = _unifiedHits.asStateFlow()
+
+    private val _unifiedFailures = MutableStateFlow<List<UnifiedSearchFailure>>(emptyList())
+    val unifiedFailures: StateFlow<List<UnifiedSearchFailure>> = _unifiedFailures.asStateFlow()
+
+    /** Source ids the chips narrow the unified rows to; empty means all of them. */
+    private val _unifiedSelected = MutableStateFlow<Set<String>>(emptySet())
+    val unifiedSelected: StateFlow<Set<String>> = _unifiedSelected.asStateFlow()
+
+    private val _unifiedLoading = MutableStateFlow(false)
+    val unifiedLoading: StateFlow<Boolean> = _unifiedLoading.asStateFlow()
+
+    private var unifiedSearchJob: Job? = null
+
+    /** Adds or removes one source from the chips' filter. */
+    fun toggleUnifiedSource(sourceId: String) {
+        _unifiedSelected.value = _unifiedSelected.value.let { selected ->
+            if (sourceId in selected) selected - sourceId else selected + sourceId
+        }
+    }
+
+    fun clearUnifiedSources() {
+        _unifiedSelected.value = emptySet()
+    }
+
+    /**
+     * Asks every configured source for [query] at once, merging each batch as
+     * it arrives. A source that fails or times out costs its own rows only.
+     */
+    private fun runUnifiedSearch(query: String) {
+        unifiedSearchJob?.cancel()
+        _unifiedHits.value = emptyList()
+        _unifiedFailures.value = emptyList()
+        _unifiedSources.value = emptyList()
+        _unifiedLoading.value = true
+        unifiedSearchJob = viewModelScope.launch {
+            val batches = mutableListOf<UnifiedSearchBatch>()
+            val failures = mutableListOf<UnifiedSearchFailure>()
+            try {
+                UnifiedSourceSearch.engine.search(query).collect { event ->
+                    when (event) {
+                        is UnifiedSearchEvent.Started -> _unifiedSources.value = event.sources
+                        is UnifiedSearchEvent.Batch -> {
+                            batches += event.batch
+                            _unifiedHits.value = UnifiedSearchEngine.interleave(batches)
+                        }
+                        is UnifiedSearchEvent.Failed -> {
+                            failures += event.failure
+                            _unifiedFailures.value = failures.toList()
+                        }
+                        is UnifiedSearchEvent.Done -> {
+                            _unifiedHits.value = event.hits
+                            _unifiedFailures.value = event.failures
+                        }
+                    }
+                }
+            } finally {
+                _unifiedLoading.value = false
+            }
+        }
+    }
+
+    private fun clearUnifiedSearch() {
+        unifiedSearchJob?.cancel()
+        _unifiedSources.value = emptyList()
+        _unifiedHits.value = emptyList()
+        _unifiedFailures.value = emptyList()
+        _unifiedLoading.value = false
+    }
 
     /** The words typed into the Addons search before, newest first. */
     val addonSearchHistory: StateFlow<List<String>> = SearchHistory.addonRecent
@@ -2105,6 +2196,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         searchSubmitted = true
         _suggestions.value = emptyList()
         _typeaheadResults.value = emptyList()
+        runUnifiedSearch(term)
         // Picking a suggestion or history item is deliberate, but it must NOT
         // pollute the user's YTMusic server-side search history — only an
         // explicit keyboard submission should do that.  Use the anonymous
@@ -2125,6 +2217,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             _results.value = null
             addonSearchJob?.cancel()
             _addonResults.value = null
+            clearUnifiedSearch()
             // The list is about to switch from search results to recent
             // searches (or the empty state) — without this it can keep
             // whatever scroll offset the results list was left at, landing
@@ -2157,6 +2250,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             return
         }
         runSearch(anonymous = false)
+        runUnifiedSearch(q)
     }
 
     /**

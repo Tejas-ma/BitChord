@@ -279,6 +279,7 @@ import com.music.bitchord.ui.components.QueueActionNoticeHost
 import com.music.bitchord.ui.components.TopBarAccountButton
 import com.music.bitchord.ui.screens.SegmentedControl
 import com.music.bitchord.ui.components.SearchField
+import com.music.bitchord.ui.components.VoiceInputDialog
 import com.music.bitchord.sharedui.resources.Res as SharedRes
 import com.music.bitchord.sharedui.resources.search_hint
 import com.music.bitchord.sharedui.resources.search_addons_hint
@@ -782,6 +783,12 @@ private fun BitChordApp(
     // signal to focus the input field.
     var searchFocusRequested by remember { mutableStateOf(false) }
     val searchFieldFocus = remember { FocusRequester() }
+    // The search field's microphone, and the RECORD_AUDIO ask that must come
+    // before either of its jobs can listen.
+    var voiceOpen by remember { mutableStateOf(false) }
+    val microphonePermission = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission(),
+    ) { granted -> if (granted) voiceOpen = true }
     // Invalidates an in-flight radio lookup when a later play request wins.
     var playRequestGeneration by remember { mutableIntStateOf(0) }
     // Starting radio from the item already playing must not replace that media
@@ -901,6 +908,13 @@ private fun BitChordApp(
     val searchSource by viewModel.searchSource.collectAsStateWithLifecycle()
     val libraryResults by viewModel.libraryResults.collectAsStateWithLifecycle()
     val addonResults by viewModel.addonResults.collectAsStateWithLifecycle()
+    // Every configured source's rows for the committed query, with the source
+    // each came from — see UnifiedSourceSearch.
+    val unifiedSources by viewModel.unifiedSources.collectAsStateWithLifecycle()
+    val unifiedHits by viewModel.unifiedHits.collectAsStateWithLifecycle()
+    val unifiedFailures by viewModel.unifiedFailures.collectAsStateWithLifecycle()
+    val unifiedSelected by viewModel.unifiedSelected.collectAsStateWithLifecycle()
+    val unifiedLoading by viewModel.unifiedLoading.collectAsStateWithLifecycle()
     // Collected rather than read once, so addon rows in search re-dim the
     // moment the quality setting, the connection or the watch's cap moves.
     val addonCeiling = AppSettings.ceilingFor(
@@ -3612,6 +3626,27 @@ private fun BitChordApp(
                                 // suggestions and filters, and a gap reads as a break.
                                 topPadding = topBarHeight() + 4.dp,
                                 showField = false,
+                                unifiedSources = unifiedSources,
+                                unifiedHits = unifiedHits,
+                                unifiedFailures = unifiedFailures,
+                                unifiedSelected = unifiedSelected,
+                                unifiedLoading = unifiedLoading,
+                                onUnifiedToggle = viewModel::toggleUnifiedSource,
+                                onUnifiedClear = viewModel::clearUnifiedSources,
+                                onUnifiedPlay = { hit ->
+                                    viewModel.recordEntity(SearchHistoryEntity(
+                                        id = hit.song.videoId,
+                                        title = hit.song.title,
+                                        subtitle = hit.song.artist.ifEmpty { "" },
+                                        artworkUrl = hit.song.thumbnailUrl,
+                                        entityType = EntityType.TRACK,
+                                    ))
+                                    playRadio(
+                                        hit.song,
+                                        QueueSource(searchLabel, PlaybackSourceType.SEARCH),
+                                    )
+                                },
+                                onUnifiedLongPress = openSongMenu,
                                 // The settings page's own two-state selector, so the
                                 // app has one look for "pick one of these".
                                 sourceSwitcher = {
@@ -3861,6 +3896,17 @@ private fun BitChordApp(
                                 onQueryChange = viewModel::onQueryChange,
                                 onSubmit = viewModel::submitSearch,
                                 focusRequester = searchFieldFocus,
+                                onMic = {
+                                    if (ContextCompat.checkSelfPermission(
+                                            context,
+                                            Manifest.permission.RECORD_AUDIO,
+                                        ) == PackageManager.PERMISSION_GRANTED
+                                    ) {
+                                        voiceOpen = true
+                                    } else {
+                                        microphonePermission.launch(Manifest.permission.RECORD_AUDIO)
+                                    }
+                                },
                                 placeholder = org.jetbrains.compose.resources.stringResource(
                                     if (searchSource == SearchSource.LIBRARY) {
                                         SharedRes.string.search_library_hint
@@ -3871,6 +3917,16 @@ private fun BitChordApp(
                                     },
                                 ),
                             )
+                            if (voiceOpen) {
+                                VoiceInputDialog(
+                                    onDismiss = { voiceOpen = false },
+                                    onQuery = { spoken ->
+                                        voiceOpen = false
+                                        viewModel.onQueryChange(spoken)
+                                        viewModel.submitSearch()
+                                    },
+                                )
+                            }
                         }
                     } else null,
                     actions = {
