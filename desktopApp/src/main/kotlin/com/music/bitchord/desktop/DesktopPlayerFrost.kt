@@ -75,20 +75,22 @@ internal class DesktopPlayerFrost : PlayerFrost {
         still = null
     }
 
+    /** One blur for every panel: the drawer slides, so this is drawn on each of its frames. */
+    private val panelPaint = Paint().apply {
+        imageFilter = ImageFilter.makeBlur(FROST_SIGMA, FROST_SIGMA, FilterTileMode.CLAMP)
+    }
+
     override fun Modifier.frostPanel(shape: Shape, fill: Color): Modifier =
         this.clip(shape)
             .drawBehind {
                 val image = still ?: return@drawBehind
                 val bitmap = Image.makeFromBitmap(image.asSkiaBitmap())
                 drawIntoCanvas { canvas ->
-                    val paint = Paint().apply {
-                        imageFilter = ImageFilter.makeBlur(FROST_SIGMA, FROST_SIGMA, FilterTileMode.CLAMP)
-                    }
                     canvas.nativeCanvas.drawImageRect(
                         bitmap,
                         Rect.makeWH(bitmap.width.toFloat(), bitmap.height.toFloat()),
                         Rect.makeWH(size.width, size.height),
-                        paint,
+                        panelPaint,
                     )
                 }
             }

@@ -83,11 +83,7 @@ internal object DesktopPlayerHost : PlayerHost {
     private val videoQuality = MutableStateFlow(MusicVideoQualityUi())
     override val musicVideoQuality: StateFlow<MusicVideoQualityUi> = videoQuality
 
-    /** The height the listener picked, or null for Auto. */
-    private var heldVideoHeight: Int? = null
-
     override fun setMusicVideoQuality(height: Int?) {
-        heldVideoHeight = height
         videoQuality.value = videoQuality.value.copy(held = height)
     }
 
@@ -101,12 +97,13 @@ internal object DesktopPlayerHost : PlayerHost {
      * 1080. The picker's list comes back with it, off the same response.
      */
     suspend fun videoStream(videoId: String): InnerTubeXResolver.VideoStream? {
-        val height = heldVideoHeight ?: VIDEO_AUTO_HEIGHT
+        val held = videoQuality.value.held
+        val height = held ?: VIDEO_AUTO_HEIGHT
         return runCatching { InnerTubeXResolver.extractVideo(videoId, height) }.getOrNull()
             ?.also { stream ->
                 videoQuality.value = MusicVideoQualityUi(
                     heights = stream.heights,
-                    held = heldVideoHeight,
+                    held = held,
                     activeHeight = stream.height,
                 )
             }
@@ -282,8 +279,11 @@ internal object DesktopPlayerSettings : PlayerSettingsSource {
     override val meteredConnection = MutableStateFlow<Boolean?>(false)
     override val preferUsbDac = MutableStateFlow(false)
     override val prioritizeSpotifyCanvas = MutableStateFlow(false)
+    // No desktop control for this one; the player's mix pulse keeps the phone's default.
     override val reduceAnimation = MutableStateFlow(false)
-    override val reduceDynamicBlur = MutableStateFlow(false)
+    // "Reduce blur" is the window's own setting: the Settings sheet writes
+    // [DesktopAppearanceSettings], and the player's drawers and frost read it here.
+    override val reduceDynamicBlur: StateFlow<Boolean> = DesktopAppearanceSettings.reduceDynamicBlur
     override val showNerdStats = MutableStateFlow(false)
     override val smartAnalysis = MutableStateFlow(SmartAnalysis())
     override val smartFadeEnabled = MutableStateFlow(false)

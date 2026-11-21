@@ -5,6 +5,7 @@ import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.rememberUpdatedState
@@ -81,6 +82,9 @@ internal fun FrostedPlayerFrame(
     content: @Composable BoxScope.() -> Unit,
 ) {
     if (frost != null && !live) {
+        // A player closed with a panel still up never sees [overlayOpen] fall, so the
+        // still is let go here too rather than held for the rest of the session.
+        DisposableEffect(frost) { onDispose { frost.release() } }
         val open by rememberUpdatedState(overlayOpen)
         LaunchedEffect(frost) {
             snapshotFlow { open() }.collectLatest { up ->

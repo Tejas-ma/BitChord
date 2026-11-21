@@ -813,8 +813,11 @@ fun NowPlayingScreen(
     // quality is a panel of its own.
     val videoMode = showsMusicVideo(song)
     var showVideoQuality by remember { mutableStateOf(false) }
-    // The panels' frost: a still of the player, blurred, taken as one opens.
-    val frost = PlayerPlatform.host.rememberPlayerFrost()
+    // The panels' frost: a still of the player, blurred, taken as one opens. None
+    // under "reduce dynamic blur": the panels go opaque, and a recording nothing
+    // reads is the cost that setting exists to remove.
+    val frostOff by PlayerSettings.reduceDynamicBlur.collectAsStateWithLifecycle()
+    val frost = if (frostOff) null else PlayerPlatform.host.rememberPlayerFrost()
     var showAudioPipeline by remember { mutableStateOf(false) }
     var showCast by remember { mutableStateOf(false) }
     var showAudioOutput by remember { mutableStateOf(false) }
@@ -1602,7 +1605,7 @@ fun NowPlayingScreen(
     val playerOverlayOpen: () -> Boolean = {
         showAudioOutput || showLyricsProviders || showAudioPipeline || showCast ||
             showListenTogetherMembers || lyricsOffsetOpen || lyricsShare != null ||
-            playerOverflow.value || MixViewRequest.open
+            (videoMode && showVideoQuality) || playerOverflow.value || MixViewRequest.open
     }
 
     val playerOverlays: @Composable () -> Unit = {

@@ -2518,11 +2518,6 @@ fun BitChordDesktopApp() {
         }
     }
 
-    /**
-     * Adds shelves to the page as they arrive, skipping any heading already on it and any shelf
-     * that repeats one's releases — the phone's `publishHomeShelves`. Recently Played is
-     * [prepend]ed and replaces any stale copy the core feed carried.
-     */
     /** Home's "Top Picks for You": null until built, empty when there was nothing to pick. */
     var topPicks by mutableStateOf<List<TopPick>?>(null)
     var topPicksLoading by mutableStateOf(false)
@@ -2545,20 +2540,25 @@ fun BitChordDesktopApp() {
     }
 
     /**
-     * A Top Picks card: its queue is fetched only now, and loaded before the player is touched, so
-     * a failed request leaves what was playing alone.
+     * A Top Picks card: its queue is fetched only now, named after the card that started it, and
+     * loaded before the player is touched, so a failed request leaves what was playing alone.
      */
     fun openTopPick(pick: TopPick, label: String) {
         scope.launch {
             val songs = TopPicks.queue(pick).getOrNull().orEmpty()
             if (songs.isEmpty()) return@launch
-            playSongs(songs)
+            playSongs(songs, source = DesktopQueueSource(label, PlaybackSourceType.BROWSE))
         }
     }
 
     /** A Find Your Mood tile: that mood's station, steered by the region's own scene words. */
     fun openMood(mood: TopPickMood, title: String) = openTopPick(TopPicks.moodStation(mood), title)
 
+    /**
+     * Adds shelves to the page as they arrive, skipping any heading already on it and any shelf
+     * that repeats one's releases — the phone's `publishHomeShelves`. Recently Played is
+     * [prepend]ed and replaces any stale copy the core feed carried.
+     */
     fun publishHomeShelves(shelves: List<HomeShelf>, prepend: Boolean = false) {
         // The row is built off the feed, so it waits for the first shelves to land.
         if (topPicks == null && !topPicksLoading) loadTopPicks()
