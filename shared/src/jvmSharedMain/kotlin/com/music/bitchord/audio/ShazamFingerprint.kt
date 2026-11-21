@@ -57,6 +57,9 @@ object ShazamFingerprint {
     private const val SPREAD_AGE = 49
     private const val DATA_URI_PREFIX = "data:audio/vnd.shazam.sig;base64,"
 
+    /** The 48-byte header and the two-word band preamble that follow it. */
+    private const val HEADER_BYTES = 56
+
     /**
      * Builds the signature of [samples] — 16 kHz mono, as [PcmRecorder] returns.
      *
@@ -230,6 +233,83 @@ object ShazamFingerprint {
         val crc = Crc32.of(buffer, from = 8, until = buffer.size)
         putU32(buffer, 4, crc)
         return buffer
+    }
+
+    /**
+     * The signature [uri] carries, read back: what [toUri] wrote.
+     *
+     * The header and the CRC are checked rather than assumed, so a payload
+     * mangled on the way — a truncated body, a half-written capture — is refused
+     * instead of decoded into nonsense. A band the writer skipped comes back
+     * empty, and each chunk is placed by its own id rather than by its order.
+     */
+    fun decode(uri: String): Signature {
+        require(uri.startsWith(DATA_URI_PREFIX)) { "Not a Shazam signature URI" }
+        val bytes = Base64.getDecoder().decode(uri.removePrefix(DATA_URI_PREFIX))
+        require(bytes.size >= HEADER_BYTES) { "Signature is shorter than its header" }
+        require(u32(bytes, 0) == 0xcafe2580.toInt() && u32(bytes, 12) == 0x94119c00.toInt()) {
+            "Signature header does not match"
+        }
+        require(u32(bytes, 4) == Crc32.of(bytes, from = 8)) { "Signature CRC does not match" }
+
+        val rate = sampleRateHz(u32(bytes, 28) ushr 27)
+        val bands = List(Band.entries.size) { mutableListOf<Peak>() }
+        var at = HEADER_BYTES
+        while (at + 8 <= bytes.size) {
+            val band = u32(bytes, at) - 0x60030040
+            val size = u32(bytes, at + 4)
+            require(band in bands.indices && size >= 0 && at + 8 + size <= bytes.size) {
+                "Signature holds a band chunk that does not fit"
+            }
+            readPeaks(bytes, at + 8, size, bands[band])
+            at += 8 + size + (4 - size % 4) % 4
+        }
+        return Signature(
+            sampleRateHz = rate,
+            // Written as the count plus a quarter-second of rate; that is what comes back.
+            numberSamples = u32(bytes, 40) - (rate * 0.24f).toInt(),
+            bands = bands,
+        )
+    }
+
+    /** The peaks in one band chunk: a delta per frame, escaped to an absolute one when it overflows. */
+    private fun readPeaks(bytes: ByteArray, from: Int, size: Int, into: MutableList<Peak>) {
+        val end = from + size
+        var at = from
+        var previousPass = 0
+        while (at < end) {
+            val lead = bytes[at].toInt() and 0xFF
+            at += 1
+            val pass = if (lead == 0xFF) {
+                if (at + 4 > end) return
+                u32(bytes, at).also { at += 4 }
+            } else {
+                previousPass + lead
+            }
+            if (at + 4 > end) return
+            into += Peak(
+                fftPassNumber = pass,
+                magnitude = u16(bytes, at),
+                correctedBin = u16(bytes, at + 2),
+            )
+            at += 4
+            previousPass = pass
+        }
+    }
+
+    private fun u16(bytes: ByteArray, at: Int): Int =
+        (bytes[at].toInt() and 0xFF) or ((bytes[at + 1].toInt() and 0xFF) shl 8)
+
+    private fun u32(bytes: ByteArray, at: Int): Int =
+        u16(bytes, at) or (u16(bytes, at + 2) shl 16)
+
+    private fun sampleRateHz(id: Int): Int = when (id) {
+        1 -> 8_000
+        2 -> 11_025
+        4 -> 32_000
+        5 -> 44_100
+        6 -> 48_000
+        else -> SAMPLE_RATE
     }
 
     private fun sampleRateId(rate: Int): Int = when (rate) {

@@ -3,6 +3,7 @@ package com.music.bitchord.audio
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
+import org.junit.Assert.fail
 import org.junit.Test
 import java.util.zip.CRC32
 import kotlin.math.PI
@@ -10,35 +11,9 @@ import kotlin.math.sin
 
 class ShazamFingerprintTest {
 
-    /**
-     * Something with the texture of music rather than a test tone: notes with
-     * hard attacks, so their spectra change sharply from one frame to the next.
-     *
-     * A steady sine produces no peaks at all, by design: the spread spectrum at
-     * bin-1 already covers the peak, so a test tone cannot stand in for a
-     * recording here. The picker is looking for onsets.
-     */
-    private fun mixture(): ShortArray {
-        val hz = doubleArrayOf(320.0, 440.0, 660.0, 880.0, 1_100.0, 1_320.0, 1_760.0, 2_200.0, 2_640.0, 3_520.0, 4_180.0)
-        val samples = ShortArray(SAMPLE_RATE * 5)
-        val noteLength = SAMPLE_RATE / 3
-        for (i in samples.indices) {
-            val note = i / noteLength
-            val at = i % noteLength
-            val frequency = hz[note % hz.size]
-            // 60 ms attack-decay over a sustain: an onset the picker can see.
-            val envelope = when {
-                at < 900 -> at / 900.0 * 12_000
-                else -> 12_000.0 * (1.0 - at.toDouble() / noteLength) * 0.5
-            }
-            samples[i] = (envelope * sin(2.0 * PI * frequency * i / SAMPLE_RATE)).toInt().toShort()
-        }
-        return samples
-    }
-
     @Test
     fun `notes with attacks produce peaks in the bands they fall in`() {
-        val signature = ShazamFingerprint.signature(mixture())
+        val signature = ShazamFingerprint.signature(onsetRichMixture())
         assertFalse(signature.isEmpty)
         // The mixture spans 320 Hz to 4.2 kHz, so peaks must survive at both ends
         // of the range the picker keeps.
@@ -70,7 +45,7 @@ class ShazamFingerprintTest {
 
     @Test
     fun `the uri is a base64 shazam signature with a valid header and crc`() {
-        val uri = ShazamFingerprint.signature(mixture()).toUri()
+        val uri = ShazamFingerprint.signature(onsetRichMixture()).toUri()
         assertTrue(uri.startsWith("data:audio/vnd.shazam.sig;base64,"))
         val bytes = java.util.Base64.getDecoder()
             .decode(uri.removePrefix("data:audio/vnd.shazam.sig;base64,"))
@@ -92,7 +67,7 @@ class ShazamFingerprintTest {
 
     @Test
     fun `bands are written in order with the reference band ids`() {
-        val uri = ShazamFingerprint.signature(mixture()).toUri()
+        val uri = ShazamFingerprint.signature(onsetRichMixture()).toUri()
         val bytes = java.util.Base64.getDecoder()
             .decode(uri.removePrefix("data:audio/vnd.shazam.sig;base64,"))
 
@@ -111,9 +86,66 @@ class ShazamFingerprintTest {
 
     @Test
     fun `peaks are written in non-decreasing frame order per band`() {
-        val signature = ShazamFingerprint.signature(mixture())
+        val signature = ShazamFingerprint.signature(onsetRichMixture())
         signature.bands.forEach { peaks ->
             assertTrue(peaks.zipWithNext().all { (a, b) -> b.fftPassNumber >= a.fftPassNumber })
+        }
+    }
+
+    @Test
+    fun `the base64 payload decodes back to the bands that were written`() {
+        val written = ShazamFingerprint.signature(onsetRichMixture())
+        val read = ShazamFingerprint.decode(written.toUri())
+
+        assertEquals(written.sampleRateHz, read.sampleRateHz)
+        assertEquals(written.numberSamples, read.numberSamples)
+        // Every peak, in its band, with the frame and bin it was written at.
+        assertEquals(written.bands, read.bands)
+        assertTrue(read.bands.sumOf { it.size } > 0)
+    }
+
+    @Test
+    fun `a frame gap too wide for one byte is escaped and comes back at its own frame`() {
+        val written = ShazamFingerprint.Signature(
+            sampleRateHz = SAMPLE_RATE,
+            numberSamples = SAMPLE_RATE * 5,
+            bands = listOf(
+                listOf(
+                    ShazamFingerprint.Peak(fftPassNumber = 0, magnitude = 100, correctedBin = 24_000),
+                    ShazamFingerprint.Peak(fftPassNumber = 1_000, magnitude = 65_535, correctedBin = 7),
+                ),
+                emptyList(),
+                emptyList(),
+                emptyList(),
+            ),
+        )
+
+        assertEquals(written, ShazamFingerprint.decode(written.toUri()))
+    }
+
+    @Test
+    fun `an empty signature round-trips to four empty bands`() {
+        val written = ShazamFingerprint.signature(ShortArray(SAMPLE_RATE * 5))
+        val read = ShazamFingerprint.decode(written.toUri())
+
+        assertEquals(4, read.bands.size)
+        assertTrue(read.isEmpty)
+        assertEquals(SAMPLE_RATE * 5, read.numberSamples)
+    }
+
+    @Test
+    fun `a payload whose crc no longer matches is refused`() {
+        val prefix = "data:audio/vnd.shazam.sig;base64,"
+        val uri = ShazamFingerprint.signature(onsetRichMixture()).toUri()
+        val bytes = java.util.Base64.getDecoder().decode(uri.removePrefix(prefix))
+        bytes[bytes.size - 1] = (bytes.last().toInt() xor 0x01).toByte()
+
+        val corrupted = prefix + java.util.Base64.getEncoder().encodeToString(bytes)
+        try {
+            ShazamFingerprint.decode(corrupted)
+            fail("A signature with a broken CRC decoded")
+        } catch (expected: IllegalArgumentException) {
+            assertTrue(expected.message.orEmpty().contains("CRC"))
         }
     }
 
