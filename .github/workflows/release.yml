@@ -6,6 +6,10 @@ name: Release
 # jpackage through Compose Desktop, plus the AppImage wrapper and the portable zip
 # the build defines itself. The APK is the same assembleProdRelease that
 # android.yml publishes, signed with the same keystore.
+#
+# Each platform job stands on its own: skipAndroid/skipDesktop keep the other
+# half of the build out of it, and the publish job attaches whatever succeeded
+# instead of being a single all-or-nothing gate.
 
 on:
   push:
@@ -25,37 +29,39 @@ jobs:
   # Fail on a broken tag before spending three runners on packaging.
   test:
     name: Test
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Set up JDK ${{ env.JAVA_VERSION }}
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           java-version: ${{ env.JAVA_VERSION }}
           distribution: temurin
 
-      - uses: gradle/actions/setup-gradle@v4
+      - uses: gradle/actions/setup-gradle@v5
 
       - run: chmod +x gradlew
 
       - name: Desktop tests
-        run: ./gradlew :desktopApp:test --console=plain
+        run: ./gradlew :desktopApp:test -Pbitchord.skipAndroid=true --console=plain
 
   windows:
     name: Windows · exe, msi, portable zip
     needs: test
-    runs-on: windows-latest
+    runs-on: windows-2025
+    timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Set up JDK ${{ env.JAVA_VERSION }}
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           java-version: ${{ env.JAVA_VERSION }}
           distribution: temurin
 
-      - uses: gradle/actions/setup-gradle@v4
+      - uses: gradle/actions/setup-gradle@v5
 
       - name: Read the version from the tag
         id: version
@@ -77,28 +83,38 @@ jobs:
           [ -n "$LISTEN_TOGETHER_SERVER" ] && echo "LISTEN_TOGETHER_SERVER=$LISTEN_TOGETHER_SERVER" >> local.properties
           exit 0
 
-      # packageMsi drives WiX's candle/light; the runner ships WiX 3 outside PATH.
-      - name: Put WiX 3 on PATH
+      # jpackage's msi drives WiX 3's candle/light, which the runner does not
+      # guarantee on PATH; fetch the release zip into RUNNER_TEMP when missing.
+      - name: Ensure WiX Toolset 3 is on PATH
         shell: pwsh
         run: |
-          $wix = Get-ChildItem "C:\Program Files (x86)" -Filter "WiX Toolset*" -Directory -ErrorAction SilentlyContinue |
-            Select-Object -First 1
-          if (-not $wix) {
-            choco install wixtoolset --no-progress -y
-            $wix = Get-ChildItem "C:\Program Files (x86)" -Filter "WiX Toolset*" -Directory | Select-Object -First 1
+          if (Get-Command candle.exe -ErrorAction SilentlyContinue) {
+            Write-Host 'WiX already on PATH'
+            exit 0
           }
-          "$($wix.FullName)\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
-          if (-not (Get-Command candle.exe -ErrorAction SilentlyContinue)) {
-            throw "candle.exe is still not on PATH; packageMsi cannot run"
+          $zip = Join-Path $env:RUNNER_TEMP 'wix314-binaries.zip'
+          if (-not (Test-Path $zip)) {
+            Invoke-WebRequest -UseBasicParsing `
+              -Uri 'https://github.com/wixtoolset/wix3/releases/download/wix3141rtm/wix314-binaries.zip' `
+              -OutFile $zip
+          }
+          $dir = Join-Path $env:RUNNER_TEMP 'wix314'
+          Expand-Archive -Path $zip -DestinationPath $dir -Force
+          $dir | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          if (-not (Get-ChildItem $dir -Filter 'candle.exe' -Recurse)) {
+            throw 'candle.exe was not found in wix314-binaries.zip'
           }
 
       # packageExe and packageMsi build the natives (Automix analyser, SMTC) first and
       # log which features the installer will be missing; windowsPortable zips the
       # same app folder with a launcher batch file.
       - name: Build the installers
-        run: >
-          ./gradlew :desktopApp:packageExe :desktopApp:packageMsi :desktopApp:windowsPortable
-          -Pbitchord.version=${{ steps.version.outputs.value }} --console=plain
+        shell: pwsh
+        run: |
+          Remove-Item Env:ANDROID_HOME -ErrorAction SilentlyContinue
+          Remove-Item Env:ANDROID_SDK_ROOT -ErrorAction SilentlyContinue
+          .\gradlew.bat :desktopApp:packageExe :desktopApp:packageMsi :desktopApp:windowsPortable `
+            -Pbitchord.skipAndroid=true -Pbitchord.version=${{ steps.version.outputs.value }} --console=plain
 
       # The names BUILDING-WINDOWS.md documents for the release assets. jpackage
       # emits BitChord-<version>.exe / .msi, and the MSI carries the four-part
@@ -120,11 +136,12 @@ jobs:
           cp desktopApp/build/distributions/*portable.zip out/ 2>/dev/null || true
           ls -l out
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: windows
           path: out/*
           if-no-files-found: error
+          compression-level: 0
 
   macos:
     name: macOS · ${{ matrix.arch }} dmg
@@ -138,16 +155,17 @@ jobs:
           - runner: macos-15-intel
             arch: x64
     runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Set up JDK ${{ env.JAVA_VERSION }}
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           java-version: ${{ env.JAVA_VERSION }}
           distribution: temurin
 
-      - uses: gradle/actions/setup-gradle@v4
+      - uses: gradle/actions/setup-gradle@v5
 
       - name: Read the version from the tag
         id: version
@@ -170,6 +188,7 @@ jobs:
       - name: Build the disk image
         run: >-
           ./gradlew :desktopApp:packageDmg
+          -Pbitchord.skipAndroid=true
           -Pbitchord.version=${{ steps.version.outputs.value }} --console=plain
 
       - name: Collect
@@ -181,7 +200,7 @@ jobs:
           done
           ls -l out
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: macos-${{ matrix.arch }}
           path: out/*
@@ -190,17 +209,18 @@ jobs:
   linux:
     name: Linux · deb, rpm, AppImage
     needs: test
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Set up JDK ${{ env.JAVA_VERSION }}
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           java-version: ${{ env.JAVA_VERSION }}
           distribution: temurin
 
-      - uses: gradle/actions/setup-gradle@v4
+      - uses: gradle/actions/setup-gradle@v5
 
       - name: Read the version from the tag
         id: version
@@ -233,6 +253,7 @@ jobs:
       - name: Build the packages
         run: >-
           ./gradlew :desktopApp:packageDeb :desktopApp:packageRpm :desktopApp:createDistributable
+          -Pbitchord.skipAndroid=true
           -Pbitchord.version=${{ steps.version.outputs.value }} --console=plain
 
       - name: Wrap the AppImage
@@ -250,7 +271,7 @@ jobs:
           cp desktopApp/build/distributions/*.AppImage out/ 2>/dev/null || true
           ls -l out
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: linux
           path: out/*
@@ -259,17 +280,18 @@ jobs:
   android:
     name: Android · release APK
     needs: test
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Set up JDK ${{ env.JAVA_VERSION }}
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           java-version: ${{ env.JAVA_VERSION }}
           distribution: temurin
 
-      - uses: gradle/actions/setup-gradle@v4
+      - uses: gradle/actions/setup-gradle@v5
 
       # Same optional keys the desktop jobs write, plus the keystore android.yml
       # signs with. Without the keystore secrets the build still runs and produces
@@ -282,6 +304,7 @@ jobs:
           KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
         run: |
           : > local.properties
+          echo "sdk.dir=${ANDROID_HOME:-$ANDROID_SDK_ROOT}" >> local.properties
           [ -n "$LASTFM_API_KEY" ] && echo "LASTFM_API_KEY=$LASTFM_API_KEY" >> local.properties
           [ -n "$LASTFM_SECRET" ] && echo "LASTFM_SECRET=$LASTFM_SECRET" >> local.properties
           [ -n "$LISTEN_TOGETHER_SERVER" ] && echo "LISTEN_TOGETHER_SERVER=$LISTEN_TOGETHER_SERVER" >> local.properties
@@ -305,7 +328,7 @@ jobs:
       - run: chmod +x gradlew
 
       - name: Build the release APK
-        run: ./gradlew :app:assembleProdRelease --console=plain
+        run: ./gradlew :app:assembleProdRelease -Pbitchord.skipDesktop=true --console=plain
 
       # Gradle emits a universal APK plus one per ABI. Both the signed and the
       # unsigned names end in -release.apk / -release-unsigned.apk, so the ABI is
@@ -320,18 +343,27 @@ jobs:
           done
           ls -l out
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: android
           path: out/*.apk
           if-no-files-found: error
+          compression-level: 0
 
+      - name: Remove the signing material
+        if: always()
+        run: rm -f bitchord-release.jks keystore.properties
+
+  # Attaches whatever was built. `if: always()` means a broken macOS or Linux job
+  # cannot stop a finished Windows installer or Android APK from being published;
+  # only a failed test job (no platform build ran at all) skips it.
   publish:
     name: Attach to the release
-    needs: [windows, macos, linux, android]
-    runs-on: ubuntu-latest
+    needs: [test, windows, macos, linux, android]
+    if: always() && needs.test.result == 'success'
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v7
         with:
           path: artifacts
           merge-multiple: true
@@ -339,10 +371,13 @@ jobs:
       - name: List what will be published
         run: ls -lR artifacts
 
-      - uses: softprops/action-gh-release@v2
+      - name: Fail unless at least one artifact was built
+        run: test -n "$(find artifacts -type f -print -quit)"
+
+      - uses: softprops/action-gh-release@v3
         with:
           files: artifacts/*
-          fail_on_unmatched_files: true
+          fail_on_unmatched_files: false
           # A tag with a suffix (v1.9.1-beta.1) is a pre-release.
           prerelease: ${{ contains(github.ref_name, '-') }}
           body: |

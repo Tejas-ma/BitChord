@@ -1,56 +1,201 @@
-name: Android Release APK
+name: Android APK
+
+# Builds the phone APK on a machine that is not asked to configure the desktop
+# modules: -Pbitchord.skipDesktop=true leaves :desktopApp and :desktopUi out of
+# the build, so a desktop toolchain that is not installed cannot fail this job.
+#
+# prodRelease is signed only when every keystore secret is present and the run
+# is not a pull request. Anything else falls back to the unsigned devDebug APK
+# instead of failing on a key the fork does not have.
 
 on:
   push:
-    branches: [main]
+    branches: [Devlopment, main]
+    paths:
+      - 'app/**'
+      - 'tv/**'
+      - 'wearos/**'
+      - 'shared/**'
+      - 'sharedUi/**'
+      - 'native/**'
+      - 'build.gradle.kts'
+      - 'settings.gradle.kts'
+      - 'gradle.properties'
+      - 'gradle/**'
+      - 'gradlew'
+      - 'gradlew.bat'
+      - '.github/workflows/android.yml'
+  pull_request:
+    branches: [Devlopment, main]
+    paths:
+      - 'app/**'
+      - 'tv/**'
+      - 'wearos/**'
+      - 'shared/**'
+      - 'sharedUi/**'
+      - 'native/**'
+      - 'build.gradle.kts'
+      - 'settings.gradle.kts'
+      - 'gradle.properties'
+      - 'gradle/**'
+      - 'gradlew'
+      - 'gradlew.bat'
+      - '.github/workflows/android.yml'
   workflow_dispatch:
+    inputs:
+      build_variant:
+        description: 'Build variant'
+        type: choice
+        options: [devDebug, prodRelease]
+        default: devDebug
+      run_tests:
+        description: 'Run the unit tests first'
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  TMPDIR: ${{ runner.temp }}
+  GRADLE_OPTS: -Dorg.gradle.jvmargs=-Xmx3584m -Dkotlin.daemon.jvm.options=-Xmx2048m -Djava.net.preferIPv4Stack=true
 
 jobs:
-  build-prod-release:
-    runs-on: ubuntu-latest
+  apk:
+    name: Android · ${{ inputs.build_variant || 'devDebug' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
 
     steps:
-    - name: Checkout Repository
-      uses: actions/checkout@v4
+      - name: Checkout repository
+        uses: actions/checkout@v6
 
-    - name: Set up JDK 17
-      uses: actions/setup-java@v4
-      with:
-        java-version: '17'
-        distribution: 'temurin'
-        cache: gradle
+      - name: Set up JDK 21
+        uses: actions/setup-java@v5
+        with:
+          java-version: '21'
+          distribution: temurin
 
-    - name: Setup Secrets (Keystore & local.properties)
-      run: |
-        echo "LASTFM_API_KEY=${{ secrets.LASTFM_API_KEY }}" > local.properties
-        echo "LASTFM_SECRET=${{ secrets.LASTFM_SECRET }}" >> local.properties
-        echo "LISTEN_TOGETHER_SERVER=${{ secrets.LISTEN_TOGETHER_SERVER }}" >> local.properties
+      - uses: gradle/actions/setup-gradle@v5
 
-        echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > bitchord-release.jks
-        {
-          echo "storeFile=bitchord-release.jks"
-          echo "storePassword=${{ secrets.KEYSTORE_PASSWORD }}"
-          echo "keyAlias=${{ secrets.KEY_ALIAS }}"
-          echo "keyPassword=${{ secrets.KEY_PASSWORD }}"
-        } > keystore.properties
+      - name: Grant execute permission for gradlew
+        run: chmod +x gradlew
 
-    - name: Grant execute permission for gradlew
-      run: chmod +x gradlew
+      - name: Accept the Android SDK licenses
+        run: |
+          sdkmanager="${ANDROID_HOME:-$ANDROID_SDK_ROOT}/cmdline-tools/latest/bin/sdkmanager"
+          if [ -x "$sdkmanager" ]; then
+            yes | "$sdkmanager" --licenses > /dev/null
+          fi
+          exit 0
 
-    - name: Build Signed Prod Release APK
-      run: ./gradlew assembleProdRelease
+      # sdk.dir is written explicitly: the image sets ANDROID_HOME, but a
+      # local.properties that names it survives any wrapper that scrubs the
+      # environment, and settings.gradle.kts reads it first.
+      - name: Write local.properties
+        env:
+          LASTFM_API_KEY: ${{ secrets.LASTFM_API_KEY }}
+          LASTFM_SECRET: ${{ secrets.LASTFM_SECRET }}
+        run: |
+          : > local.properties
+          echo "sdk.dir=${ANDROID_HOME:-$ANDROID_SDK_ROOT}" >> local.properties
+          [ -n "$LASTFM_API_KEY" ] && echo "LASTFM_API_KEY=$LASTFM_API_KEY" >> local.properties
+          [ -n "$LASTFM_SECRET" ] && echo "LASTFM_SECRET=$LASTFM_SECRET" >> local.properties
+          exit 0
 
-    - name: Upload APK Artifact
-      uses: actions/upload-artifact@v4
-      with:
-        name: bitchord-prod-release-signed
-        path: app/build/outputs/apk/prod/release/*.apk
+      # Decide before writing anything: a PR, or a fork without secrets, must
+      # never be pointed at assembleProdRelease with no key to sign it.
+      - name: Decide the variant and whether it can be signed
+        id: variant
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+          REQUESTED: ${{ inputs.build_variant || 'devDebug' }}
+          EVENT: ${{ github.event_name }}
+        run: |
+          signable=true
+          for value in "$KEYSTORE_BASE64" "$KEYSTORE_PASSWORD" "$KEY_ALIAS" "$KEY_PASSWORD"; do
+            [ -n "$value" ] || signable=false
+          done
+          if [ "$REQUESTED" = "prodRelease" ] && [ "$signable" = "true" ] && [ "$EVENT" != "pull_request" ]; then
+            {
+              echo "task=:app:assembleProdRelease"
+              echo "path=app/build/outputs/apk/prod/release"
+              echo "name=bitchord-prod-release-signed"
+              echo "signed=true"
+            } >> "$GITHUB_OUTPUT"
+          else
+            if [ "$REQUESTED" = "prodRelease" ]; then
+              echo "::warning::prodRelease needs all four keystore secrets and a non-PR run — building devDebug instead."
+            fi
+            {
+              echo "task=:app:assembleDevDebug"
+              echo "path=app/build/outputs/apk/dev/debug"
+              echo "name=bitchord-dev-debug"
+              echo "signed=false"
+            } >> "$GITHUB_OUTPUT"
+          fi
 
-    # Built by the same assembleProdRelease, with the same key. The watch app
-    # only pairs with a phone app signed by the same key, so a prod watch APK
-    # for these phone builds can only come from here, never a local build.
-    - name: Upload Wear OS APK Artifact
-      uses: actions/upload-artifact@v4
-      with:
-        name: bitchord-wear-prod-release-signed
-        path: wearos/build/outputs/apk/prod/release/*.apk
+      - name: Write the release keystore
+        if: steps.variant.outputs.signed == 'true'
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: |
+          echo "$KEYSTORE_BASE64" | base64 -d > bitchord-release.jks
+          {
+            echo "storeFile=bitchord-release.jks"
+            echo "storePassword=$KEYSTORE_PASSWORD"
+            echo "keyAlias=$KEY_ALIAS"
+            echo "keyPassword=$KEY_PASSWORD"
+          } > keystore.properties
+
+      - name: Unit tests
+        if: inputs.run_tests != false
+        run: >
+          ./gradlew :app:testDevDebugUnitTest
+          -Pbitchord.skipDesktop=true --no-daemon --max-workers=2 --stacktrace
+
+      - name: Build ${{ steps.variant.outputs.name }}
+        run: >
+          ./gradlew ${{ steps.variant.outputs.task }}
+          -Pbitchord.skipDesktop=true --no-daemon --max-workers=2 --stacktrace
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v6
+        with:
+          name: ${{ steps.variant.outputs.name }}
+          path: ${{ steps.variant.outputs.path }}/*.apk
+          if-no-files-found: error
+          compression-level: 0
+
+      # Produced by the same assembleProdRelease, signed with the same key: the
+      # watch app only pairs with a phone app signed by the same key.
+      - name: Upload Wear OS APK
+        if: steps.variant.outputs.signed == 'true'
+        uses: actions/upload-artifact@v6
+        with:
+          name: bitchord-wear-prod-release-signed
+          path: wearos/build/outputs/apk/prod/release/*.apk
+          if-no-files-found: warn
+          compression-level: 0
+
+      - name: Upload test reports
+        if: failure()
+        uses: actions/upload-artifact@v6
+        with:
+          name: android-test-reports
+          path: app/build/reports/tests/
+          if-no-files-found: ignore
+
+      - name: Remove the signing material
+        if: always()
+        run: rm -f bitchord-release.jks keystore.properties

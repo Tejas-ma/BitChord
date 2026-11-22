@@ -7,7 +7,10 @@ import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 val appVersion: String = providers.gradleProperty("bitchord.version").orNull
     ?.removePrefix("v")
     ?.takeIf { it.isNotBlank() }
-    ?: "1.8-beta1"
+    // The version the phone and the release tags carry, so an unversioned desktop build does not
+    // call itself a beta of a release that has already shipped.
+    ?: (rootProject.extra["bitchordVersionName"] as? String)?.takeIf { it.isNotBlank() }
+    ?: "1.9.1"
 
 /** Which platform this build is *for*, which is the host unless told otherwise. */
 val hostIsWindows = System.getProperty("os.name").contains("Windows", ignoreCase = true)
@@ -23,11 +26,18 @@ val targetOs: String = (providers.gradleProperty("bitchord.target").orNull ?: wh
 val hostArch = System.getProperty("os.arch").lowercase()
 val isArm64 = hostArch == "aarch64" || hostArch == "arm64"
 
-// Windows installer metadata requires MAJOR.MINOR.BUILD even though the app's public version is
-// intentionally displayed without a patch number (1.7 rather than 1.7.0).
-// The build number is the desktop version code; it also keeps "-beta1" out of the numeric installer version.
+// Windows installer metadata requires MAJOR.MINOR.BUILD, each field inside its own range, even
+// though the app's public version is intentionally displayed without a patch number (1.7 rather
+// than 1.7.0). The build number is the desktop version code; it also keeps "-beta1" out of the
+// numeric installer version. A one-part, two-part or suffixed version ("1.9", "v1.9.1-beta1")
+// normalises to the same MAJOR.MINOR.CODE shape instead of producing a malformed one.
 val desktopVersionCode = 29
-val nativePackageVersion = appVersion.substringBefore('-').split('.').take(2).joinToString(".") + ".$desktopVersionCode"
+val nativePackageVersion: String = run {
+    val fields = appVersion.substringBefore('-').split('.')
+    val major = fields.getOrNull(0)?.toIntOrNull()?.coerceIn(0, 255) ?: 1
+    val minor = fields.getOrNull(1)?.toIntOrNull()?.coerceIn(0, 255) ?: 0
+    "$major.$minor.${desktopVersionCode.coerceIn(0, 65_535)}"
+}
 
 // FFmpeg decodes audio; see DesktopAudioDecoder.
 val javacppVersion = "1.5.12"
@@ -246,6 +256,11 @@ data class WindowsCompiler(val compiler: File?, val ninja: File?) {
 
 fun windowsCompiler(crossing: Boolean): WindowsCompiler {
     if (targetOs != "windows") return WindowsCompiler(null, null)
+    // A native Windows host goes to Visual Studio unless MinGW is asked for explicitly. A g++
+    // that happens to be on PATH must not be taken for one: MinGW cannot build C++/WinRT, so
+    // choosing it silently drops SMTC and the frame bridge from an otherwise fine build.
+    val requested = crossing || (providers.gradleProperty("bitchord.useMingw").orNull?.toBoolean() ?: false)
+    if (!requested) return WindowsCompiler(null, null)
     val gxx = findOnPath(if (crossing) "x86_64-w64-mingw32-g++" else "g++")
     val ninja = findOnPath("ninja")
     return if (gxx != null && ninja != null) WindowsCompiler(gxx, ninja) else WindowsCompiler(null, null)
@@ -308,6 +323,9 @@ val buildAnalysisNative by tasks.registering {
                         // a developer prompt.
                     }
                     add("-DCMAKE_BUILD_TYPE=Release")
+                    // CMake 4 aborts a project whose minimum is older than 3.5; this lets an
+                    // older CMakeLists configure without editing it.
+                    add("-DCMAKE_POLICY_VERSION_MINIMUM=3.5")
                     if (crossing) add("-DCMAKE_TOOLCHAIN_FILE=${toolchain.absolutePath}")
                 },
             )
@@ -370,6 +388,8 @@ val buildWindowNative by tasks.registering {
                             ),
                         )
                     }
+                    // Same floor as the analyser: CMake 4.x refuses an older minimum outright.
+                    add("-DCMAKE_POLICY_VERSION_MINIMUM=3.5")
                     if (crossing) add("-DCMAKE_TOOLCHAIN_FILE=${toolchain.absolutePath}")
                 },
             )
@@ -417,10 +437,14 @@ val windowsNatives by tasks.registering {
         logger.lifecycle(
             buildString {
                 appendLine("native libraries for $target:")
+                // Visual Studio puts its output in Release\, MinGW and CMake on Unix put it at the
+                // top level: either is this build's own output.
+                fun holds(name: String, dir: File): Boolean =
+                    dir.resolve(name).isFile || dir.resolve("Release").resolve(name).isFile
                 for ((name, what, dir) in entries) {
-                    appendLine("  $name — $what — ${if (dir.resolve(name).isFile) "built" else "MISSING"}")
+                    appendLine("  $name — $what — ${if (holds(name, dir)) "built" else "MISSING"}")
                 }
-                if (target == "windows" && entries.any { (name, _, dir) -> !dir.resolve(name).isFile }) {
+                if (target == "windows" && entries.any { (name, _, dir) -> !holds(name, dir) }) {
                     appendLine("  A missing library is not a broken build — the app falls back to Compose's")
                     appendLine("  frame, Java Sound, and generic media handling. See desktopApp/BUILDING-WINDOWS.md.")
                 }
@@ -434,12 +458,19 @@ tasks.matching { it.name == "packageExe" || it.name == "packageMsi" || it.name =
 
 tasks.named<ProcessResources>("processResources") {
     dependsOn(buildAnalysisNative, buildWindowNative)
+    // Visual Studio is a multi-config generator and writes its libraries into Release\ beside the
+    // Debug tree, so both layouts are matched and every library flattened into native/ — the
+    // loader asks for it by bare name and does not care which generator produced it.
     from(analysisNativeDir) {
-        include("*.so", "*.dll", "*.dylib")
+        include("*.so", "*.dll", "*.dylib", "Release/*.dll")
+        includeEmptyDirs = false
+        eachFile { path = "native/$name" }
         into("native")
     }
     from(windowNativeDir) {
-        include("*.dll")
+        include("*.dll", "Release/*.dll")
+        includeEmptyDirs = false
+        eachFile { path = "native/$name" }
         into("native")
     }
     // The Automix models, taken from the Android module rather than copied into this one.
@@ -456,7 +487,13 @@ tasks.named<Jar>("jar") {
     val kotlinClasses = tasks.named<org.jetbrains.kotlin.gradle.tasks.KotlinCompile>("compileKotlin")
     dependsOn(kotlinClasses)
     from(kotlinClasses.flatMap { it.destinationDirectory })
+    // Kotlin 2.3.20 also contributes the same class files through the default source set, and two
+    // copies of every entry make the jar task fail rather than warn.
+    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
 }
+
+/** The entry point the launcher, the packages and the dev runner all start. */
+val composeMainClass = "com.music.bitchord.desktop.MainKt"
 
 /** A Windows build that can be assembled here, since an installer cannot be. */
 val windowsPortableDir = layout.buildDirectory.dir("windows-portable")
@@ -543,7 +580,9 @@ val windowsPortableAssemble by tasks.registering {
         }
         check(problems.isEmpty()) { "windowsPortable: " + problems.joinToString("; ") }
 
-        val analyser = File(analysisNativeDir.get().asFile, "bitchord_analysis.dll").isFile
+        val analysisOutput = analysisNativeDir.get().asFile
+        val analyser = File(analysisOutput, "bitchord_analysis.dll").isFile ||
+            File(analysisOutput, "Release/bitchord_analysis.dll").isFile
         logger.lifecycle(
             if (analyser) {
                 "windowsPortable: verified — Compose runtime, Windows renderer, Windows FFmpeg, Automix analyser."
@@ -564,8 +603,6 @@ val windowsPortable by tasks.registering(Zip::class) {
     destinationDirectory.set(layout.buildDirectory.dir("distributions"))
     doLast { logger.lifecycle("windowsPortable: ${archiveFile.get().asFile.absolutePath}") }
 }
-
-val composeMainClass = "com.music.bitchord.desktop.MainKt"
 
 compose.desktop {
     application {

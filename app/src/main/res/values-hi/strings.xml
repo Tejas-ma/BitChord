@@ -1460,4 +1460,7 @@
     <string name="diwali_title">BitChord की ओर से दीपावली की शुभकामनाएँ</string>
     <string name="diwali_subtitle">रोशनी का यह त्योहार आपके घर को खुशियों से और आपके दिनों को संगीत से भर दे।</string>
     <string name="diwali_cta">चलो जश्न मनाएँ</string>
+    <string name="automix_overview">ऑटोमिक्स अवलोकन</string>
+    <string name="lan_sync">LAN पर प्लेबैक और क्यू सिंक</string>
+    <string name="lan_sync_subtitle">इस वाई-फ़ाई पर अपने अन्य साइन-इन डिवाइस को फ़ॉलो करें, बिना पेयरिंग</string>
 </resources>

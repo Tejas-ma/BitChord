@@ -1440,4 +1440,10 @@
     <string name="bit_perfect_status_inexact">%1$s · ไม่ตรงทุกบิต: แหล่งนี้ไม่ใช่ PCM แบบไม่สูญเสียคุณภาพ</string>
     <string name="bit_perfect_status_waiting">กำลังรอแทร็กแบบไม่สูญเสียคุณภาพบนเอาต์พุตที่รองรับ</string>
     <string name="bit_perfect_status_unavailable">ไม่พร้อมใช้งานสำหรับแทร็กนี้ (%1$s)</string>
+    <string name="automix_overview">ภาพรวม Automix</string>
+    <string name="lan_sync">เล่นและซิงก์คิวผ่าน LAN</string>
+    <string name="lan_sync_subtitle">ติดตามอุปกรณ์อื่นที่ลงชื่อเข้าใช้บน Wi-Fi นี้ โดยไม่ต้องจับคู่</string>
+    <string name="diwali_title">BitChord ขออวยพรให้มีความสุขในเทศกาลดิวาลี</string>
+    <string name="diwali_subtitle">ขอให้เทศกาลแห่งแสงนี้เติมเต็มบ้านด้วยความสุข และเติมวันคืนด้วยเสียงเพลง</string>
+    <string name="diwali_cta">ฉลองกันเลย</string>
 </resources>

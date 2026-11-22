@@ -1,0 +1,229 @@
+name: Windows EXE
+
+# The Windows installers, built on their own runner with the Android modules
+# left out (-Pbitchord.skipAndroid=true), so an Android SDK that is present but
+# unusable cannot fail a desktop build. ANDROID_HOME is pointed at a path that
+# does not exist for the same reason: settings.gradle.kts must not find an SDK
+# and pull :app, :tv and :wearos into a Gradle build that has no use for them.
+
+on:
+  push:
+    branches: [Devlopment, main]
+    paths:
+      - 'desktopApp/**'
+      - 'desktopUi/**'
+      - 'shared/**'
+      - 'native/**'
+      - 'build.gradle.kts'
+      - 'settings.gradle.kts'
+      - 'gradle.properties'
+      - 'gradle/**'
+      - 'gradlew'
+      - 'gradlew.bat'
+      - '.github/workflows/windows-exe.yml'
+  pull_request:
+    branches: [Devlopment, main]
+    paths:
+      - 'desktopApp/**'
+      - 'desktopUi/**'
+      - 'shared/**'
+      - 'native/**'
+      - 'build.gradle.kts'
+      - 'settings.gradle.kts'
+      - 'gradle.properties'
+      - 'gradle/**'
+      - 'gradlew'
+      - 'gradlew.bat'
+      - '.github/workflows/windows-exe.yml'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to stamp (defaults to the tag or bitchordVersionName)'
+        required: false
+        type: string
+      run_tests:
+        description: 'Run the JVM tests before packaging'
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-exe-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Deliberately absent: the desktop build must not configure the Android modules.
+  ANDROID_HOME: C:\__disabled_android_sdk__
+  ANDROID_SDK_ROOT: C:\__disabled_android_sdk__
+  CMAKE_POLICY_VERSION_MINIMUM: '3.5'
+  GRADLE_OPTS: -Dorg.gradle.jvmargs=-Xmx4096m -Djava.net.preferIPv4Stack=true
+
+jobs:
+  windows:
+    name: Windows · exe, msi, portable zip
+    runs-on: windows-2025
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v5
+        with:
+          java-version: '21'
+          distribution: temurin
+
+      - uses: gradle/actions/setup-gradle@v5
+
+      # jpackage's msi needs WiX 3's candle/light. The runner does not always
+      # ship them, and installing through a package manager costs minutes; the
+      # release zip is fetched once into RUNNER_TEMP instead.
+      - name: Ensure WiX Toolset 3 is on PATH
+        shell: pwsh
+        run: |
+          $candle = Get-Command candle.exe -ErrorAction SilentlyContinue
+          $light = Get-Command light.exe -ErrorAction SilentlyContinue
+          if ($candle -and $light) {
+            Write-Host "WiX already on PATH: $($candle.Source)"
+            exit 0
+          }
+          $zip = Join-Path $env:RUNNER_TEMP 'wix314-binaries.zip'
+          if (-not (Test-Path $zip)) {
+            Invoke-WebRequest -UseBasicParsing `
+              -Uri 'https://github.com/wixtoolset/wix3/releases/download/wix3141rtm/wix314-binaries.zip' `
+              -OutFile $zip
+          }
+          $dir = Join-Path $env:RUNNER_TEMP 'wix314'
+          Expand-Archive -Path $zip -DestinationPath $dir -Force
+          $dir | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          if (-not (Get-ChildItem $dir -Filter 'candle.exe' -Recurse)) {
+            throw 'candle.exe was not found in wix314-binaries.zip'
+          }
+
+      # Windows Installer wants MAJOR.MINOR.BUILD, each field inside its own
+      # range. The app's own version may be "1.9", "v1.9.1" or "1.9.1-beta1";
+      # all three normalise here rather than reaching jpackage malformed.
+      - name: Resolve the version
+        id: version
+        shell: pwsh
+        env:
+          REQUESTED: ${{ inputs.version }}
+        run: |
+          $raw = $env:REQUESTED
+          if ([string]::IsNullOrWhiteSpace($raw) -and $env:GITHUB_REF_TYPE -eq 'tag') {
+            $raw = $env:GITHUB_REF_NAME
+          }
+          if ([string]::IsNullOrWhiteSpace($raw)) {
+            $match = Select-String -Path 'build.gradle.kts' -Pattern 'bitchordVersionName"\]\s*=\s*"([^"]+)"' |
+              Select-Object -First 1
+            if ($match) { $raw = $match.Matches[0].Groups[1].Value }
+          }
+          if ([string]::IsNullOrWhiteSpace($raw)) { $raw = '1.9.1' }
+
+          $clean = $raw.Trim().TrimStart('v', 'V')
+          $clean = ($clean -split '-')[0]
+          $fields = $clean.Split('.')
+
+          function Field([string]$value, [int]$max, [int]$fallback) {
+            $number = 0
+            if ([int]::TryParse($value, [ref]$number)) {
+              if ($number -lt 0) { return 0 }
+              if ($number -gt $max) { return $max }
+              return $number
+            }
+            return $fallback
+          }
+
+          $major = Field ($fields | Select-Object -First 1) 255 1
+          $minor = Field ($fields | Select-Object -Skip 1 -First 1) 255 0
+          $build = Field ($fields | Select-Object -Skip 2 -First 1) 65535 0
+          $version = "$major.$minor.$build"
+
+          Write-Host "raw='$raw' -> '$version'"
+          "value=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+
+      - name: Run the JVM tests
+        if: inputs.run_tests != false
+        shell: pwsh
+        run: |
+          Remove-Item Env:ANDROID_HOME -ErrorAction SilentlyContinue
+          Remove-Item Env:ANDROID_SDK_ROOT -ErrorAction SilentlyContinue
+          .\gradlew.bat :shared:jvmTest :desktopUi:jvmTest :desktopApp:test `
+            -Pbitchord.skipAndroid=true -Pbitchord.version=${{ steps.version.outputs.value }} `
+            --no-daemon --stacktrace
+
+      # packageExe and packageMsi build the native libraries first (they depend
+      # on windowsNatives); createDistributable is the tree the portable zip is
+      # made from.
+      - name: Build the installers and the app image
+        shell: pwsh
+        run: |
+          Remove-Item Env:ANDROID_HOME -ErrorAction SilentlyContinue
+          Remove-Item Env:ANDROID_SDK_ROOT -ErrorAction SilentlyContinue
+          .\gradlew.bat :desktopApp:packageExe :desktopApp:packageMsi :desktopApp:createDistributable `
+            -Pbitchord.skipAndroid=true -Pbitchord.version=${{ steps.version.outputs.value }} `
+            --no-daemon --stacktrace
+
+      # The point of the whole exercise: a packaged app that is missing the
+      # Visual Studio-built DLLs proves nothing about the decoupled build.
+      - name: Verify the natives and models are bundled
+        shell: pwsh
+        run: |
+          $root = 'desktopApp/build/compose/binaries/main/app'
+          $jar = Get-ChildItem -Path $root -Recurse -Filter 'desktopApp*.jar' -File |
+            Select-Object -First 1
+          if (-not $jar) { throw "no desktopApp*.jar under $root" }
+          Write-Host "Inspecting $($jar.FullName)"
+
+          $entries = & "$env:JAVA_HOME\bin\jar.exe" tf $jar.FullName
+          $required = @(
+            'native/bitchord_analysis.dll',
+            'native/bitchord_smtc.dll',
+            'native/bitchord_window.dll'
+          )
+          $missing = @()
+          foreach ($entry in $required) {
+            if (-not ($entries -contains $entry)) { $missing += $entry }
+          }
+          if ($missing.Count -gt 0) {
+            $natives = $entries | Where-Object { $_ -like 'native/*' }
+            throw "missing from the app jar: $($missing -join ', '); present: $($natives -join ', ')"
+          }
+          $models = $entries | Where-Object { $_ -like 'models/*.onnx' }
+          if (-not $models) { throw 'no .onnx models were bundled' }
+          Write-Host "Bundled: $($models -join ', ')"
+
+      - name: Collect the artifacts
+        shell: pwsh
+        env:
+          VERSION: ${{ steps.version.outputs.value }}
+        run: |
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          Get-ChildItem 'desktopApp/build/compose/binaries/main/exe' -Filter '*.exe' -ErrorAction SilentlyContinue |
+            ForEach-Object { Copy-Item $_.FullName "dist/BitChord-$env:VERSION-windows-x64-setup.exe" }
+          Get-ChildItem 'desktopApp/build/compose/binaries/main/msi' -Filter '*.msi' -ErrorAction SilentlyContinue |
+            ForEach-Object { Copy-Item $_.FullName "dist/BitChord-$env:VERSION-windows-x64.msi" }
+          if (-not (Test-Path "dist/BitChord-$env:VERSION-windows-x64-setup.exe")) { throw 'no .exe was produced' }
+          if (-not (Test-Path "dist/BitChord-$env:VERSION-windows-x64.msi")) { throw 'no .msi was produced' }
+
+          $appImage = Get-ChildItem 'desktopApp/build/compose/binaries/main/app' -Directory |
+            Where-Object { Test-Path (Join-Path $_.FullName 'app') } |
+            Select-Object -First 1
+          if (-not $appImage) { throw 'createDistributable produced no app image' }
+
+          $sevenZip = (Get-Command 7z.exe -ErrorAction SilentlyContinue).Source
+          if (-not $sevenZip) { $sevenZip = Join-Path $env:ProgramFiles '7-Zip\7z.exe' }
+          if (-not (Test-Path $sevenZip)) { throw '7z.exe is not available' }
+          & $sevenZip a -tzip -mx=5 "dist/BitChord-$env:VERSION-windows-portable.zip" "$($appImage.FullName)\*" | Out-Null
+          Get-ChildItem dist | Format-Table Name, Length
+
+      - name: Upload the installers
+        uses: actions/upload-artifact@v6
+        with:
+          name: bitchord-windows-exe
+          path: dist/*
+          if-no-files-found: error
+          compression-level: 0
