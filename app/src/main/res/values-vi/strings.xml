@@ -1374,4 +1374,10 @@
     <string name="bit_perfect_status_inexact">%1$s · không chính xác: nguồn này không phải PCM lossless</string>
     <string name="bit_perfect_status_waiting">Đang chờ bản nhạc lossless trên đầu ra được hỗ trợ</string>
     <string name="bit_perfect_status_unavailable">Không khả dụng cho bản nhạc này (%1$s)</string>
+    <string name="automix_overview">Tổng quan Automix</string>
+    <string name="lan_sync">Phát lại và đồng bộ hàng đợi qua LAN</string>
+    <string name="lan_sync_subtitle">Theo dõi các thiết bị khác đã đăng nhập trên Wi-Fi này, không cần ghép nối</string>
+    <string name="diwali_title">BitChord chúc bạn một mùa Diwali vui vẻ</string>
+    <string name="diwali_subtitle">Mong lễ hội ánh sáng này mang niềm vui đến ngôi nhà và âm nhạc đến những ngày của bạn.</string>
+    <string name="diwali_cta">Cùng ăn mừng</string>
 </resources>
