@@ -44,6 +44,8 @@
 
 #### Playback
 - **Search, browse and play** anything available on YouTube Music.
+- **One search, every source** — YouTube Music, JioSaavn, configured module and addon sources and your local library answer together, each row badged with where it came from.
+- **Podcasts** — shows and episodes sit alongside your music, with a filter for when you only want music.
 - **Hi-Res lossless audio** — FLAC/ALAC from a configured module source, with YouTube Music as fallback.
 - **Gapless playback with true crossfade**, adjustable 0–12s.
 - **Automix [Beta]** — DJ-style transitions with beat-matching and tempo-stretching.
@@ -57,12 +59,16 @@
 - **Spotify integration** — connect your account to play your playlists and Liked Songs.
 - **Discord Rich Presence** — in-app login, live track/artist/album and progress.
 - **Scrobbling** to Last.fm and ListenBrainz.
+- **Listen Together** — host or join a synced listening party, with same-account LAN sync and hand-off between devices on the same network.
 - **Pluggable sources** — add, edit, test and health-check module sources.
 
     </td>
     <td width="50%" valign="top">
 
 #### Experience
+- **Voice search and Identify Song** — speak a request, or let the microphone name the track playing around you.
+- **Every screen** — a remote-first Android TV interface, a Wear OS remote-and-speaker app, and Windows, macOS and Linux desktop builds from the same code.
+- **Command palette** (desktop) — a fuzzy keyboard jump to any song, playlist, output or player action.
 - **Animated album canvas** — motion artwork on the now-playing screen.
 - **Word-synced lyrics** — word/syllable-level highlighting from multiple sources.
 - **Lyrics providers** — credit to [lrc.red](https://lrc.red), [BiniLyrics](https://github.com/binimum), [BetterLyrics](https://github.com/better-lyrics/better-lyrics), [PaxSenix](https://lyrics.paxsenix.org), [LyricsPlus](https://github.com/ibratabian17/YouLyPlus), [SimpMusic](https://github.com/maxrave-dev/SimpMusic), [Unison](https://unison.boidu.dev), [Megalobiz](https://www.megalobiz.com), [KuGou](https://www.kugou.com), [LRCLIB](https://lrclib.net), [Musixmatch](https://www.musixmatch.com) and [Genius](https://genius.com).
@@ -74,7 +80,7 @@
 - **Playback speed control** (0.5×–2.0×) and **skip silence**.
 - **Sleep timer** — fixed presets or "stop after this track".
 - **System equalizer** integration.
-- **Bit-perfect USB exclusive output** — sends lossless tracks to a USB DAC unchanged, at each track's own rate and bit depth. Thanks to [Mornye](https://github.com/mornyeapp/Mornye) for the reference.
+- **Bit-perfect output** — exclusive output to a USB DAC or the built-in DAC, sending lossless tracks unchanged at each track's own rate and bit depth. Thanks to [Mornye](https://github.com/mornyeapp/Mornye) for the reference.
 - **Stats for nerds** — codec, bit depth, sample rate, and more on the now-playing screen.
 
     </td>
@@ -92,6 +98,8 @@
 <a href="https://github.com/kushagrasinghx/BitChord/releases" target="_blank" rel="noopener noreferrer"><img src="https://cdn.jsdelivr.net/gh/JMcrafter26/badges@main/src/assets/supported/android/cozy.svg" alt="Download for Android" height="55"/></a>
 
 Grab the latest signed APK from the [Releases](https://github.com/kushagrasinghx/BitChord/releases) page. Sideloading requires enabling "Install unknown apps" for whichever app you download it with.
+
+Desktop builds for Windows, macOS and Linux are on the same page — `.exe`, `.msi` and portable `.zip`, `.dmg`, and `.deb`, `.rpm` and `.AppImage`. Every download carries its own Java runtime, FFmpeg and ONNX natives, so nothing else has to be installed first; see [DESKTOP.md](DESKTOP.md) for install notes.
 
 
 </div>
