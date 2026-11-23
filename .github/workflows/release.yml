@@ -114,7 +114,7 @@ jobs:
           Remove-Item Env:ANDROID_HOME -ErrorAction SilentlyContinue
           Remove-Item Env:ANDROID_SDK_ROOT -ErrorAction SilentlyContinue
           .\gradlew.bat :desktopApp:packageExe :desktopApp:packageMsi :desktopApp:windowsPortable `
-            -Pbitchord.skipAndroid=true -Pbitchord.version=${{ steps.version.outputs.value }} --console=plain
+            "-Pbitchord.skipAndroid=true" "-Pbitchord.version=${{ steps.version.outputs.value }}" --console=plain
 
       # The names BUILDING-WINDOWS.md documents for the release assets. jpackage
       # emits BitChord-<version>.exe / .msi, and the MSI carries the four-part
@@ -302,22 +302,29 @@ jobs:
           LASTFM_SECRET: ${{ secrets.LASTFM_SECRET }}
           LISTEN_TOGETHER_SERVER: ${{ secrets.LISTEN_TOGETHER_SERVER }}
           KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
         run: |
           : > local.properties
           echo "sdk.dir=${ANDROID_HOME:-$ANDROID_SDK_ROOT}" >> local.properties
           [ -n "$LASTFM_API_KEY" ] && echo "LASTFM_API_KEY=$LASTFM_API_KEY" >> local.properties
           [ -n "$LASTFM_SECRET" ] && echo "LASTFM_SECRET=$LASTFM_SECRET" >> local.properties
           [ -n "$LISTEN_TOGETHER_SERVER" ] && echo "LISTEN_TOGETHER_SERVER=$LISTEN_TOGETHER_SERVER" >> local.properties
-          if [ -n "$KEYSTORE_BASE64" ]; then
+          signable=true
+          for value in "$KEYSTORE_BASE64" "$KEYSTORE_PASSWORD" "$KEY_ALIAS" "$KEY_PASSWORD"; do
+            [ -n "$value" ] || signable=false
+          done
+          if [ "$signable" = "true" ]; then
             echo "$KEYSTORE_BASE64" | base64 -d > bitchord-release.jks
             {
               echo "storeFile=bitchord-release.jks"
-              echo "storePassword=${{ secrets.KEYSTORE_PASSWORD }}"
-              echo "keyAlias=${{ secrets.KEY_ALIAS }}"
-              echo "keyPassword=${{ secrets.KEY_PASSWORD }}"
+              echo "storePassword=$KEYSTORE_PASSWORD"
+              echo "keyAlias=$KEY_ALIAS"
+              echo "keyPassword=$KEY_PASSWORD"
             } > keystore.properties
           else
-            echo "::warning::KEYSTORE_BASE64 is not set; the APK will be unsigned"
+            echo "::warning::the four keystore secrets are not all set; the APK will be signed with AGP's debug key"
           fi
           exit 0
 

@@ -152,7 +152,7 @@ jobs:
           Remove-Item Env:ANDROID_HOME -ErrorAction SilentlyContinue
           Remove-Item Env:ANDROID_SDK_ROOT -ErrorAction SilentlyContinue
           .\gradlew.bat :shared:jvmTest :desktopUi:jvmTest :desktopApp:test `
-            -Pbitchord.skipAndroid=true -Pbitchord.version=${{ steps.version.outputs.value }} `
+            "-Pbitchord.skipAndroid=true" "-Pbitchord.version=${{ steps.version.outputs.value }}" `
             --no-daemon --stacktrace
 
       # packageExe and packageMsi build the native libraries first (they depend
@@ -164,7 +164,7 @@ jobs:
           Remove-Item Env:ANDROID_HOME -ErrorAction SilentlyContinue
           Remove-Item Env:ANDROID_SDK_ROOT -ErrorAction SilentlyContinue
           .\gradlew.bat :desktopApp:packageExe :desktopApp:packageMsi :desktopApp:createDistributable `
-            -Pbitchord.skipAndroid=true -Pbitchord.version=${{ steps.version.outputs.value }} `
+            "-Pbitchord.skipAndroid=true" "-Pbitchord.version=${{ steps.version.outputs.value }}" `
             --no-daemon --stacktrace
 
       # The point of the whole exercise: a packaged app that is missing the
