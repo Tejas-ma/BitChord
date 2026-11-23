@@ -214,10 +214,31 @@ jobs:
             Select-Object -First 1
           if (-not $appImage) { throw 'createDistributable produced no app image' }
 
-          $sevenZip = (Get-Command 7z.exe -ErrorAction SilentlyContinue).Source
-          if (-not $sevenZip) { $sevenZip = Join-Path $env:ProgramFiles '7-Zip\7z.exe' }
-          if (-not (Test-Path $sevenZip)) { throw '7z.exe is not available' }
-          & $sevenZip a -tzip -mx=5 "dist/BitChord-$env:VERSION-windows-portable.zip" "$($appImage.FullName)\*" | Out-Null
+          # 7z is not guaranteed on PATH. Prefer it (it preserves the tree exactly), then the
+          # standard install location, then the built-in Compress-Archive.
+          $portable = "dist/BitChord-$env:VERSION-windows-portable.zip"
+          $sevenZip = (Get-Command 7z -ErrorAction SilentlyContinue).Source
+          if (-not $sevenZip) {
+            $candidate = Join-Path $env:ProgramFiles '7-Zip\7z.exe'
+            if (Test-Path $candidate) { $sevenZip = $candidate }
+          }
+          if ($sevenZip) {
+            & $sevenZip a -tzip -mx=5 $portable "$($appImage.FullName)\*" | Out-Null
+          } else {
+            Write-Host '7-Zip not found; falling back to Compress-Archive.'
+            Compress-Archive -Path "$($appImage.FullName)\*" -DestinationPath $portable -CompressionLevel Optimal -Force
+          }
+
+          # Uploading an empty file is worse than failing here, where the name says which one.
+          $artifacts = @(
+            "dist/BitChord-$env:VERSION-windows-x64-setup.exe",
+            "dist/BitChord-$env:VERSION-windows-x64.msi",
+            $portable
+          )
+          foreach ($artifact in $artifacts) {
+            $item = Get-Item $artifact -ErrorAction SilentlyContinue
+            if (-not $item -or $item.Length -le 0) { throw "missing or empty artifact: $artifact" }
+          }
           Get-ChildItem dist | Format-Table Name, Length
 
       - name: Upload the installers
