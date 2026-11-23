@@ -61,7 +61,6 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  TMPDIR: ${{ runner.temp }}
   GRADLE_OPTS: -Dorg.gradle.jvmargs=-Xmx3584m -Dkotlin.daemon.jvm.options=-Xmx2048m -Djava.net.preferIPv4Stack=true
 
 jobs:
@@ -73,6 +72,11 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6
+
+      # runner.temp is not available in a workflow-level env block, so TMPDIR
+      # is pointed at it from a step instead.
+      - name: Point TMPDIR at the runner temp dir
+        run: echo "TMPDIR=$RUNNER_TEMP" >> "$GITHUB_ENV"
 
       - name: Set up JDK 21
         uses: actions/setup-java@v5

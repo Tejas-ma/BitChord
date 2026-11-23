@@ -60,15 +60,26 @@ jobs:
           echo "LASTFM_SECRET=${{ secrets.LASTFM_SECRET }}" >> local.properties
           exit 0
 
-      # The local debug key, so this APK installs over a local dev build and
-      # back. Fork PRs get no secrets; AGP then makes a throwaway key itself.
-      - name: Write the debug keystore
+      # The one shared keystore every Android module and build type is signed
+      # with (see the signingConfigs block in tv/build.gradle.kts). Fork PRs get
+      # no secrets; the build then falls back to AGP's debug key.
+      - name: Write the shared release keystore
         env:
-          DEBUG_KEYSTORE_BASE64: ${{ secrets.DEBUG_KEYSTORE_BASE64 }}
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
         run: |
-          [ -n "$DEBUG_KEYSTORE_BASE64" ] || exit 0
-          mkdir -p ~/.android
-          echo "$DEBUG_KEYSTORE_BASE64" | base64 -d > ~/.android/debug.keystore
+          for value in "$KEYSTORE_BASE64" "$KEYSTORE_PASSWORD" "$KEY_ALIAS" "$KEY_PASSWORD"; do
+            [ -n "$value" ] || exit 0
+          done
+          echo "$KEYSTORE_BASE64" | base64 -d > bitchord-release.jks
+          {
+            echo "storeFile=bitchord-release.jks"
+            echo "storePassword=$KEYSTORE_PASSWORD"
+            echo "keyAlias=$KEY_ALIAS"
+            echo "keyPassword=$KEY_PASSWORD"
+          } > keystore.properties
 
       - run: chmod +x gradlew
 
@@ -90,3 +101,7 @@ jobs:
           name: tv-build-reports
           path: tv/build/reports/
           if-no-files-found: ignore
+
+      - name: Remove the signing material
+        if: always()
+        run: rm -f bitchord-release.jks keystore.properties
