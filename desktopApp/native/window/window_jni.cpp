@@ -1,8 +1,26 @@
+/*
+ * WINVER, not just _WIN32_WINNT. The SDK's winuser.h gates GetDpiForWindow and
+ * GetSystemMetricsForDpi behind `#if(WINVER >= 0x0605)` and falls back to
+ * WINVER 0x0500 when it is unset, while MinGW's headers check _WIN32_WINNT —
+ * which is why this file compiled there and failed under MSVC.
+ */
+#ifndef WINVER
+#define WINVER 0x0A00
+#endif
+#ifndef _WIN32_WINNT
 #define _WIN32_WINNT 0x0A00
+#endif
+
+/* Before any header: a JDK header that pulls in windows.h must see these too. */
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+
 #include <jni.h>
 
-#define NOMINMAX
-#define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 #include <audioclient.h>
 #include <dwmapi.h>
@@ -15,6 +33,7 @@
 #include <atomic>
 #include <cmath>
 #include <cstdint>
+#include <cstdio>
 #include <cwchar>
 #include <cwctype>
 #include <cstring>

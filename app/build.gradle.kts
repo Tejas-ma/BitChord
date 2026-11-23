@@ -72,6 +72,10 @@ android {
     namespace = "com.music.bitchord"
     // InnerTubeX's AAR requires compiling against 37; targetSdk (runtime behaviour) stays 36.
     compileSdk = 37
+    // r27 patch 3, the NDK already installed on the ubuntu-24.04 runners. Pinning it
+    // stops AGP downloading its default r27.0 on every fresh CI machine; it is the
+    // same r27 line, so the CMake toolchain and headers are unchanged.
+    ndkVersion = "27.3.13750724"
 
     defaultConfig {
         applicationId = "com.music.bitchord"

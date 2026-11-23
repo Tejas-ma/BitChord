@@ -61,7 +61,7 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  GRADLE_OPTS: -Dorg.gradle.jvmargs=-Xmx3584m -Dkotlin.daemon.jvm.options=-Xmx2048m -Djava.net.preferIPv4Stack=true
+  GRADLE_OPTS: -Dorg.gradle.jvmargs=-Xmx4608m -Dkotlin.daemon.jvm.options=-Xmx2048m -Djava.net.preferIPv4Stack=true
 
 jobs:
   apk:

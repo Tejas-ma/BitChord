@@ -1,5 +1,7 @@
 import java.util.concurrent.TimeUnit
 import java.util.zip.ZipFile
+import org.gradle.api.logging.Logger
+import org.gradle.process.ExecSpec
 import org.jetbrains.compose.desktop.application.dsl.TargetFormat
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 
@@ -238,6 +240,42 @@ fun findOnPath(tool: String): File? {
 fun cmakeBinary(): String = findOnPath("cmake")?.absolutePath ?: "cmake"
 
 /**
+ * Runs one external build command and prints what it said when it fails.
+ *
+ * `providers.exec { ... }.result.get().assertNormalExitValue()` captures the
+ * child's stdout and stderr into providers that nobody reads, so a compiler or
+ * linker error surfaces only as "process ... finished with non-zero exit value"
+ * — the diagnostics that say which header, symbol or library was missing are
+ * gone. Both streams are drained on every run (an undrained pipe would block
+ * the child) and printed at error level before the build is stopped, with the
+ * command named so the log says which of the two CMake calls failed.
+ */
+fun runNativeCommand(
+    what: String,
+    command: List<String>,
+    log: Logger,
+    configure: ExecSpec.() -> Unit = {},
+) {
+    val exec = providers.exec {
+        isIgnoreExitValue = true
+        commandLine(command)
+        configure()
+    }
+    val result = exec.result.get()
+    val stdout = exec.standardOutput.asText.get()
+    val stderr = exec.standardError.asText.get()
+    if (result.exitValue != 0) {
+        log.error("$what — stdout:\n$stdout")
+        log.error("$what — stderr:\n$stderr")
+        throw GradleException(
+            "$what failed with exit code ${result.exitValue}.\n" +
+                "Command: ${command.joinToString(" ")}\n" +
+                "Its output is above; desktopApp/BUILDING-WINDOWS.md lists what each native library needs.",
+        )
+    }
+}
+
+/**
  * The Windows C++ toolchain a native build will use, if one is reachable.
  *
  * Two are supported and they are not interchangeable. MinGW-w64 builds both
@@ -302,39 +340,44 @@ val buildAnalysisNative by tasks.registering {
         check(targetOs != "windows" || win.mingw || hostIsWindows) {
             "no Windows C++ toolchain for the analyser"
         }
-        providers.exec {
-            commandLine(
-                buildList {
-                    addAll(listOf(cmakeBinary(), "-S", cmakeSource.absolutePath, "-B", outputDir.absolutePath))
-                    if (targetOs == "windows") {
-                        // Discard any generator cached by an earlier configure.
-                        add("--fresh")
-                        if (win.mingw) {
-                            addAll(
-                                listOf(
-                                    "-G", "Ninja",
-                                    "-DCMAKE_MAKE_PROGRAM=${win.ninja!!.absolutePath}",
-                                    "-DCMAKE_CXX_COMPILER=${win.compiler!!.absolutePath}",
-                                ),
-                            )
-                        }
-                        // Otherwise no -G and no compiler: CMake's default generator on Windows is
-                        // Visual Studio, which builds C++/WinRT and finds the Windows SDK without
-                        // a developer prompt.
-                    }
-                    add("-DCMAKE_BUILD_TYPE=Release")
-                    // CMake 4 aborts a project whose minimum is older than 3.5; this lets an
-                    // older CMakeLists configure without editing it.
-                    add("-DCMAKE_POLICY_VERSION_MINIMUM=3.5")
-                    if (crossing) add("-DCMAKE_TOOLCHAIN_FILE=${toolchain.absolutePath}")
-                },
-            )
+        val configureCommand = buildList {
+            addAll(listOf(cmakeBinary(), "-S", cmakeSource.absolutePath, "-B", outputDir.absolutePath))
+            if (targetOs == "windows") {
+                // Discard any generator cached by an earlier configure.
+                add("--fresh")
+                if (win.mingw) {
+                    addAll(
+                        listOf(
+                            "-G", "Ninja",
+                            "-DCMAKE_MAKE_PROGRAM=${win.ninja!!.absolutePath}",
+                            "-DCMAKE_CXX_COMPILER=${win.compiler!!.absolutePath}",
+                        ),
+                    )
+                }
+                // Otherwise no -G and no compiler: CMake's default generator on Windows is
+                // Visual Studio, which builds C++/WinRT and finds the Windows SDK without
+                // a developer prompt.
+            }
+            add("-DCMAKE_BUILD_TYPE=Release")
+            // CMake 4 aborts a project whose minimum is older than 3.5; this lets an
+            // older CMakeLists configure without editing it.
+            add("-DCMAKE_POLICY_VERSION_MINIMUM=3.5")
+            if (crossing) add("-DCMAKE_TOOLCHAIN_FILE=${toolchain.absolutePath}")
+        }
+        runNativeCommand(
+            "CMake configure for the Automix analyser ($targetOs)",
+            configureCommand,
+            logger,
+        ) {
             environment("JAVA_HOME", javaHome)
-        }.result.get().assertNormalExitValue()
-        providers.exec {
-            commandLine(cmakeBinary(), "--build", outputDir.absolutePath, "--config", "Release", "-j", "4")
+        }
+        runNativeCommand(
+            "CMake build for the Automix analyser ($targetOs)",
+            listOf(cmakeBinary(), "--build", outputDir.absolutePath, "--config", "Release", "-j", "4"),
+            logger,
+        ) {
             environment("JAVA_HOME", javaHome)
-        }.result.get().assertNormalExitValue()
+        }
     }
 }
 
@@ -367,38 +410,43 @@ val buildWindowNative by tasks.registering {
     doLast {
         val javaHome = System.getProperty("java.home")
         val win = windowsCompiler(crossing)
-        providers.exec {
-            commandLine(
-                buildList {
-                    addAll(
-                        listOf(
-                            cmakeBinary(),
-                            "-S", cmakeSource.absolutePath,
-                            "-B", outputDir.absolutePath,
-                            "-DCMAKE_BUILD_TYPE=Release",
-                        ),
-                    )
-                    if (targetOs == "windows") add("--fresh")
-                    if (win.mingw) {
-                        addAll(
-                            listOf(
-                                "-G", "Ninja",
-                                "-DCMAKE_MAKE_PROGRAM=${win.ninja!!.absolutePath}",
-                                "-DCMAKE_CXX_COMPILER=${win.compiler!!.absolutePath}",
-                            ),
-                        )
-                    }
-                    // Same floor as the analyser: CMake 4.x refuses an older minimum outright.
-                    add("-DCMAKE_POLICY_VERSION_MINIMUM=3.5")
-                    if (crossing) add("-DCMAKE_TOOLCHAIN_FILE=${toolchain.absolutePath}")
-                },
+        val configureCommand = buildList {
+            addAll(
+                listOf(
+                    cmakeBinary(),
+                    "-S", cmakeSource.absolutePath,
+                    "-B", outputDir.absolutePath,
+                    "-DCMAKE_BUILD_TYPE=Release",
+                ),
             )
+            if (targetOs == "windows") add("--fresh")
+            if (win.mingw) {
+                addAll(
+                    listOf(
+                        "-G", "Ninja",
+                        "-DCMAKE_MAKE_PROGRAM=${win.ninja!!.absolutePath}",
+                        "-DCMAKE_CXX_COMPILER=${win.compiler!!.absolutePath}",
+                    ),
+                )
+            }
+            // Same floor as the analyser: CMake 4.x refuses an older minimum outright.
+            add("-DCMAKE_POLICY_VERSION_MINIMUM=3.5")
+            if (crossing) add("-DCMAKE_TOOLCHAIN_FILE=${toolchain.absolutePath}")
+        }
+        runNativeCommand(
+            "CMake configure for the window bridge ($targetOs)",
+            configureCommand,
+            logger,
+        ) {
             environment("JAVA_HOME", javaHome)
-        }.result.get().assertNormalExitValue()
-        providers.exec {
-            commandLine(cmakeBinary(), "--build", outputDir.absolutePath, "--config", "Release", "-j", "4")
+        }
+        runNativeCommand(
+            "CMake build for the window bridge ($targetOs)",
+            listOf(cmakeBinary(), "--build", outputDir.absolutePath, "--config", "Release", "-j", "4"),
+            logger,
+        ) {
             environment("JAVA_HOME", javaHome)
-        }.result.get().assertNormalExitValue()
+        }
     }
 }
 
@@ -437,10 +485,11 @@ val windowsNatives by tasks.registering {
         logger.lifecycle(
             buildString {
                 appendLine("native libraries for $target:")
-                // Visual Studio puts its output in Release\, MinGW and CMake on Unix put it at the
-                // top level: either is this build's own output.
+                // Visual Studio puts its output under Release\, and a target declared in a
+                // subdirectory adds another level; MinGW and CMake on Unix put it at the top.
+                // Any depth is this build's own output.
                 fun holds(name: String, dir: File): Boolean =
-                    dir.resolve(name).isFile || dir.resolve("Release").resolve(name).isFile
+                    dir.walkTopDown().any { it.isFile && it.name == name }
                 for ((name, what, dir) in entries) {
                     appendLine("  $name — $what — ${if (holds(name, dir)) "built" else "MISSING"}")
                 }
@@ -458,17 +507,18 @@ tasks.matching { it.name == "packageExe" || it.name == "packageMsi" || it.name =
 
 tasks.named<ProcessResources>("processResources") {
     dependsOn(buildAnalysisNative, buildWindowNative)
-    // Visual Studio is a multi-config generator and writes its libraries into Release\ beside the
-    // Debug tree, so both layouts are matched and every library flattened into native/ — the
-    // loader asks for it by bare name and does not care which generator produced it.
+    // Visual Studio is a multi-config generator: a target writes its library under Release\ at
+    // the configure root, and a target declared in a subdirectory writes it under
+    // <subdir>\Release\. Match at any depth and flatten every library into native/ — the loader
+    // asks for it by bare name and does not care which generator produced it.
     from(analysisNativeDir) {
-        include("*.so", "*.dll", "*.dylib", "Release/*.dll")
+        include("**/*.so", "**/*.dll", "**/*.dylib")
         includeEmptyDirs = false
         eachFile { path = "native/$name" }
         into("native")
     }
     from(windowNativeDir) {
-        include("*.dll", "Release/*.dll")
+        include("**/*.dll")
         includeEmptyDirs = false
         eachFile { path = "native/$name" }
         into("native")
