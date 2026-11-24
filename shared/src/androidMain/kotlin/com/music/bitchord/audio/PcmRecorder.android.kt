@@ -26,7 +26,15 @@ actual class PcmRecorder actual constructor() {
     actual val isAvailable: Boolean
         get() = true
 
-    /** The capture in flight, if any, so [stop] can release it from another thread. */
+    /**
+     * The capture in flight, if any, so [stop] can release it from another
+     * thread.
+     *
+     * Volatile because the capture loop (an IO thread) publishes it and the
+     * sheet's dispose (the main thread) reads it: without the barrier the
+     * close path could still see null and leave the microphone open.
+     */
+    @Volatile
     private var active: AudioRecord? = null
 
     actual fun stop() {

@@ -38,7 +38,14 @@ actual fun speechToText(): SpeechToText = AndroidSpeechToText
 
 private object AndroidSpeechToText : SpeechToText {
 
-    /** The recogniser currently listening, so [cancel] can reach it. */
+    /**
+     * The recogniser currently listening, so [cancel] can reach it.
+     *
+     * Volatile because [listen] publishes it and a dismissed sheet's dispose
+     * reads it on the main thread; a stale null would leave the recogniser —
+     * and the microphone indicator — alive after the sheet is gone.
+     */
+    @Volatile
     private var active: SpeechRecognizer? = null
 
     override val isAvailable: Boolean

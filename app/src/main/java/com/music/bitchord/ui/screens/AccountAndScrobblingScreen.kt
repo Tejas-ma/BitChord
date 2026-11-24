@@ -9,12 +9,14 @@ import com.music.bitchord.sharedui.resources.spotify_logo
 import org.jetbrains.compose.resources.painterResource
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.displayCutoutPadding
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.asPaddingValues
+import androidx.compose.foundation.layout.displayCutout
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.rounded.Cloud
@@ -29,6 +31,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.res.vectorResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
@@ -86,11 +89,28 @@ fun AccountAndScrobblingScreen(
             .verticalScroll(rememberScrollState())
             .padding(contentPadding),
     ) {
-        // The page title is the first thing under the floating bar, and the bar
-        // is inset off the status bar rather than off the cutout. Both are
-        // applied here so the header cannot end up under either in portrait,
-        // landscape or a freeform window.
-        Column(Modifier.statusBarsPadding().displayCutoutPadding()) {
+        // The page padding already starts the content clear of the status bar:
+        // its top is [topBarContentPadding], which itself begins at the
+        // status-bar inset. Adding statusBarsPadding() here as well would double
+        // that clearance, so the header only takes up what the page padding has
+        // not already covered — normally zero, and the cutout's own depth on a
+        // device whose cutout reaches below the status bar. The cutout's side
+        // insets are applied here because the page padding is vertical only.
+        val layoutDirection = LocalLayoutDirection.current
+        val cutout = WindowInsets.displayCutout.asPaddingValues()
+        val headerTop = (
+            maxOf(
+                WindowInsets.statusBars.asPaddingValues().calculateTopPadding(),
+                cutout.calculateTopPadding(),
+            ) - contentPadding.calculateTopPadding()
+            ).coerceAtLeast(0.dp)
+        Column(
+            Modifier.padding(
+                top = headerTop,
+                start = cutout.calculateLeftPadding(layoutDirection),
+                end = cutout.calculateRightPadding(layoutDirection),
+            ),
+        ) {
             SettingsPageTitle(stringResource(R.string.account_integrations))
         }
 

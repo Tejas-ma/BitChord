@@ -7,6 +7,8 @@ import io.ktor.client.request.header
 import io.ktor.client.request.post
 import io.ktor.client.request.setBody
 import io.ktor.client.statement.bodyAsText
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.contentOrNull
@@ -92,8 +94,14 @@ object ShazamClient {
         // Shazam's payload is defined around 16 kHz. A device that opened at
         // 44.1/48 kHz is resampled here, at the boundary, so the signature's
         // sample count and frame times describe the audio that was heard.
-        val normalized = recording.resampledTo(SAMPLE_RATE)
-        val signature = ShazamFingerprint.signature(normalized.samples, normalized.sampleRate)
+        //
+        // Both steps are heavy CPU work over the whole capture — resampling is
+        // a windowed-sinc pass and the signature is a stack of FFTs — so they
+        // run on Default rather than on the caller's (usually main) thread.
+        val (signature, normalized) = withContext(Dispatchers.Default) {
+            val samples = recording.resampledTo(SAMPLE_RATE)
+            ShazamFingerprint.signature(samples.samples, samples.sampleRate) to samples
+        }
         if (signature.isEmpty) return@runCatching null
         identify(signature.toUri(), normalized.sampleRate, normalized.samples.size)
     }
@@ -195,9 +203,15 @@ class SongRecognition(
         val captured = recorder.record(durationMs, onAmplitude) ?: return RecognitionResult.Failed(
             "The microphone could not be opened",
         )
-        val recording = captured.resampledTo(SAMPLE_RATE)
+        // Conversion and the silence scan both walk every sample; keeping them
+        // off the caller's dispatcher is what stops a five-second capture from
+        // stalling a frame before the request even starts.
+        val (recording, audible) = withContext(Dispatchers.Default) {
+            val normalized = captured.resampledTo(SAMPLE_RATE)
+            normalized to normalized.hasSignal()
+        }
         if (recording.samples.isEmpty()) return RecognitionResult.Failed("Nothing was recorded")
-        if (!recording.hasSignal()) return RecognitionResult.Silent
+        if (!audible) return RecognitionResult.Silent
         onCaptureComplete()
         return ShazamClient.identify(recording).fold(
             onSuccess = { song -> if (song == null) RecognitionResult.NoMatch else RecognitionResult.Match(song) },

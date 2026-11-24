@@ -26,7 +26,14 @@ actual class PcmRecorder actual constructor() {
             runCatching { AudioSystem.isLineSupported(lineInfo(rate)) }.getOrDefault(false)
         }
 
-    /** The line in flight, if any, so [stop] can close it from another thread. */
+    /**
+     * The line in flight, if any, so [stop] can close it from another thread.
+     *
+     * Volatile because the capture loop (an IO thread) publishes it and the
+     * sheet's dispose (the UI thread) reads it: without the barrier the close
+     * path could still see null and leave the line open.
+     */
+    @Volatile
     private var active: TargetDataLine? = null
 
     actual fun stop() {

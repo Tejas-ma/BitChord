@@ -11,6 +11,7 @@ import java.nio.file.StandardCopyOption
 import java.nio.file.StandardOpenOption
 import java.security.MessageDigest
 import java.util.Base64
+import javax.swing.JOptionPane
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.jetbrains.skia.EncodedImageFormat
@@ -40,6 +41,9 @@ object DesktopPlaylistCovers {
     private const val WEBP_QUALITY = 80
     private const val KEY_COVERS = "playlist_covers"
     private const val DELIMITER = "#"
+
+    /** The extensions the chooser accepts and Skia decodes on every desktop target. */
+    private val SUPPORTED_EXTENSIONS = setOf("png", "jpg", "jpeg", "webp")
 
     private val persistence = DesktopPersistence()
     private val _covers = mutableStateMapOf<String, DesktopPlaylistCover>()
@@ -159,13 +163,31 @@ object DesktopPlaylistCovers {
     fun chooseCoverFile(): Path? {
         val dialog = FileDialog(null as Frame?, "Choose playlist cover", FileDialog.LOAD)
         dialog.filenameFilter = FilenameFilter { _, name ->
-            name.substringAfterLast('.', "").lowercase() in setOf("png", "jpg", "jpeg", "webp")
+            name.substringAfterLast('.', "").lowercase() in SUPPORTED_EXTENSIONS
         }
         dialog.isMultipleMode = false
         dialog.isVisible = true
         val file = dialog.file ?: return null
         val directory = dialog.directory ?: return null
-        return Path.of(directory, file)
+        val chosen = Path.of(directory, file)
+        // The native filter is advisory on Windows — a typed name, or the dialog
+        // offering an "all files" entry, walks straight past it. Checking here
+        // names the formats that work, instead of failing later with a decode
+        // error that never says which file or which field was wrong.
+        val extension = chosen.fileName?.toString()
+            ?.substringAfterLast('.', "")
+            ?.lowercase()
+            .orEmpty()
+        if (extension !in SUPPORTED_EXTENSIONS) {
+            JOptionPane.showMessageDialog(
+                null,
+                "BitChord can use PNG, JPEG or WebP images for a playlist cover.",
+                "Unsupported image",
+                JOptionPane.WARNING_MESSAGE,
+            )
+            return null
+        }
+        return chosen
     }
 
     private fun ensureLoaded() {

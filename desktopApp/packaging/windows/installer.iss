@@ -10,7 +10,7 @@
 ; local compile falls back to the default below.
 
 #ifndef AppVersion
-  #define AppVersion "1.0.1"
+  #define AppVersion "1.9.1"
 #endif
 
 #define AppName "BitChord"

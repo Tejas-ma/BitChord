@@ -8,6 +8,8 @@ import io.ktor.client.request.forms.submitFormWithBinaryData
 import io.ktor.client.statement.bodyAsText
 import io.ktor.http.Headers
 import io.ktor.http.HttpHeaders
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
@@ -65,12 +67,15 @@ object AcrCloudClient {
         if (accessKey.isBlank() || accessSecret.isBlank()) return@runCatching null
         // ACRCloud's audio body is 16-bit PCM at 16 kHz. The recorder may have
         // opened 44.1/48 kHz, so resample once here rather than sending samples
-        // whose header says nothing about their rate.
-        val normalized = recording.resampledTo(SAMPLE_RATE)
-        if (normalized.samples.isEmpty()) return@runCatching null
+        // whose header says nothing about their rate. Both the conversion and
+        // the little-endian packing walk the entire ten-second capture, so they
+        // belong on Default, not on the caller's (usually main) thread.
+        val pcm = withContext(Dispatchers.Default) {
+            val normalized = recording.resampledTo(SAMPLE_RATE)
+            if (normalized.samples.isEmpty()) null else pcmBytes(normalized.samples)
+        } ?: return@runCatching null
         val timestamp = System.currentTimeMillis() / 1_000
         val signature = signature(accessSecret, accessKey, timestamp)
-        val pcm = pcmBytes(normalized.samples)
         val response = client.submitFormWithBinaryData(
             url = "$endpoint$PATH",
             formData = formData {

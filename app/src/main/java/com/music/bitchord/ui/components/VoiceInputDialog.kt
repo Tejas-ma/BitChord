@@ -67,6 +67,11 @@ import com.music.bitchord.audio.SongRecognition
 import com.music.bitchord.audio.hasSignal
 import com.music.bitchord.audio.speechToText
 import com.music.bitchord.data.settings.AppSettings
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlin.math.PI
 import kotlin.math.sin
 
@@ -181,6 +186,20 @@ fun VoiceInputDialog(
         level = 0f
         heard = ""
         problem = null
+        // The capture thread hands over a level per audio buffer — dozens a
+        // second at 48 kHz — so the values are conflated and the newest one is
+        // taken every 40 ms. Recomposition then sees at most ~25 updates a
+        // second whatever the device's buffer size, and an old level can never
+        // queue up behind a slow frame.
+        val levels = Channel<Float>(Channel.CONFLATED)
+        val levelPump = launch {
+            for (value in levels) {
+                level = value
+                delay(40)
+            }
+        }
+        // Safe from any thread: trySend never blocks the capture loop.
+        val publishLevel: (Float) -> Unit = { value -> levels.trySend(value) }
         // Paused before the capture starts, not after: the first second of a
         // Shazam capture is the one that matters most.
         onPausePlayback()
@@ -193,7 +212,7 @@ fun VoiceInputDialog(
                     }
                     val text = speech.listen(
                         onPartial = { heard = it },
-                        onRms = { level = it },
+                        onRms = publishLevel,
                     )
                     if (text.isNullOrBlank()) {
                         problem = context.getString(R.string.voice_nothing_heard)
@@ -204,7 +223,7 @@ fun VoiceInputDialog(
 
                 songMode == SongMode.PLAYING -> when (
                     val result = recognition.listen(
-                        onAmplitude = { level = it },
+                        onAmplitude = publishLevel,
                         onCaptureComplete = { matching = true },
                     )
                 ) {
@@ -216,16 +235,21 @@ fun VoiceInputDialog(
                 }
 
                 else -> {
-                    val captured = recorder.record(HUM_CAPTURE_MS) { level = it }
+                    val captured = recorder.record(HUM_CAPTURE_MS, publishLevel)
                     if (captured == null || captured.samples.isEmpty()) {
                         problem = context.getString(R.string.song_mic_unavailable)
                         return@LaunchedEffect
                     }
                     // The recorder tags the device's true rate; ACRCloud wants
                     // 16 kHz mono, so normalise before checking the level and
-                    // before the client builds the request.
-                    val recording = captured.resampledTo(SAMPLE_RATE)
-                    if (!recording.hasSignal()) {
+                    // before the client builds the request. Ten seconds of
+                    // windowed-sinc conversion is millions of operations, so
+                    // it runs on Default rather than on this (main) coroutine.
+                    val (recording, audible) = withContext(Dispatchers.Default) {
+                        val normalized = captured.resampledTo(SAMPLE_RATE)
+                        normalized to normalized.hasSignal()
+                    }
+                    if (!audible) {
                         problem = context.getString(R.string.song_silent)
                         return@LaunchedEffect
                     }
@@ -248,6 +272,8 @@ fun VoiceInputDialog(
                 }
             }
         } finally {
+            levelPump.cancel()
+            levels.close()
             listening = false
             matching = false
             level = 0f
