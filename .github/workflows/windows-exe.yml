@@ -154,11 +154,25 @@ jobs:
       - name: Build the native libraries
         shell: pwsh
         run: |
+          # Not 'Stop': Gradle writes warnings to stderr and the output is piped
+          # below, which would otherwise make PowerShell throw before the exit
+          # code is read.
+          $ErrorActionPreference = 'Continue'
           Remove-Item Env:ANDROID_HOME -ErrorAction SilentlyContinue
           Remove-Item Env:ANDROID_SDK_ROOT -ErrorAction SilentlyContinue
+          $log = Join-Path $env:RUNNER_TEMP 'native-build.log'
           .\gradlew.bat :desktopApp:windowsNatives `
             "-Pbitchord.skipAndroid=true" `
-            --no-daemon --stacktrace
+            --no-daemon --stacktrace 2>&1 | Tee-Object -FilePath $log
+          if ($LASTEXITCODE -ne 0) {
+            # Reading a step's log needs an account that can see the repository;
+            # an annotation does not, so the compiler's own words are repeated
+            # there, escaped the way workflow commands expect.
+            $tail = (Get-Content $log -Tail 30) -join "`n"
+            $tail = $tail -replace '%', '%25' -replace "`r", '' -replace "`n", '%0A'
+            Write-Host "::error title=Native build failed::$tail"
+            exit 1
+          }
 
       # inputs is empty on push and pull_request, where `inputs.run_tests` is
       # null and `null != false` is false by GitHub's numeric coercion — the
