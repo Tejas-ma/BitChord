@@ -166,8 +166,11 @@ jobs:
             echo "keyPassword=$KEY_PASSWORD"
           } > keystore.properties
 
+      # inputs is empty on push and pull_request, where `inputs.run_tests` is
+      # null and `null != false` is false by GitHub's numeric coercion — which
+      # is why this used to be skipped everywhere but a manual dispatch.
       - name: Unit tests
-        if: inputs.run_tests != false
+        if: ${{ github.event_name != 'workflow_dispatch' || inputs.run_tests }}
         run: >
           ./gradlew :app:testDevDebugUnitTest
           -Pbitchord.skipDesktop=true --no-daemon --max-workers=2 --stacktrace
@@ -219,21 +222,35 @@ jobs:
           fi
 
           for apk in "${built[@]}"; do
-            # app-arm64-v8a-dev-debug -> arm64-v8a; a build without splits is
-            # just app-dev-debug, which is staged as the universal APK.
-            abi="${apk##*/}"
-            abi="${abi%.apk}"
-            abi="${abi%-$VARIANT}"
-            abi="${abi#app-}"
-            case "$abi" in
-              armeabi-v7a|arm64-v8a|x86_64|universal) ;;
-              *) abi=universal ;;
-            esac
+            # AGP names a split app-prod-arm64-v8a-release.apk — flavour before
+            # the ABI, build type last. Reading the ABI out of the name instead
+            # of stripping `-prod-release` off its end is what keeps the
+            # universal APK apart from the splits: that strip never matches this
+            # order, so every APK used to collapse to "universal", overwrite the
+            # same file, and leave the last one (x86_64) uploaded under the
+            # universal name — which no arm phone can install.
+            name="${apk##*/}"
+            name="${name%.apk}"
+            abi=""
+            for candidate in armeabi-v7a arm64-v8a x86_64 universal; do
+              case "-$name-" in
+                *-"$candidate"-*) abi="$candidate"; break ;;
+              esac
+            done
+            # A build with no ABI in its name has no splits, and is the only
+            # installable one.
+            if [ -z "$abi" ]; then
+              abi=universal
+            fi
             key="${abi//-/_}"
             target="dist-apk/BitChord-$version-$VARIANT-$abi.apk"
+            if [ -e "$target" ]; then
+              echo "::error::Two APKs map to $target — the ABI in the file name could not be told apart."
+              exit 1
+            fi
             cp "$apk" "$target"
             echo "$key=$GITHUB_WORKSPACE/$target" >> "$GITHUB_OUTPUT"
-            echo "Staged $target from $apk"
+            echo "Staged $target from $apk ($(du -h "$apk" | cut -f1))"
           done
 
           # Produced by the same assembleProdRelease, signed with the same key:
@@ -250,6 +267,40 @@ jobs:
               echo "::warning::No Wear OS APK found; skipping it."
             fi
           fi
+
+      # An artifact named .apk is not an installable APK: one that lost its
+      # signature, or that was signed with a key the installed copy does not
+      # match, is refused by the phone with "There's a problem with the app
+      # file". Both properties are checked here, on the exact file the next
+      # steps upload, so a broken build fails this job instead of a phone.
+      - name: Verify the staged APKs are signed and aligned
+        run: |
+          set -euo pipefail
+
+          build_tools="$(ls -d "${ANDROID_HOME:-$ANDROID_SDK_ROOT}"/build-tools/* | sort -V | tail -n 1)"
+          apksigner="$build_tools/apksigner"
+          zipalign="$build_tools/zipalign"
+
+          shopt -s nullglob
+          apks=(dist-apk/*.apk)
+          if [ "${#apks[@]}" -eq 0 ]; then
+            echo "::error::Nothing was staged under dist-apk to verify."
+            exit 1
+          fi
+
+          # Uncompressed .so files have to be page aligned on Android 15 devices
+          # with 16 KB pages; older build-tools only know the 4-byte check.
+          align=(-c -v 4)
+          if "$zipalign" -h 2>&1 | grep -q -- '-P'; then
+            align=(-c -P 16 -v 4)
+          fi
+
+          for apk in "${apks[@]}"; do
+            echo "=== $apk"
+            "$apksigner" verify --verbose --print-certs "$apk"
+            "$zipalign" "${align[@]}" "$apk" > /dev/null
+            echo "verified: $apk ($(du -h "$apk" | cut -f1))"
+          done
 
       # One step per APK: archive: false accepts a single file path and names the
       # artifact after the file itself, so `name:` is left off deliberately.

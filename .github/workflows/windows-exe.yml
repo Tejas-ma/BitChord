@@ -145,8 +145,26 @@ jobs:
           Write-Host "raw='$raw' -> '$version'"
           "value=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
 
+      # Desktop tests do not need the native libraries, but desktopApp's
+      # processResources pulls them in, so a failing cl.exe/link showed up in a
+      # step called "Run the JVM tests" — and GitHub then skipped every step
+      # after it, native build, jpackage and Inno Setup included. Building them
+      # first gives that failure its own name; when they succeed, the tests and
+      # the installers find the libraries already up to date.
+      - name: Build the native libraries
+        shell: pwsh
+        run: |
+          Remove-Item Env:ANDROID_HOME -ErrorAction SilentlyContinue
+          Remove-Item Env:ANDROID_SDK_ROOT -ErrorAction SilentlyContinue
+          .\gradlew.bat :desktopApp:windowsNatives `
+            "-Pbitchord.skipAndroid=true" `
+            --no-daemon --stacktrace
+
+      # inputs is empty on push and pull_request, where `inputs.run_tests` is
+      # null and `null != false` is false by GitHub's numeric coercion — the
+      # step was skipped on every event but a manual dispatch.
       - name: Run the JVM tests
-        if: inputs.run_tests != false
+        if: ${{ github.event_name != 'workflow_dispatch' || inputs.run_tests }}
         shell: pwsh
         run: |
           Remove-Item Env:ANDROID_HOME -ErrorAction SilentlyContinue
