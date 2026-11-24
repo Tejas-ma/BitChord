@@ -22,17 +22,6 @@
 #include <jni.h>
 
 #include <windows.h>
-// These three must be together, immediately after <windows.h>, and before any
-// header that can pull in <devpkey.h> or <mmdeviceapi.h>. The discovery header
-// expands DEFINE_PROPERTYKEY itself, but it only emits real PKEY_* definitions
-// when INITGUID is set before <propkeydef.h> is first included. Without this
-// order, SDK 10.0.26100 under MSVC leaves PKEY_Device_FriendlyName undeclared
-// (C2065) and lets the property-key macros collide (C2374); with it, the
-// definitions land in this one translation unit and the other DLL sources link
-// against them instead of failing with LNK2001.
-#include <initguid.h>
-#include <propkeydef.h>
-#include <functiondiscoverykeys_devpkey.h>
 #include <audioclient.h>
 #include <dwmapi.h>
 #include <mmdeviceapi.h>
@@ -52,6 +41,21 @@
 #include <vector>
 
 namespace {
+
+/*
+ * The one device property this file reads, written out rather than taken from
+ * <functiondiscoverykeys_devpkey.h>. That header expands DEFINE_PROPERTYKEY,
+ * and with <initguid.h> in front of it — the ordering this file used to carry
+ * so the key was defined once for the whole DLL — SDK 10.0.26100 under MSVC
+ * expands it into an initializer that no longer matches PROPERTYKEY, turning
+ * every key in the header into a C2440/C4430 wall. The Windows job stopped
+ * there, before jpackage. A property key is a GUID and a PID; neither needs a
+ * header, and a local constant needs no INITGUID.
+ */
+const PROPERTYKEY kDeviceFriendlyName = {
+    {0xa45c254e, 0xdf60, 0x4ef2, {0xb4, 0xd8, 0x00, 0x40, 0x7e, 0x2d, 0x5f, 0x11}},
+    14,
+};
 
 HWND g_window = nullptr;
 WNDPROC g_original_proc = nullptr;
@@ -556,7 +560,7 @@ IMMDevice* device_named(IMMDeviceEnumerator* enumerator, const std::wstring& wan
     for (UINT index = 0; index < count && match == nullptr; ++index) {
         IMMDevice* candidate = nullptr;
         if (FAILED(devices->Item(index, &candidate)) || candidate == nullptr) continue;
-        if (lower(property_string(candidate, PKEY_Device_FriendlyName)) == needle) {
+        if (lower(property_string(candidate, kDeviceFriendlyName)) == needle) {
             match = candidate;
         } else {
             candidate->Release();
@@ -633,7 +637,7 @@ bool start_client_locked(IMMDevice* device) {
         return false;
     }
     g_audio_endpoint_id = endpoint_id(device);
-    g_audio_device_name = property_string(device, PKEY_Device_FriendlyName);
+    g_audio_device_name = property_string(device, kDeviceFriendlyName);
     return true;
 }
 
@@ -802,7 +806,7 @@ jobjectArray list_devices(JNIEnv* env) {
                 IMMDevice* device = nullptr;
                 if (FAILED(devices->Item(index, &device)) || device == nullptr) continue;
                 values.push_back(endpoint_id(device));
-                values.push_back(property_string(device, PKEY_Device_FriendlyName));
+                values.push_back(property_string(device, kDeviceFriendlyName));
                 device->Release();
             }
             devices->Release();
