@@ -166,10 +166,13 @@ jobs:
             --no-daemon --stacktrace 2>&1 | Tee-Object -FilePath $log
           if ($LASTEXITCODE -ne 0) {
             # Reading a step's log needs an account that can see the repository;
-            # an annotation does not, so the compiler's own words are repeated
-            # there, escaped the way workflow commands expect.
-            $tail = (Get-Content $log -Tail 30) -join "`n"
-            $tail = $tail -replace '%', '%25' -replace "`r", '' -replace "`n", '%0A'
+            # an annotation does not, so the failure itself is repeated there,
+            # escaped the way workflow commands expect. Gradle's stack trace is
+            # dropped — it says nothing about why the compiler stopped.
+            $body = Get-Content $log -Tail 250 |
+              Where-Object { $_ -notmatch '^\s+at |^org\.gradle|^\s*$|^Caused by: org\.gradle' } |
+              Select-Object -First 40
+            $tail = ($body -join "`n") -replace '%', '%25' -replace "`r", '' -replace "`n", '%0A'
             Write-Host "::error title=Native build failed::$tail"
             exit 1
           }
