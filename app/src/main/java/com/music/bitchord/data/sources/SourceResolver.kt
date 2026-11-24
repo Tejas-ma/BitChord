@@ -207,7 +207,17 @@ object SourceResolver {
         // reopen disabled JioSaavn/addon tracks already sitting in the queue.
         // Resolve the pin only from the enabled list so Off means off for both
         // newly matched tracks and source-backed rows queued earlier.
+        //
+        // An addon row the listener picked by hand keeps playing while
+        // automatic addon usage is off: the switch stops lookups nobody asked
+        // for, not the row they chose from an addon's own search. Its own
+        // switch still has to be on, and the connection's ceiling still
+        // applies, because this asks for the same list with addons included.
         val pinned = active.firstOrNull { it.configId == configId }
+            ?: pickedMix?.let {
+                SourceRegistry.activeForPlayback(includeAddons = true)
+                    .firstOrNull { it.configId == configId && it.kind == SourceKind.ADDON }
+            }
 
         // The upgrade path: with lossless asked for and the pinned source
         // unable to serve it, anything ranked above it that can is worth

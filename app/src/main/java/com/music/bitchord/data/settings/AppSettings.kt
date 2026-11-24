@@ -373,6 +373,20 @@ object AppSettings {
     val directSourceStream = MutableStateFlow(false)
 
     /**
+     * Whether addons are used without being asked.
+     *
+     * On by default, and on means the resolver treats an addon exactly like
+     * any other source: it can win a track's opening stream, stand in for
+     * YouTube, and be swapped in by [QualityUpgrade][com.music.bitchord.playback.QualityUpgrade].
+     * Off stops every one of those automatic lookups while leaving the addons
+     * themselves configured — their rows, URLs and credentials stay, so turning
+     * this back on restores the old behaviour without re-adding anything. A row
+     * the listener picks by hand from an addon's search is unaffected: that is
+     * an explicit request for that addon, not an automatic one.
+     */
+    val automaticAddonUsage = MutableStateFlow(true)
+
+    /**
      * Widens stereo output via [com.music.bitchord.playback.SpatialAudioProcessor],
      * a stereo widening + cross-feed effect running inside ExoPlayer's own
      * pipeline. Not true object-based spatial audio — YouTube only ever hands
@@ -771,6 +785,41 @@ object AppSettings {
     val listenBrainzPrimaryArtistOnly = MutableStateFlow(false)
     val spotifySpdcToken = MutableStateFlow("")
 
+    // ── Song recognition (ACRCloud) ─────────────────────────────────────
+
+    /**
+     * The listener's own ACRCloud project, for recognising a hummed or sung
+     * line from inside the app.
+     *
+     * Empty until they paste a key pair in. The three values live encrypted in
+     * [AuthStore] — see [AcrCloudPrefs][com.music.bitchord.auth.AcrCloudPrefs]
+     * — and are mirrored here so the settings row and the recognition sheet can
+     * see them without a Keystore read on every frame.
+     */
+    val acrCloudHost = MutableStateFlow("")
+    val acrCloudAccessKey = MutableStateFlow("")
+    val acrCloudAccessSecret = MutableStateFlow("")
+
+    /**
+     * Whether the hum search is allowed to use those keys. Off parks the
+     * configuration without deleting it; on again resumes recognition with the
+     * same project.
+     */
+    val acrCloudEnabled = MutableStateFlow(true)
+
+    /**
+     * Whether the hum search has a complete, switched-on key pair.
+     *
+     * The question the recognition sheet asks before offering an in-app hum: a
+     * host and key with no secret is not a configuration, and a complete one
+     * switched off is a deliberate "do not use it". See [AcrCloudCredentials].
+     */
+    val hasValidAcrCloudConfig: Boolean
+        get() = acrCloudEnabled.value &&
+            acrCloudHost.value.isNotBlank() &&
+            acrCloudAccessKey.value.isNotBlank() &&
+            acrCloudAccessSecret.value.isNotBlank()
+
     // ── Discord Rich Presence ───────────────────────────────────────────
 
     /**
@@ -945,6 +994,7 @@ object AppSettings {
         prefs = context.getSharedPreferences("bitchord_settings", Context.MODE_PRIVATE)
         this.authStore = authStore
         com.music.bitchord.data.spotify.LocalPlaylistStore.init(context)
+        com.music.bitchord.data.PlaylistCoverStore.init(context)
         com.music.bitchord.data.OfflinePlaylists.init(
             context,
             likedTitle = context.getString(com.music.bitchord.R.string.auto_liked),
@@ -1007,6 +1057,7 @@ object AppSettings {
         loudnessOffOnSpeaker.value = prefs.getBoolean(KEY_LOUDNESS_OFF_ON_SPEAKER, true)
         dolbyAtmos.value = prefs.getBoolean(KEY_DOLBY_ATMOS, true)
         directSourceStream.value = prefs.getBoolean(KEY_DIRECT_SOURCE_STREAM, false)
+        automaticAddonUsage.value = prefs.getBoolean(KEY_AUTO_ADDON_USAGE, true)
         spatialAudio.value = prefs.getBoolean(KEY_SPATIAL_AUDIO, false)
         equalizerEnabled.value = prefs.getBoolean(KEY_EQ_ENABLED, false)
         equalizerMode.value = runCatching {
@@ -1108,6 +1159,14 @@ object AppSettings {
         listenBrainzToken.value = prefs.getString(KEY_LISTENBRAINZ_TOKEN, "").orEmpty()
         listenBrainzPrimaryArtistOnly.value = prefs.getBoolean(KEY_LISTENBRAINZ_PRIMARY_ARTIST_ONLY, false)
         spotifySpdcToken.value = prefs.getString(KEY_SPOTIFY_SPDC_TOKEN, "").orEmpty()
+        // A read against the encrypted store, which is why it happens here —
+        // once, beside the plain preferences — rather than from the settings
+        // row and the recognition sheet separately.
+        val acrCloud = runCatching { authStore.acrCloud }.getOrNull()
+        acrCloudHost.value = acrCloud?.host.orEmpty()
+        acrCloudAccessKey.value = acrCloud?.accessKey.orEmpty()
+        acrCloudAccessSecret.value = acrCloud?.accessSecret.orEmpty()
+        acrCloudEnabled.value = acrCloud?.enabled ?: true
         replayGenres.value = prefs.getBoolean(KEY_REPLAY_GENRES, true)
         filterNonMusicAudio.value = prefs.getBoolean(KEY_FILTER_NON_MUSIC_AUDIO, true)
         localMusicSort.value = readLocalMusicSort(KEY_LOCAL_MUSIC_SORT)
@@ -1331,6 +1390,11 @@ object AppSettings {
     fun setDirectSourceStream(value: Boolean) {
         directSourceStream.value = value
         prefs.edit().putBoolean(KEY_DIRECT_SOURCE_STREAM, value).apply()
+    }
+
+    fun setAutoAddonUsage(value: Boolean) {
+        automaticAddonUsage.value = value
+        prefs.edit().putBoolean(KEY_AUTO_ADDON_USAGE, value).apply()
     }
 
     fun setSpatialAudio(value: Boolean) {
@@ -1792,6 +1856,61 @@ object AppSettings {
         prefs.edit().putString(KEY_SPOTIFY_SPDC_TOKEN, value).apply()
         SpotifyToken.invalidate()
     }
+
+    /**
+     * Saves an ACRCloud key pair, normalising the host first.
+     *
+     * The dashboard shows the host as a bare name, and people paste it with the
+     * scheme still attached or a trailing slash. Both are the same server; a
+     * stored copy that says `https://` would be joined onto another scheme by
+     * the client and fail as a DNS error that reads like a wrong key.
+     */
+    fun setAcrCloudConfig(host: String, accessKey: String, accessSecret: String) {
+        val normalized = normalizeAcrCloudHost(host)
+        acrCloudHost.value = normalized
+        acrCloudAccessKey.value = accessKey.trim()
+        acrCloudAccessSecret.value = accessSecret.trim()
+        runCatching {
+            authStore.acrCloud = com.music.bitchord.auth.AcrCloudCredentials(
+                host = acrCloudHost.value,
+                accessKey = acrCloudAccessKey.value,
+                accessSecret = acrCloudAccessSecret.value,
+                enabled = acrCloudEnabled.value,
+            )
+        }
+    }
+
+    fun setAcrCloudEnabled(value: Boolean) {
+        acrCloudEnabled.value = value
+        runCatching {
+            authStore.acrCloud = com.music.bitchord.auth.AcrCloudCredentials(
+                host = acrCloudHost.value,
+                accessKey = acrCloudAccessKey.value,
+                accessSecret = acrCloudAccessSecret.value,
+                enabled = value,
+            )
+        }
+    }
+
+    /**
+     * Forgets the key pair. The saved addons and every other credential are
+     * untouched — this is one integration's keys, not a reset.
+     */
+    fun clearAcrCloud() {
+        acrCloudHost.value = ""
+        acrCloudAccessKey.value = ""
+        acrCloudAccessSecret.value = ""
+        acrCloudEnabled.value = true
+        runCatching { authStore.clearAcrCloud() }
+    }
+
+    /** The host as ACRCloud's dashboard writes it: no scheme, no trailing slash. */
+    fun normalizeAcrCloudHost(value: String): String = value.trim()
+        .removePrefix("https://")
+        .removePrefix("http://")
+        .trimEnd('/')
+        .let { if (it.endsWith("/v1/identify")) it.removeSuffix("/v1/identify") else it }
+        .trimEnd('/')
 
     fun setLastfmScrobbleEnabled(value: Boolean) {
         lastfmScrobbleEnabled.value = value
@@ -2285,6 +2404,7 @@ object AppSettings {
     private const val KEY_LOUDNESS_OFF_ON_SPEAKER = "loudness_off_on_speaker"
     private const val KEY_DOLBY_ATMOS = "dolby_atmos"
     private const val KEY_DIRECT_SOURCE_STREAM = "direct_source_stream"
+    private const val KEY_AUTO_ADDON_USAGE = "auto_addon_usage"
     private const val KEY_SPATIAL_AUDIO = "spatial_audio"
     private const val KEY_EQ_ENABLED = "equalizer_enabled"
     private const val KEY_EQ_MODE = "equalizer_mode"

@@ -15,6 +15,7 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
@@ -191,6 +192,9 @@ import com.music.bitchord.ui.screens.SourcesScreen
 import com.music.bitchord.data.sources.TrackMatcher
 import com.music.bitchord.ui.screens.SpotifyCanvasAuthScreen
 import com.music.bitchord.ui.screens.SpotifyLibraryScreen
+import com.music.bitchord.data.PlaylistCoverStore
+import java.io.File
+import com.music.bitchord.data.spotify.LocalPlaylistStore
 import com.music.bitchord.data.spotify.SPOTIFY_PAGE_PREFIX
 import com.music.bitchord.playback.AudioCache
 import com.music.bitchord.playback.LinkRequest
@@ -271,6 +275,7 @@ import com.music.bitchord.ui.components.isGlassSupported
 import com.music.bitchord.data.sources.SourceConfig
 import com.music.bitchord.data.sources.SourceKind
 import com.music.bitchord.data.sources.SourceRegistry
+import com.music.bitchord.ui.components.AcrCloudEditorAlert
 import com.music.bitchord.ui.components.ChoiceAlert
 import com.music.bitchord.ui.components.ListenBrainzTokenAlert
 import com.music.bitchord.ui.components.MiniPlayer
@@ -667,6 +672,7 @@ private fun BitChordApp(
     var showAccountSelector by remember { mutableStateOf(false) }
     var showListenBrainzLogin by remember { mutableStateOf(false) }
     var showLastfmLogin by remember { mutableStateOf(false) }
+    var showAcrCloudEditor by remember { mutableStateOf(false) }
     var showWebDavEditor by remember { mutableStateOf(false) }
     var showSmbEditor by remember { mutableStateOf(false) }
     // Discord Rich Presence: its own page under Account & integrations (a
@@ -1049,12 +1055,21 @@ private fun BitChordApp(
     }
     // Playlists imported without (or instead of) a YouTube Music account live
     // in the app's own store, and sit on the same shelf as the downloaded ones.
-    val localPlaylists by com.music.bitchord.data.spotify.LocalPlaylistStore.playlists.collectAsStateWithLifecycle()
+    val localPlaylists by LocalPlaylistStore.playlists.collectAsStateWithLifecycle()
+    val playlistCovers by PlaylistCoverStore.covers.collectAsStateWithLifecycle()
     val localPlaylistItems = localPlaylists.map { playlist ->
         ShelfItem(
             title = playlist.title,
             subtitle = stringResource(R.string.local_playlist_subtitle, playlist.songs.size),
-            thumbnailUrl = playlist.songs.firstOrNull { !it.thumbnailUrl.isNullOrBlank() }?.thumbnailUrl,
+            thumbnailUrl = playlist.customCoverPath
+                ?.takeIf { File(it).isFile }
+                ?.let { path ->
+                    Uri.fromFile(File(path)).buildUpon()
+                        .appendQueryParameter("v", playlist.coverHash ?: File(path).lastModified().toString())
+                        .build()
+                        .toString()
+                }
+                ?: playlist.songs.firstOrNull { !it.thumbnailUrl.isNullOrBlank() }?.thumbnailUrl,
             videoId = null,
             browseId = playlist.browseId,
         )
@@ -1368,6 +1383,36 @@ private fun BitChordApp(
     }
 
     val scope = rememberCoroutineScope()
+    // The playlist whose overflow launched the photo picker, held across the
+    // activity recreation the system picker can cause.
+    var pendingPlaylistCoverKey by rememberSaveable { mutableStateOf<String?>(null) }
+    val applyPlaylistCover: (String, String) -> Unit = { key, source ->
+        scope.launch {
+            val local = LocalPlaylistStore.getPlaylist(key)
+            val failure = if (local != null) {
+                LocalPlaylistStore.setCustomPlaylistCover(local.id, source).exceptionOrNull()
+            } else {
+                PlaylistCoverStore.setCover(key, source).exceptionOrNull()
+            }
+            if (failure != null) {
+                Toast.makeText(context, context.getString(R.string.failed), Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+    val playlistCoverPicker = rememberLauncherForActivityResult(
+        ActivityResultContracts.PickVisualMedia(),
+    ) { uri ->
+        val key = pendingPlaylistCoverKey
+        pendingPlaylistCoverKey = null
+        if (uri != null && key != null) applyPlaylistCover(key, uri.toString())
+    }
+    val playlistCoverContentPicker = rememberLauncherForActivityResult(
+        ActivityResultContracts.GetContent(),
+    ) { uri ->
+        val key = pendingPlaylistCoverKey
+        pendingPlaylistCoverKey = null
+        if (uri != null && key != null) applyPlaylistCover(key, uri.toString())
+    }
 
     // Copies tracks to the WebDAV server, leaving the local files alone.
     // A clash suspends the batch on WebDavUploads.conflict until the dialog
@@ -2842,6 +2887,7 @@ private fun BitChordApp(
         BackHandler(enabled = showUpdateDialog) { showUpdateDialog = false }
         BackHandler(enabled = showListenBrainzLogin) { showListenBrainzLogin = false }
         BackHandler(enabled = showLastfmLogin) { showLastfmLogin = false }
+        BackHandler(enabled = showAcrCloudEditor) { showAcrCloudEditor = false }
         BackHandler(enabled = discordDialog != null) { discordDialog = null }
         BackHandler(enabled = editingSource != null) { editingSource = null }
         BackHandler(enabled = choosingSourceQuality != null) { choosingSourceQuality = null }
@@ -3070,6 +3116,7 @@ private fun BitChordApp(
                                 onOpenLastfmLogin = { showLastfmLogin = true },
                                 onOpenDiscord = { navigator.push(AppRoute.Discord) },
                                 onOpenSpotify = { navigator.push(AppRoute.Spotify) },
+                                onEditAcrCloud = { showAcrCloudEditor = true },
                                 contentPadding = listPadding,
                             )
                         } else if (pageRoute == AppRoute.Sources) {
@@ -3283,6 +3330,17 @@ private fun BitChordApp(
                             }
                             // This page's songs being rearranged, drawn in place of its list.
                             val reordering = reorderTarget?.takeIf { it.browseId == page.browseId }
+                            // A local playlist carries its own cover fields; a remote owned
+                            // playlist has no local entity, so its cover lives in the
+                            // registry. The default artwork is used whenever neither has a
+                            // file that is still on disk.
+                            val localPagePlaylist = localPlaylists.firstOrNull {
+                                it.browseId == page.browseId || it.id == page.browseId
+                            }
+                            val registryCover = playlistCovers[PlaylistCoverStore.keyFor(page.browseId)]
+                            val pageCoverPath = localPagePlaylist?.customCoverPath
+                                ?.takeIf { File(it).isFile }
+                                ?: registryCover?.path?.takeIf { File(it).isFile }
                             DetailScreen(
                                 page = page,
                                 currentSong = player.song,
@@ -3388,6 +3446,8 @@ private fun BitChordApp(
                                 } else {
                                     null
                                 },
+                                customCoverPath = pageCoverPath,
+                                customCoverHash = localPagePlaylist?.coverHash ?: registryCover?.hash,
                             )
                         } else when ((destination as? AppDestination.Tab)?.index ?: selectedTab) {
                             TAB_HOME -> HomeScreen(
@@ -3920,6 +3980,7 @@ private fun BitChordApp(
                             if (voiceOpen) {
                                 VoiceInputDialog(
                                     onDismiss = { voiceOpen = false },
+                                    onPausePlayback = { controller?.pause() },
                                     onQuery = { spoken ->
                                         voiceOpen = false
                                         viewModel.onQueryChange(spoken)
@@ -5142,6 +5203,23 @@ private fun BitChordApp(
             // One of the offline player's own playlists, which are the user's
             // to rename and delete — all but Liked, which is the app's.
             val offlineEditable = OfflinePlaylists.get(target.browseId)?.takeUnless { it.isLiked }
+            val localPlaylistForCover = target.browseId?.let(LocalPlaylistStore::getPlaylist)
+            // Same editability rule as Rename/Delete, applied to the cover
+            // rows: a cover belongs to a local playlist, an offline player
+            // playlist, or an account playlist the page reports as owned.
+            val coverTargetKey = target.browseId
+                ?.takeIf { target.type == BrowseType.PLAYLIST }
+                ?.let {
+                    when {
+                        localPlaylistForCover != null -> localPlaylistForCover.browseId
+                        playlist != null -> playlist.browseId
+                        offlineEditable != null -> offlineEditable.browseId
+                        else -> null
+                    }
+                }
+            val storedCover = coverTargetKey?.let(PlaylistCoverStore::coverFor)
+            val hasCustomCover = localPlaylistForCover?.customCoverPath
+                ?.let { File(it).isFile } == true || storedCover != null
             BrowseActionsMenu(
                 // The live answer, not the one the target was built with.
                 target = target.copy(
@@ -5239,6 +5317,41 @@ private fun BitChordApp(
                             ).show()
                         }
                         browseActions = null
+                    }
+                },
+                hasCustomCover = hasCustomCover,
+                onSetCustomCover = coverTargetKey?.let { key ->
+                    {
+                        browseActions = null
+                        pendingPlaylistCoverKey = key
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+                            ActivityResultContracts.PickVisualMedia.isPhotoPickerAvailable(context)
+                        ) {
+                            playlistCoverPicker.launch(
+                                PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly),
+                            )
+                        } else {
+                            // The system picker is not on every 13+ device; the
+                            // document picker is the same one-image flow when
+                            // it is missing.
+                            playlistCoverContentPicker.launch("image/*")
+                        }
+                    }
+                },
+                onRemoveCustomCover = coverTargetKey?.takeIf { hasCustomCover }?.let { key ->
+                    {
+                        browseActions = null
+                        scope.launch {
+                            val local = LocalPlaylistStore.getPlaylist(key)
+                            val failure = if (local != null) {
+                                LocalPlaylistStore.removeCustomPlaylistCover(local.id).exceptionOrNull()
+                            } else {
+                                PlaylistCoverStore.removeCover(key).exceptionOrNull()
+                            }
+                            if (failure != null) {
+                                Toast.makeText(context, context.getString(R.string.failed), Toast.LENGTH_SHORT).show()
+                            }
+                        }
                     }
                 },
                 onRename = playlist?.let { p ->
@@ -5627,6 +5740,40 @@ private fun BitChordApp(
                     showListenBrainzLogin = false
                 },
                 onDismiss = { showListenBrainzLogin = false },
+            )
+        }
+
+        if (showAcrCloudEditor) {
+            var hostInput by remember { mutableStateOf(AppSettings.acrCloudHost.value) }
+            var accessKeyInput by remember { mutableStateOf(AppSettings.acrCloudAccessKey.value) }
+            var accessSecretInput by remember { mutableStateOf(AppSettings.acrCloudAccessSecret.value) }
+            val hasStored = AppSettings.acrCloudHost.value.isNotBlank() ||
+                AppSettings.acrCloudAccessKey.value.isNotBlank() ||
+                AppSettings.acrCloudAccessSecret.value.isNotBlank()
+            AcrCloudEditorAlert(
+                hazeState = hazeState,
+                host = hostInput,
+                accessKey = accessKeyInput,
+                accessSecret = accessSecretInput,
+                onHostChange = { hostInput = it },
+                onAccessKeyChange = { accessKeyInput = it },
+                onAccessSecretChange = { accessSecretInput = it },
+                canSave = hostInput.isNotBlank() &&
+                    accessKeyInput.isNotBlank() &&
+                    accessSecretInput.isNotBlank(),
+                onSave = {
+                    AppSettings.setAcrCloudConfig(hostInput, accessKeyInput, accessSecretInput)
+                    showAcrCloudEditor = false
+                },
+                onClear = if (hasStored) {
+                    {
+                        AppSettings.clearAcrCloud()
+                        showAcrCloudEditor = false
+                    }
+                } else {
+                    null
+                },
+                onDismiss = { showAcrCloudEditor = false },
             )
         }
 

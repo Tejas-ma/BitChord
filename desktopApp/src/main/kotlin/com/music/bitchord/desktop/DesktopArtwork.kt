@@ -45,15 +45,15 @@ internal object DesktopArtworkCache {
     /** Everything held, dropped — what the Storage settings' "Clear image cache" does. */
     fun clear() = images.clear()
 
-    suspend fun load(url: String?): ImageBitmap? {
+    suspend fun load(url: String?, cacheKey: String = url.orEmpty()): ImageBitmap? {
         if (url.isNullOrBlank()) return null
-        images.get(url)?.let { return it }
+        images.get(cacheKey)?.let { return it }
         return runCatching {
             URI(url).toURL().openConnection().apply {
                 connectTimeout = 10_000
                 readTimeout = 10_000
             }.getInputStream().use { stream -> stream.readBytes().decodeToImageBitmap() }
-        }.getOrNull()?.also { images.put(url, it) }
+        }.getOrNull()?.also { images.put(cacheKey, it) }
     }
 }
 
@@ -65,11 +65,14 @@ fun DesktopArtwork(
     contentScale: ContentScale = ContentScale.Crop,
     contentDescription: String? = null,
     px: Int? = null,
+    /** Overrides the cache key, e.g. a cover hash so replacing a local file redraws it. */
+    cacheKey: String? = null,
 ) {
     val sized = if (px != null) url.artworkAt(px) else url
-    val bitmap by produceState<ImageBitmap?>(initialValue = null, key1 = sized) {
+    val imageKey = cacheKey?.takeIf(String::isNotBlank) ?: sized.orEmpty()
+    val bitmap by produceState<ImageBitmap?>(initialValue = null, key1 = sized, key2 = imageKey) {
         value = withContext(Dispatchers.IO) {
-            DesktopArtworkCache.load(sized)
+            DesktopArtworkCache.load(sized, imageKey)
         }
     }
     if (bitmap == null) {

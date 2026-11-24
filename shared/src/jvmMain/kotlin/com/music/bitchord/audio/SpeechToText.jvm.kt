@@ -11,5 +11,9 @@ actual fun speechToText(): SpeechToText = UnavailableSpeechToText
 private object UnavailableSpeechToText : SpeechToText {
     override val isAvailable: Boolean = false
 
-    override suspend fun listen(timeoutMs: Int): String? = null
+    override suspend fun listen(
+        timeoutMs: Int,
+        onPartial: (String) -> Unit,
+        onRms: (Float) -> Unit,
+    ): String? = null
 }

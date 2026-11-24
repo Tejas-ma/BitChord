@@ -147,9 +147,11 @@ internal object DesktopSourceRegistry {
      * `worthPrefetching`.
      */
     fun mayServeFromAddon(song: Song): Boolean {
+        // An addon's own row was picked by hand and is that addon's whatever the automatic switch
+        // says, so it stays on the no-read-ahead path.
+        if (DesktopAddonSource.parseTrack(song.videoId) != null) return true
         val addons = playbackAdapters(null).filterIsInstance<AddonAdapter>()
         if (addons.isEmpty()) return false
-        if (DesktopAddonSource.parseTrack(song.videoId) != null) return true
         return hasYouTubeOriginal(song) && !song.isVideo && !DesktopOriginalVersion.isPinned(song.videoId)
     }
 
@@ -172,8 +174,26 @@ internal object DesktopSourceRegistry {
      */
     private fun playbackAdapters(quality: String?, forDownload: Boolean = false): List<SourceAdapter> {
         val ceiling = ceiling(quality)
-        return adapters(forDownload).filter { ceiling.permits(it.config.kind) }
+        // A download is an explicit request for a file, so it keeps its addons. A stream may only
+        // reach one automatically while automatic addon usage is on.
+        val includeAddons = forDownload || DesktopPersistence().autoAddonUsage()
+        return adapters(forDownload)
+            .filter { ceiling.permits(it.config.kind) }
+            .filter { includeAddons || it.config.kind != DesktopSourceKind.ADDON }
     }
+
+    /**
+     * The addon adapter behind a row the listener picked by hand, even while automatic addon usage
+     * is off. Its own switch and the connection's ceiling still apply: this is the one addon lookup
+     * the listener asked for, not a hole in the gate.
+     */
+    private fun explicitAddonAdapter(sourceId: String, quality: String?): SourceAdapter? =
+        configs()
+            .firstOrNull {
+                it.id == sourceId && it.kind == DesktopSourceKind.ADDON && it.enabled && it.isComplete
+            }
+            ?.takeIf { ceiling(quality).permits(it.kind) }
+            ?.let(::AddonAdapter)
 
     /**
      * For a download, minus any addon whose manifest says `allowDownloads: 0`, so the next source
@@ -216,7 +236,11 @@ internal object DesktopSourceRegistry {
         val moduleReference = DesktopModuleSource.parseTrack(song.videoId)
         val addonReference = DesktopAddonSource.parseTrack(song.videoId)
         val owned = when {
+            // The explicit-pick fallback is playback only: a download must still honour the
+            // addon's own `allowDownloads: 0`, which `playbackAdapters(forDownload = true)`
+            // has already applied to `available`.
             addonReference != null -> available.firstOrNull { it.config.id == addonReference.sourceId }
+                ?: if (!forDownload) explicitAddonAdapter(addonReference.sourceId, quality) else null
             moduleReference?.sourceId != null -> available.firstOrNull { it.config.id == moduleReference.sourceId }
             moduleReference != null -> available.firstOrNull {
                 it.config.kind == DesktopSourceKind.CUSTOM_MODULE || it.config.kind == DesktopSourceKind.MODULE
@@ -311,7 +335,9 @@ internal object DesktopSourceRegistry {
         excludedSourceId: String? = null,
     ): Result<DesktopLiveResolution> = runCatching {
         val available = playbackAdapters(quality)
-        val owned = available.any { it.owns(song) } ||
+        val addonReference = DesktopAddonSource.parseTrack(song.videoId)
+        val owned = (addonReference != null &&
+            (available.any { it.owns(song) } || explicitAddonAdapter(addonReference.sourceId, quality) != null)) ||
             DesktopModuleSource.parseTrack(song.videoId) != null ||
             song.videoId.startsWith("jiosaavn:")
         if (owned) {

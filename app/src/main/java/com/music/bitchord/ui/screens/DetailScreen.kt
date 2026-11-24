@@ -120,6 +120,7 @@ import coil3.compose.LocalPlatformContext
 import coil3.compose.AsyncImagePainter
 import coil3.request.ImageRequest
 import coil3.request.transformations
+import java.io.File
 import androidx.compose.runtime.mutableIntStateOf
 import kotlinx.coroutines.delay
 import androidx.compose.ui.layout.layout
@@ -367,6 +368,10 @@ fun DetailScreen(
      * [ArtworkPalette] so it reads as this page rather than a sheet over it.
      */
     reorder: (@Composable (ArtworkPalette) -> Unit)? = null,
+    /** A local WebP drawn over this playlist's normal artwork, when one is set. */
+    customCoverPath: String? = null,
+    /** Hash of [customCoverPath], so replacing it invalidates the image cache. */
+    customCoverHash: String? = null,
 ) {
     val rawSongs = (page.songs as? UiState.Success)?.data.orEmpty()
     // A folder keeps its own sort — the one its top bar menu sets — rather
@@ -600,6 +605,8 @@ fun DetailScreen(
                         onArtistClick = onArtistClick.takeIf { folder == null },
                         onToggleLibrary = onToggleLibrary,
                         onDownloadAll = folder?.onDownload?.let { download -> { download(songs) } },
+                        customCoverPath = customCoverPath,
+                        customCoverHash = customCoverHash,
                     )
                 }
             }
@@ -930,16 +937,40 @@ private fun ReleaseHeader(
     onToggleLibrary: (() -> Unit)?,
     /** The Cached songs folder's: saves every track on it to Downloads. Null hides it. */
     onDownloadAll: (() -> Unit)? = null,
+    customCoverPath: String? = null,
+    customCoverHash: String? = null,
 ) {
     val (credit, meta) = page.headerLines(songs.size, songs.playtime())
     // Every row on a release carries the same credit — see [pageCredit] — so
     // the first one speaks for the whole page, the same source the rows'
     // own long-press "Open artist" already reads from.
     val artist = songs.firstOrNull()
-    var artFailed by remember(page.thumbnailUrl) { mutableStateOf(false) }
+    val customFile = remember(customCoverPath) { customCoverPath?.let(::File)?.takeIf { it.isFile } }
+    val coverVersion = customCoverHash ?: customFile?.lastModified()?.toString()
+    var customCoverFailed by remember(customFile?.absolutePath, coverVersion) { mutableStateOf(false) }
+    val useCustomCover = customFile != null && !customCoverFailed
+    val context = LocalPlatformContext.current
+    val coverModel: Any? = remember(customFile, coverVersion, useCustomCover, page.thumbnailUrl) {
+        if (useCustomCover && customFile != null) {
+            val key = "playlist-cover:${customFile.absolutePath}:$coverVersion"
+            ImageRequest.Builder(context)
+                .data(customFile)
+                // Coil would otherwise key both caches on the unchanged path and
+                // keep serving the previous cover after a replacement.
+                .memoryCacheKey(key)
+                .diskCacheKey(key)
+                .build()
+        } else {
+            page.thumbnailUrl.artworkAt(HEADER_ART_PX)
+        }
+    }
+    var artFailed by remember(useCustomCover, coverVersion, page.thumbnailUrl) {
+        mutableStateOf(false)
+    }
     // A placeholder is a sleeve or it is nothing, as on the player: blown out
     // to the page's width it would only tint the top of the screen.
-    val bleed = fullBleed && page.thumbnailUrl != null && !artFailed
+    val hasCover = useCustomCover || page.thumbnailUrl != null
+    val bleed = fullBleed && hasCover && !artFailed
 
     Column(
         modifier = Modifier
@@ -963,10 +994,14 @@ private fun ReleaseHeader(
                     .aspectRatio(1f),
             ) {
                 AsyncImage(
-                    model = page.thumbnailUrl.artworkAt(HEADER_ART_PX),
+                    model = coverModel,
                     contentDescription = null,
                     contentScale = ContentScale.Crop,
-                    onState = { artFailed = it is AsyncImagePainter.State.Error },
+                    onState = { state ->
+                        if (state is AsyncImagePainter.State.Error) {
+                            if (useCustomCover) customCoverFailed = true else artFailed = true
+                        }
+                    },
                     modifier = Modifier
                         .matchParentSize()
                         // The mask below erases part of what this layer drew,
@@ -1013,7 +1048,7 @@ private fun ReleaseHeader(
             // placeholder sleeve rather than an empty square. Not shown while a
             // real one is still on its way, so a loading cover doesn't flash
             // a glyph first.
-            if (page.thumbnailUrl == null || artFailed) {
+            if (!hasCover || artFailed) {
                 CoverPlaceholder(
                     icon = page.placeholderIcon(),
                     base = palette.elevated,
@@ -1022,10 +1057,14 @@ private fun ReleaseHeader(
                 )
             }
             AsyncImage(
-                model = page.thumbnailUrl.artworkAt(HEADER_ART_PX),
+                model = coverModel,
                 contentDescription = null,
                 contentScale = ContentScale.Crop,
-                onState = { artFailed = it is AsyncImagePainter.State.Error },
+                onState = { state ->
+                    if (state is AsyncImagePainter.State.Error) {
+                        if (useCustomCover) customCoverFailed = true else artFailed = true
+                    }
+                },
                 modifier = Modifier.matchParentSize(),
             )
             // Animated cover art, inside the same frame. Always running:

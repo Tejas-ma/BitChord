@@ -123,3 +123,64 @@ internal object EncryptedPrefs {
     private fun causes(e: Throwable): List<Throwable> =
         generateSequence(e) { it.cause?.takeIf { cause -> cause !== it } }.take(8).toList()
 }
+
+/**
+ * The ACRCloud key pair used by the hum search, as one record.
+ *
+ * Three strings that are only useful together, plus the switch that says
+ * whether to use them; read and written as a unit so a half-saved trio cannot
+ * exist. [isConfigured] is the question the recognition sheet asks, and it is
+ * answered here rather than at each call site.
+ */
+internal data class AcrCloudCredentials(
+    val host: String = "",
+    val accessKey: String = "",
+    val accessSecret: String = "",
+    val enabled: Boolean = true,
+) {
+    val isConfigured: Boolean
+        get() = enabled && host.isNotBlank() && accessKey.isNotBlank() && accessSecret.isNotBlank()
+}
+
+/**
+ * The ACRCloud entries inside [AuthStore]'s encrypted file.
+ *
+ * Deliberately not a store of their own: another [EncryptedSharedPreferences]
+ * open is another Keystore round trip on the path to the settings screen, and
+ * these are credentials of exactly the kind that file already holds.
+ *
+ * Nothing here is exported: a backup carries the listener's configuration, not
+ * the keys to a project billing account.
+ */
+internal object AcrCloudPrefs {
+
+    private const val KEY_HOST = "acrcloud_host"
+    private const val KEY_ACCESS_KEY = "acrcloud_access_key"
+    private const val KEY_ACCESS_SECRET = "acrcloud_access_secret"
+    private const val KEY_ENABLED = "acrcloud_enabled"
+
+    fun read(prefs: SharedPreferences): AcrCloudCredentials = AcrCloudCredentials(
+        host = prefs.getString(KEY_HOST, "").orEmpty(),
+        accessKey = prefs.getString(KEY_ACCESS_KEY, "").orEmpty(),
+        accessSecret = prefs.getString(KEY_ACCESS_SECRET, "").orEmpty(),
+        enabled = prefs.getBoolean(KEY_ENABLED, true),
+    )
+
+    fun write(prefs: SharedPreferences, credentials: AcrCloudCredentials) {
+        prefs.edit().apply {
+            putString(KEY_HOST, credentials.host)
+            putString(KEY_ACCESS_KEY, credentials.accessKey)
+            putString(KEY_ACCESS_SECRET, credentials.accessSecret)
+            putBoolean(KEY_ENABLED, credentials.enabled)
+        }.apply()
+    }
+
+    fun clear(prefs: SharedPreferences) {
+        prefs.edit().apply {
+            remove(KEY_HOST)
+            remove(KEY_ACCESS_KEY)
+            remove(KEY_ACCESS_SECRET)
+            putBoolean(KEY_ENABLED, true)
+        }.apply()
+    }
+}

@@ -82,7 +82,8 @@ object DirectSourceGate {
      * until the window opens would leave this phone behind the others.
      */
     fun isActive(): Boolean =
-        AppSettings.directSourceStream.value && !ListenTogether.state.value.inParty &&
+        AppSettings.automaticAddonUsage.value &&
+            AppSettings.directSourceStream.value && !ListenTogether.state.value.inParty &&
             SourceResolver.directAddons().isNotEmpty()
 
     private data class Open(val playing: Set<String>, val next: String?)
@@ -199,6 +200,9 @@ object DirectSourceGate {
      * and the caller falls back to YouTube and says so with [startedOnYouTube].
      */
     suspend fun lookup(videoId: String, target: TrackMatcher.Target): SourceStream? {
+        // The switch may have gone off between the caller's own check and this call; a lookup
+        // started now would be exactly the automatic addon invocation it disables.
+        if (!isActive()) return null
         val fresh = Lookup(
             work = scope.async(TrackLog.about(videoId), start = CoroutineStart.LAZY) {
                 SourceResolver.directStream(target, lengthOf = { youTubeLength(videoId) })
