@@ -9,9 +9,12 @@ import com.music.bitchord.sharedui.resources.spotify_logo
 import org.jetbrains.compose.resources.painterResource
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.displayCutoutPadding
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.rounded.Cloud
@@ -47,6 +50,7 @@ fun AccountAndScrobblingScreen(
     onOpenLastfmLogin: () -> Unit,
     onOpenDiscord: () -> Unit,
     onOpenSpotify: () -> Unit,
+    onEditAcrCloud: () -> Unit,
     contentPadding: PaddingValues,
     modifier: Modifier = Modifier,
 ) {
@@ -66,6 +70,15 @@ fun AccountAndScrobblingScreen(
     val discordUsername by AppSettings.discordUsername.collectAsStateWithLifecycle()
     val discordRpcEnabled by AppSettings.discordRpcEnabled.collectAsStateWithLifecycle()
     val spotifyConnected by AppSettings.spotifySpdcToken.collectAsStateWithLifecycle()
+    val acrCloudHost by AppSettings.acrCloudHost.collectAsStateWithLifecycle()
+    val acrCloudAccessKey by AppSettings.acrCloudAccessKey.collectAsStateWithLifecycle()
+    val acrCloudAccessSecret by AppSettings.acrCloudAccessSecret.collectAsStateWithLifecycle()
+    val acrCloudEnabled by AppSettings.acrCloudEnabled.collectAsStateWithLifecycle()
+    // Keys present is what the switch and the row's sentence are about; whether
+    // they are switched on is the switch's own state.
+    val acrCloudHasKeys = acrCloudHost.isNotBlank() &&
+        acrCloudAccessKey.isNotBlank() &&
+        acrCloudAccessSecret.isNotBlank()
 
     Column(
         modifier = modifier
@@ -73,7 +86,13 @@ fun AccountAndScrobblingScreen(
             .verticalScroll(rememberScrollState())
             .padding(contentPadding),
     ) {
-        SettingsPageTitle(stringResource(R.string.account_integrations))
+        // The page title is the first thing under the floating bar, and the bar
+        // is inset off the status bar rather than off the cutout. Both are
+        // applied here so the header cannot end up under either in portrait,
+        // landscape or a freeform window.
+        Column(Modifier.statusBarsPadding().displayCutoutPadding()) {
+            SettingsPageTitle(stringResource(R.string.account_integrations))
+        }
 
         // One card: who is signed in, which profile is listening, and the way
         // out, with the explanation of profiles underneath.
@@ -320,7 +339,43 @@ fun AccountAndScrobblingScreen(
             }
         }
 
-        Spacer(Modifier.height(24.dp))
+        // Song recognition sits below scrobbling because both answer "what is
+        // this track?" — one from history, this one from the microphone.
+        SettingsGroup(
+            header = stringResource(R.string.song_recognition),
+            footer = stringResource(R.string.acrcloud_description),
+        ) {
+            SettingsRow(
+                icon = SfIcons.GraphicEq,
+                title = "ACRCloud",
+                subtitle = if (acrCloudHasKeys) {
+                    stringResource(R.string.acrcloud_configured, acrCloudHost)
+                } else {
+                    stringResource(R.string.acrcloud_not_configured)
+                },
+                trailing = {
+                    IosSwitch(
+                        // Without keys the switch has nothing to switch on; the
+                        // row tap opens the editor instead, so showing it as on
+                        // would claim a configuration that is not there.
+                        checked = acrCloudHasKeys && acrCloudEnabled,
+                        onCheckedChange = { checked ->
+                            if (checked && !acrCloudHasKeys) {
+                                onEditAcrCloud()
+                            } else {
+                                AppSettings.setAcrCloudEnabled(checked)
+                            }
+                        },
+                    )
+                },
+                onClick = onEditAcrCloud,
+            )
+        }
+
+        // The last rows on the page have to scroll clear of the navigation bar
+        // and the floating tab bar/mini player above it, which the caller's
+        // padding budgets for by height alone.
+        Spacer(Modifier.navigationBarsPadding().height(24.dp))
     }
 }
 

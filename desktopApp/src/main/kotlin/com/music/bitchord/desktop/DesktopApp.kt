@@ -172,6 +172,8 @@ import androidx.compose.material.icons.rounded.RemoveCircleOutline
 import androidx.compose.material.icons.rounded.Settings
 import androidx.compose.material.icons.rounded.Share
 import androidx.compose.material.icons.rounded.MoreHoriz
+import java.io.File
+import java.nio.file.Path
 import androidx.compose.material.icons.rounded.Sort
 import androidx.compose.material.icons.rounded.Tune
 import androidx.compose.material.icons.rounded.VolumeUp
@@ -1534,6 +1536,61 @@ fun BitChordDesktopApp() {
         }
     }
 
+    /** The playlist entity behind an open local page, or null for a remote or read-only page. */
+    fun localPlaylistFor(collection: DesktopCollection?): DesktopPlaylist? =
+        collection?.let { current -> playlists.firstOrNull { it.id == current.browseId } }
+
+    fun setPlaylistCover(collection: DesktopCollection, source: Path) {
+        scope.launch {
+            DesktopPlaylistCovers.setCustomPlaylistCover(collection.browseId, source)
+                .onSuccess { cover ->
+                    val local = localPlaylistFor(collection)
+                    if (local != null) {
+                        playlists = playlists.map {
+                            if (it.id == local.id) {
+                                it.copy(customCoverPath = cover.path, coverHash = cover.hash)
+                            } else {
+                                it
+                            }
+                        }
+                        persistence.savePlaylists(playlists)
+                    }
+                }
+                .onFailure { error ->
+                    val message = error.message ?: "Could not set the playlist cover"
+                    playlistError = message
+                    DesktopTrackLog.log("playlist cover: $message")
+                }
+        }
+    }
+
+    fun chooseAndSetOpenPlaylistCover() {
+        val collection = openedCollection ?: return
+        val source = DesktopPlaylistCovers.chooseCoverFile() ?: return
+        setPlaylistCover(collection, source)
+    }
+
+    fun removeOpenPlaylistCover() {
+        val collection = openedCollection ?: return
+        scope.launch {
+            DesktopPlaylistCovers.removeCustomPlaylistCover(collection.browseId)
+                .onSuccess {
+                    val local = localPlaylistFor(collection)
+                    if (local != null) {
+                        playlists = playlists.map {
+                            if (it.id == local.id) it.copy(customCoverPath = null, coverHash = null) else it
+                        }
+                        persistence.savePlaylists(playlists)
+                    }
+                }
+                .onFailure { error ->
+                    val message = error.message ?: "Could not remove the playlist cover"
+                    playlistError = message
+                    DesktopTrackLog.log("playlist cover: $message")
+                }
+        }
+    }
+
     fun openPlaylist(playlist: DesktopPlaylist) {
         showCollection(
             DesktopCollection(
@@ -2486,7 +2543,13 @@ fun BitChordDesktopApp() {
             ShelfItem(
                 title = playlist.title,
                 subtitle = "Playlist • ${playlist.songs.size} songs",
-                thumbnailUrl = playlist.songs.firstOrNull()?.thumbnailUrl,
+                thumbnailUrl = playlist.customCoverPath
+                    ?.takeIf { File(it).isFile }
+                    ?.let { path ->
+                        val version = playlist.coverHash ?: File(path).lastModified().toString()
+                        "${File(path).toURI()}?v=$version"
+                    }
+                    ?: playlist.songs.firstOrNull()?.thumbnailUrl,
                 videoId = null,
                 browseId = LOCAL_PLAYLIST_PREFIX + playlist.id,
             )
@@ -4411,6 +4474,25 @@ fun BitChordDesktopApp() {
                             loadingMore = collectionLoadingMore,
                             onLoadMore = ::loadMoreCollectionSongs,
                             onRename = { overlays.rename = true }.takeIf { openedCollection?.owned == true },
+                            onSetCustomCover = { chooseAndSetOpenPlaylistCover() }.takeIf {
+                                openedCollection?.type == BrowseType.PLAYLIST &&
+                                    (openedCollection?.owned == true || localPlaylistFor(openedCollection) != null)
+                            },
+                            onRemoveCustomCover = { removeOpenPlaylistCover() }.takeIf {
+                                openedCollection?.type == BrowseType.PLAYLIST &&
+                                    (openedCollection?.owned == true || localPlaylistFor(openedCollection) != null) &&
+                                    (localPlaylistFor(openedCollection)?.customCoverPath
+                                        ?.let { File(it).isFile } == true ||
+                                        DesktopPlaylistCovers.coverFor(openedCollection?.browseId) != null)
+                            },
+                            hasCustomCover = localPlaylistFor(openedCollection)?.customCoverPath
+                                ?.let { File(it).isFile } == true ||
+                                DesktopPlaylistCovers.coverFor(openedCollection?.browseId) != null,
+                            customCoverPath = localPlaylistFor(openedCollection)?.customCoverPath
+                                ?.takeIf { File(it).isFile }
+                                ?: DesktopPlaylistCovers.coverFor(openedCollection?.browseId)?.path,
+                            customCoverHash = localPlaylistFor(openedCollection)?.coverHash
+                                ?: DesktopPlaylistCovers.coverFor(openedCollection?.browseId)?.hash,
                             onShare = openedCollection
                                 ?.takeIf { it.type == BrowseType.ALBUM || it.type == BrowseType.PLAYLIST }
                                 ?.let { collection -> { shareCollection(collection) } },
@@ -6942,7 +7024,20 @@ private fun DesktopSettingsScreen(
                 }
             }
             if (section == DesktopSettingsSection.SOURCES) item {
+                val sourcePersistence = DesktopPersistence()
+                var automaticAddons by remember { mutableStateOf(sourcePersistence.autoAddonUsage()) }
                 SettingsGroup(DesktopStrings["sources_order_header", "Sources · tried in this order"]) {
+                    SettingsToggle(
+                        DesktopStrings["automatic_addon_usage", "Automatic addon usage"],
+                        DesktopStrings[
+                            "automatic_addon_usage_subtitle",
+                            "Use addons automatically for playback and quality upgrades. Off keeps them saved and usable by hand.",
+                        ],
+                        automaticAddons,
+                    ) {
+                        automaticAddons = it
+                        sourcePersistence.saveAutoAddonUsage(it)
+                    }
                     val sourcesHeading = DesktopStrings["sources_order_header", "Sources · tried in this order"]
                     val userAddedIds = sourceConfigs.inSourceOrder()
                         .filter(DesktopSourceConfig::isUserAdded)
@@ -7348,6 +7443,12 @@ private fun DesktopCollectionPage(
     /** The three edits only a playlist's owner is offered. */
     onRename: (() -> Unit)?,
     onDelete: (() -> Unit)?,
+    /** Null unless this playlist can be edited; a read-only playlist gets no cover rows. */
+    onSetCustomCover: (() -> Unit)? = null,
+    onRemoveCustomCover: (() -> Unit)? = null,
+    hasCustomCover: Boolean = false,
+    customCoverPath: String? = null,
+    customCoverHash: String? = null,
     /** Opens the drag-into-order sheet; only a playlist the account owns can be rearranged. */
     onReorder: (() -> Unit)?,
     /** Copies the release's own YouTube Music link; null for anything with no link to share. */
@@ -7420,6 +7521,10 @@ private fun DesktopCollectionPage(
                     // The services hang motion artwork off the release, so a page for one asks for
                     // it directly rather than picking a track and hoping it sits on the right
                     // edition.
+                    val coverFile = customCoverPath?.let(::File)?.takeIf { it.isFile }
+                    val coverCacheKey = coverFile?.let {
+                        "playlist-cover:${customCoverHash ?: it.lastModified()}"
+                    }
                     val albumCanvas by produceState<DesktopCanvasArtwork?>(null, collection.title, animatedCanvas) {
                         value = if (!animatedCanvas) {
                             null
@@ -7434,11 +7539,19 @@ private fun DesktopCollectionPage(
                     }
                     Box(Modifier.size(286.dp).clip(RoundedCornerShape(8.dp))) {
                         DesktopArtwork(
-                            collection.thumbnailUrl ?: songs.firstOrNull()?.thumbnailUrl,
+                            coverFile?.toURI()?.toString()
+                                ?: collection.thumbnailUrl
+                                ?: songs.firstOrNull()?.thumbnailUrl,
                             Modifier.fillMaxSize(),
+                            cacheKey = coverCacheKey,
                         )
-                        albumCanvas?.let {
-                            DesktopCanvasView(it.url, Modifier.fillMaxSize(), fallbackUrl = it.fallbackUrl)
+                        // A custom cover is the user's choice and stays in front;
+                        // the album-art lookup is only a fallback for the default
+                        // sleeve.
+                        if (coverFile == null) {
+                            albumCanvas?.let {
+                                DesktopCanvasView(it.url, Modifier.fillMaxSize(), fallbackUrl = it.fallbackUrl)
+                            }
                         }
                     }
                     Spacer(Modifier.width(30.dp))
@@ -7514,6 +7627,28 @@ private fun DesktopCollectionPage(
                                                 share()
                                             },
                                         )
+                                    }
+                                    onSetCustomCover?.let { setCover ->
+                                        DropdownMenuItem(
+                                            text = { Text(DesktopStrings["set_custom_cover", "Set custom cover"]) },
+                                            leadingIcon = { Icon(Icons.Rounded.Edit, null) },
+                                            onClick = {
+                                                moreOpen = false
+                                                setCover()
+                                            },
+                                        )
+                                    }
+                                    if (hasCustomCover) {
+                                        onRemoveCustomCover?.let { removeCover ->
+                                            DropdownMenuItem(
+                                                text = { Text(DesktopStrings["remove_custom_cover", "Remove custom cover"]) },
+                                                leadingIcon = { Icon(Icons.Rounded.Delete, null) },
+                                                onClick = {
+                                                    moreOpen = false
+                                                    removeCover()
+                                                },
+                                            )
+                                        }
                                     }
                                     onRename?.let { rename ->
                                         DropdownMenuItem(

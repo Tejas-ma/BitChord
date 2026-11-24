@@ -122,6 +122,20 @@ class AuthStore(context: Context) {
         set(value) = prefs.edit().putString(KEY_SMB_PASSWORD, value).apply()
 
     /**
+     * The ACRCloud key pair behind the hum search.
+     *
+     * Encrypted like every other credential here: the access secret is the one
+     * that matters, and it must not travel in a backup export or sit in the
+     * plain settings file beside the host it belongs to. See [AcrCloudPrefs].
+     */
+    internal var acrCloud: AcrCloudCredentials
+        get() = AcrCloudPrefs.read(prefs)
+        set(value) = AcrCloudPrefs.write(prefs, value)
+
+    /** Forgets the ACRCloud key pair, leaving every other credential in place. */
+    internal fun clearAcrCloud() = AcrCloudPrefs.clear(prefs)
+
+    /**
      * The channel the listener chose to act as, if they chose one.
      *
      * Stored beside the cookie rather than in the plain settings because it is

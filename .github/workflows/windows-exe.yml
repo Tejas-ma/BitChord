@@ -156,8 +156,8 @@ jobs:
             --no-daemon --stacktrace
 
       # packageExe and packageMsi build the native libraries first (they depend
-      # on windowsNatives); createDistributable is the tree the portable zip is
-      # made from.
+      # on windowsNatives); createDistributable is the tree the portable zip and
+      # the Inno Setup wizard are made from.
       - name: Build the installers and the app image
         shell: pwsh
         run: |
@@ -196,6 +196,65 @@ jobs:
           if (-not $models) { throw 'no .onnx models were bundled' }
           Write-Host "Bundled: $($models -join ', ')"
 
+      # The custom wizard needs Inno Setup 6's compiler. The runner image does
+      # not guarantee it, and Chocolatey is the quickest way to add it when the
+      # standard install paths are empty.
+      - name: Locate or install Inno Setup 6
+        id: inno
+        shell: pwsh
+        run: |
+          function Find-Iscc {
+            $command = Get-Command iscc.exe -ErrorAction SilentlyContinue
+            if ($command) { return $command.Source }
+            $candidates = @(
+              (Join-Path ${env:ProgramFiles(x86)} 'Inno Setup 6\ISCC.exe'),
+              (Join-Path $env:ProgramFiles 'Inno Setup 6\ISCC.exe')
+            )
+            foreach ($candidate in $candidates) {
+              if (Test-Path $candidate) { return $candidate }
+            }
+            return $null
+          }
+
+          $iscc = Find-Iscc
+          if (-not $iscc) {
+            Write-Host 'Inno Setup 6 is not installed; installing it with Chocolatey.'
+            choco install innosetup --yes --no-progress
+            $chocoExit = $LASTEXITCODE
+            if ($chocoExit -ne 0) {
+              Write-Host "Chocolatey exited with $chocoExit; checking the standard paths anyway."
+            }
+            $iscc = Find-Iscc
+          }
+          if (-not $iscc) { throw "ISCC.exe was not found after installing Inno Setup 6 (Chocolatey exit $chocoExit)." }
+          Write-Host "Using Inno Setup compiler: $iscc"
+          "iscc=$iscc" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+
+      # A second installer over the same createDistributable app image: Welcome,
+      # Destination, Tasks (desktop shortcut and autostart), Ready, Installing,
+      # Finished. jpackage's own exe is still built above; this one is the
+      # wizard whose pages and install-time preferences can be customised.
+      - name: Build the Inno Setup wizard
+        shell: pwsh
+        env:
+          VERSION: ${{ steps.version.outputs.value }}
+          ISCC: ${{ steps.inno.outputs.iscc }}
+        run: |
+          $script = 'desktopApp/packaging/windows/installer.iss'
+          $appImage = 'desktopApp/build/compose/binaries/main/app/BitChord'
+          if (-not (Test-Path $script)) { throw "missing Inno Setup script: $script" }
+          if (-not (Test-Path $appImage)) { throw "createDistributable produced no app image at $appImage" }
+
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          $outputDir = (Resolve-Path dist).Path
+          & $env:ISCC "/DAppVersion=$env:VERSION" "/O$outputDir" $script
+          if ($LASTEXITCODE -ne 0) { throw "ISCC failed with exit code $LASTEXITCODE" }
+
+          $setup = Join-Path $outputDir "BitChord-$env:VERSION-windows-x64-inno-setup.exe"
+          $item = Get-Item $setup -ErrorAction SilentlyContinue
+          if (-not $item -or $item.Length -le 0) { throw "Inno Setup produced a missing or empty setup: $setup" }
+          Write-Host "Inno Setup wizard: $($item.FullName) ($($item.Length) bytes)"
+
       - name: Collect the artifacts
         shell: pwsh
         env:
@@ -233,7 +292,8 @@ jobs:
           $artifacts = @(
             "dist/BitChord-$env:VERSION-windows-x64-setup.exe",
             "dist/BitChord-$env:VERSION-windows-x64.msi",
-            $portable
+            $portable,
+            "dist/BitChord-$env:VERSION-windows-x64-inno-setup.exe"
           )
           foreach ($artifact in $artifacts) {
             $item = Get-Item $artifact -ErrorAction SilentlyContinue

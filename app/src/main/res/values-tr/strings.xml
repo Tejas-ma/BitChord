@@ -1420,4 +1420,33 @@
     <string name="diwali_title">BitChord mutlu Diwali diler</string>
     <string name="diwali_subtitle">Bu ışık festivali evinizi neşeyle, günlerinizi müzikle doldursun.</string>
     <string name="diwali_cta">Hadi kutlayalım</string>
+    <string name="automatic_addon_usage">Automatic addon usage</string>
+    <string name="automatic_addon_usage_subtitle">Use addons automatically for playback and quality upgrades. Off keeps them saved and usable by hand.</string>
+    <!-- Song recognition and voice search -->
+    <string name="song_recognition">Song recognition</string>
+    <string name="acrcloud">ACRCloud</string>
+    <string name="acrcloud_configured">Connected · %1$s</string>
+    <string name="acrcloud_not_configured">Add API keys for in-app hum recognition (uses Google by default)</string>
+    <string name="acrcloud_description">Recognise hummed or sung lines with your own ACRCloud project. Without keys, BitChord opens Google Sound Search.</string>
+    <string name="acrcloud_host">Host</string>
+    <string name="acrcloud_access_key">Access Key</string>
+    <string name="acrcloud_access_secret">Access Secret</string>
+    <string name="acrcloud_clear">Clear / Disconnect</string>
+    <string name="voice_tab">Voice</string>
+    <string name="song_tab">Song</string>
+    <string name="voice_listening">Listening...</string>
+    <string name="song_listening">Listening...</string>
+    <string name="hum_listening">Listening...</string>
+    <string name="song_matching">Matching...</string>
+    <string name="song_playing_music">Playing music</string>
+    <string name="song_hum_or_sing">Hum or sing</string>
+    <string name="voice_nothing_heard">Nothing was heard. Try again.</string>
+    <string name="voice_no_recognizer">Voice search is not available on this device.</string>
+    <string name="song_no_match">No match found.</string>
+    <string name="song_silent">That was too quiet to recognise.</string>
+    <string name="song_mic_unavailable">The microphone could not be opened.</string>
+    <string name="use_google_instead">Use Google instead</string>
+    <string name="google_search_unavailable">Google Sound Search is not available on this device.</string>
+    <string name="set_custom_cover">Set custom cover</string>
+    <string name="remove_custom_cover">Remove custom cover</string>
 </resources>

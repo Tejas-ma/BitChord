@@ -67,6 +67,16 @@
         android:name="android.permission.WRITE_EXTERNAL_STORAGE"
         android:maxSdkVersion="28" />
 
+    <!--
+      Android 11+ package visibility. Without this, resolveActivity cannot see
+      Google's Sound Search when a hum is recognised with no ACRCloud keys, so
+      a perfectly installed matcher looks unavailable and the sheet offers a
+      toast instead of opening it. The action itself is still implicit.
+    -->
+    <queries>
+        <package android:name="com.google.android.googlequicksearchbox" />
+    </queries>
+
     <application
         android:name=".BitChordApplication"
         android:allowBackup="true"
@@ -187,14 +197,15 @@
               "Open supported links" off; the SEND filter below is the path
               that always works, because sharing asks rather than routing.
 
-              One host, not a family of them. Every entry here becomes a line
-              the user has to tick under "Supported web addresses", so a
-              plausible-looking host that never appears in a real link (a `www.`
-              form of this one, say) is a line to tick by mistake instead of the
-              one that matters.
+              The hosts are the spellings a browser and Google Sound Search
+              actually produce, not a guess at a family: `music.youtube.com`
+              for YT Music, and `www.youtube.com`, `youtube.com` and
+              `m.youtube.com` because a recognised song comes back as an
+              ordinary YouTube link. Every entry is a line under "Supported web
+              addresses", which is why the list stays to these four.
 
-              Schemes and paths still multiply out: every scheme × every path
-              prefix listed here is one accepted shape.
+              Schemes and paths multiply out: every scheme × every host × every
+              path prefix listed here is one accepted shape.
             -->
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />
@@ -203,11 +214,16 @@
                 <data android:scheme="http" />
                 <data android:scheme="https" />
                 <data android:host="music.youtube.com" />
+                <data android:host="www.youtube.com" />
+                <data android:host="youtube.com" />
+                <data android:host="m.youtube.com" />
                 <data android:pathPrefix="/watch" />
                 <data android:pathPrefix="/playlist" />
                 <data android:pathPrefix="/browse" />
                 <data android:pathPrefix="/channel" />
                 <data android:pathPrefix="/search" />
+                <data android:pathPrefix="/shorts" />
+                <data android:pathPrefix="/embed" />
             </intent-filter>
             <!--
               youtu.be short links, which are a bare video id and nothing else.

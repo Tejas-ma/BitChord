@@ -18,10 +18,13 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.displayCutoutPadding
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
@@ -140,6 +143,7 @@ fun SourcesScreen(
     val smbShare by AppSettings.smbShare.collectAsStateWithLifecycle()
     val smbUsername by AppSettings.smbUsername.collectAsStateWithLifecycle()
     val smbPassword by AppSettings.smbPassword.collectAsStateWithLifecycle()
+    val automaticAddonUsage by AppSettings.automaticAddonUsage.collectAsStateWithLifecycle()
 
     /** Last known reachability per source, filled in as the probes come back. */
     val health = remember { mutableStateMapOf<String, SourceHealth>() }
@@ -202,7 +206,13 @@ fun SourcesScreen(
             .verticalScroll(rememberScrollState())
             .padding(contentPadding),
     ) {
-        SettingsPageTitle(stringResource(R.string.source))
+        // The page title is the first thing under the floating bar, and the bar
+        // is inset off the status bar rather than off the cutout. Both are
+        // applied here so the header cannot end up under either in portrait,
+        // landscape or a freeform window.
+        Column(Modifier.statusBarsPadding().displayCutoutPadding()) {
+            SettingsPageTitle(stringResource(R.string.source))
+        }
 
         SettingsGroup(
             header = stringResource(R.string.sources_order_header),
@@ -217,6 +227,22 @@ fun SourcesScreen(
                 }
             },
         ) {
+            // Above the numbered rows because it governs all of them, and
+            // inside this group because it is the addons it speaks for —
+            // switching it off leaves every row below exactly as configured.
+            SettingsRow(
+                icon = SfIcons.Extension,
+                title = stringResource(R.string.automatic_addon_usage),
+                subtitle = stringResource(R.string.automatic_addon_usage_subtitle),
+                trailing = {
+                    IosSwitch(
+                        checked = automaticAddonUsage,
+                        onCheckedChange = { AppSettings.setAutoAddonUsage(it) },
+                    )
+                },
+            )
+            RowDivider()
+
             // The addons are split out from the rest because they are the only
             // rows whose order is the *user's*. Everything else ranks by kind,
             // which is fixed in [SourceKind] and not something a drag should be
@@ -380,7 +406,10 @@ fun SourcesScreen(
             )
         }
 
-        Spacer(Modifier.height(32.dp))
+        // The last rows — track length tolerance, the addon row — have to scroll
+        // clear of the navigation bar and the floating tab bar/mini player above
+        // it, which the caller's padding budgets for by height alone.
+        Spacer(Modifier.navigationBarsPadding().height(32.dp))
     }
 
 }

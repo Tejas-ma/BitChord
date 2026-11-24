@@ -127,6 +127,16 @@ fun BrowseActionsMenu(
      */
     isPinned: Boolean = false,
     onTogglePin: (() -> Unit)? = null,
+    /**
+     * Whether this playlist already has a local custom cover. Only meaningful
+     * when [onRemoveCustomCover] is also supplied, which the caller does only
+     * for a playlist the account owns or keeps on this device.
+     */
+    hasCustomCover: Boolean = false,
+    /** Null on albums, artists, and every playlist that cannot be edited here. */
+    onSetCustomCover: (() -> Unit)? = null,
+    /** Null unless [hasCustomCover] and the playlist is editable. */
+    onRemoveCustomCover: (() -> Unit)? = null,
     onRename: ((String) -> Unit)? = null,
     /**
      * Opens the reorder page for one of the account's own playlists — set
@@ -241,6 +251,14 @@ fun BrowseActionsMenu(
                     stringResource(if (isPinned) R.string.unpin else R.string.pin),
                     onClick = it,
                 )
+            }
+            onSetCustomCover?.let {
+                ActionRow(SfIcons.Pencil, stringResource(R.string.set_custom_cover), onClick = it)
+            }
+            if (hasCustomCover) {
+                onRemoveCustomCover?.let {
+                    ActionRow(SfIcons.Trash, stringResource(R.string.remove_custom_cover), onClick = it)
+                }
             }
             if (onRename != null) {
                 ActionRow(SfIcons.Pencil, stringResource(R.string.rename)) {

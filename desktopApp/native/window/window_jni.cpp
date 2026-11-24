@@ -22,9 +22,19 @@
 #include <jni.h>
 
 #include <windows.h>
+// These three must be together, immediately after <windows.h>, and before any
+// header that can pull in <devpkey.h> or <mmdeviceapi.h>. The discovery header
+// expands DEFINE_PROPERTYKEY itself, but it only emits real PKEY_* definitions
+// when INITGUID is set before <propkeydef.h> is first included. Without this
+// order, SDK 10.0.26100 under MSVC leaves PKEY_Device_FriendlyName undeclared
+// (C2065) and lets the property-key macros collide (C2374); with it, the
+// definitions land in this one translation unit and the other DLL sources link
+// against them instead of failing with LNK2001.
+#include <initguid.h>
+#include <propkeydef.h>
+#include <functiondiscoverykeys_devpkey.h>
 #include <audioclient.h>
 #include <dwmapi.h>
-#include <functiondiscoverykeys_devpkey.h>
 #include <mmdeviceapi.h>
 #include <propvarutil.h>
 #include <windowsx.h>

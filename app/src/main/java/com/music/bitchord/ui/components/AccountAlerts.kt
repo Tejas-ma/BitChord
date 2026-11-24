@@ -23,7 +23,10 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Check
+import androidx.compose.material.icons.rounded.Visibility
+import androidx.compose.material.icons.rounded.VisibilityOff
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -930,5 +933,109 @@ internal fun AlertScaffold(
                 ),
             content = content,
         )
+    }
+}
+
+/**
+ * The ACRCloud key pair, in the same frosted card as every other server editor
+ * — but with the secret masked and a reveal beside it, because this one is a
+ * billing credential rather than an address.
+ *
+ * Three fields rather than two: ACRCloud names a host and a key/secret pair,
+ * and all three have to be right before a hum is recognised. The host is
+ * trimmed on save (see [AppSettings.setAcrCloudConfig][com.music.bitchord.data.settings.AppSettings]),
+ * so a pasted `https://…/` from the dashboard works as typed.
+ */
+@OptIn(ExperimentalHazeMaterialsApi::class)
+@Composable
+fun AcrCloudEditorAlert(
+    hazeState: HazeState,
+    host: String,
+    accessKey: String,
+    accessSecret: String,
+    onHostChange: (String) -> Unit,
+    onAccessKeyChange: (String) -> Unit,
+    onAccessSecretChange: (String) -> Unit,
+    /** A host and both halves of the key, or there is nothing to save. */
+    canSave: Boolean,
+    onSave: () -> Unit,
+    /** Offered only once something is stored — a blank form has nothing to clear. */
+    onClear: (() -> Unit)?,
+    onDismiss: () -> Unit,
+) {
+    var revealSecret by remember { mutableStateOf(false) }
+    AlertScaffold(hazeState = hazeState, onDismiss = onDismiss) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 19.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            Text(
+                text = stringResource(R.string.acrcloud),
+                style = MaterialTheme.typography.bodyLarge.copy(fontSize = 17.sp, fontWeight = FontWeight.W600),
+                color = MaterialTheme.colorScheme.onSurface,
+                textAlign = TextAlign.Center,
+            )
+            Text(
+                text = stringResource(R.string.acrcloud_description),
+                modifier = Modifier.padding(top = 4.dp, bottom = 14.dp),
+                style = MaterialTheme.typography.bodyMedium.copy(fontSize = 13.sp, lineHeight = 17.sp),
+                color = MaterialTheme.colorScheme.onSurface,
+                textAlign = TextAlign.Center,
+            )
+            PillTextField(
+                value = host,
+                onValueChange = onHostChange,
+                placeholder = stringResource(R.string.acrcloud_host),
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri, imeAction = ImeAction.Next),
+            )
+            Spacer(Modifier.height(8.dp))
+            PillTextField(
+                value = accessKey,
+                onValueChange = onAccessKeyChange,
+                placeholder = stringResource(R.string.acrcloud_access_key),
+                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next),
+            )
+            Spacer(Modifier.height(8.dp))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(Modifier.weight(1f)) {
+                    PillTextField(
+                        value = accessSecret,
+                        onValueChange = onAccessSecretChange,
+                        placeholder = stringResource(R.string.acrcloud_access_secret),
+                        isPassword = !revealSecret,
+                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                        keyboardActions = KeyboardActions(onDone = { if (canSave) onSave() }),
+                    )
+                }
+                IconButton(onClick = { revealSecret = !revealSecret }) {
+                    Icon(
+                        imageVector = if (revealSecret) Icons.Rounded.VisibilityOff else Icons.Rounded.Visibility,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(19.dp),
+                    )
+                }
+            }
+        }
+        AlertRule()
+        AlertAction(
+            label = stringResource(R.string.save),
+            emphasised = true,
+            onClick = onSave,
+            enabled = canSave,
+        )
+        if (onClear != null) {
+            AlertRule()
+            AlertAction(
+                label = stringResource(R.string.acrcloud_clear),
+                emphasised = false,
+                destructive = true,
+                onClick = onClear,
+            )
+        }
+        AlertRule()
+        AlertAction(label = stringResource(R.string.cancel), emphasised = false, onClick = onDismiss)
     }
 }

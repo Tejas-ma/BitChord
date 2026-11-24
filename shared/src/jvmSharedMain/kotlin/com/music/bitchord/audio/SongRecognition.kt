@@ -89,9 +89,13 @@ object ShazamClient {
 
     /** Recognises [recording]'s audio, or answers null when Shazam has no match. */
     suspend fun identify(recording: PcmRecording): Result<RecognizedSong?> = runCatching {
-        val signature = ShazamFingerprint.signature(recording.samples, recording.sampleRate)
+        // Shazam's payload is defined around 16 kHz. A device that opened at
+        // 44.1/48 kHz is resampled here, at the boundary, so the signature's
+        // sample count and frame times describe the audio that was heard.
+        val normalized = recording.resampledTo(SAMPLE_RATE)
+        val signature = ShazamFingerprint.signature(normalized.samples, normalized.sampleRate)
         if (signature.isEmpty) return@runCatching null
-        identify(signature.toUri(), recording.sampleRate, recording.samples.size)
+        identify(signature.toUri(), normalized.sampleRate, normalized.samples.size)
     }
 
     /** The same, from a signature already built — for tests and for a re-send. */
@@ -181,17 +185,32 @@ class SongRecognition(
     private val recorder: PcmRecorder = PcmRecorder(),
 ) {
 
-    suspend fun listen(durationMs: Int = CAPTURE_MS): RecognitionResult {
+    suspend fun listen(
+        durationMs: Int = CAPTURE_MS,
+        onAmplitude: (Float) -> Unit = {},
+        /** Called once the capture has finished and the match request is about to start. */
+        onCaptureComplete: () -> Unit = {},
+    ): RecognitionResult {
         if (!recorder.isAvailable) return RecognitionResult.Unsupported
-        val samples = recorder.record(durationMs) ?: return RecognitionResult.Failed(
+        val captured = recorder.record(durationMs, onAmplitude) ?: return RecognitionResult.Failed(
             "The microphone could not be opened",
         )
-        if (samples.isEmpty()) return RecognitionResult.Failed("Nothing was recorded")
-        val recording = PcmRecording(samples)
+        val recording = captured.resampledTo(SAMPLE_RATE)
+        if (recording.samples.isEmpty()) return RecognitionResult.Failed("Nothing was recorded")
         if (!recording.hasSignal()) return RecognitionResult.Silent
+        onCaptureComplete()
         return ShazamClient.identify(recording).fold(
             onSuccess = { song -> if (song == null) RecognitionResult.NoMatch else RecognitionResult.Match(song) },
             onFailure = { RecognitionResult.Failed(it.message ?: "Could not reach Shazam") },
         )
+    }
+
+    /**
+     * Releases the microphone now rather than when a cancelled coroutine next
+     * resumes. The recognition sheet calls this from its dispose hook so
+     * Android's green indicator clears the moment it closes.
+     */
+    fun stop() {
+        recorder.stop()
     }
 }

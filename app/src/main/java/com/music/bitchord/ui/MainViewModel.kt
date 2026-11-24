@@ -2583,7 +2583,10 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         filter: SearchFilter,
     ): Pair<List<SearchResult>, List<SearchResult>> = coroutineScope {
         if (filter != SearchFilter.SONGS) return@coroutineScope emptyList<SearchResult>() to emptyList()
-        val active = SourceRegistry.activeForPlayback()
+        // Addons are asked here even when automatic addon usage is off: the
+        // listener typed this query, which makes showing its addon rows manual
+        // use. Playback of one still takes the explicit-pick path.
+        val active = SourceRegistry.activeForPlayback(includeAddons = true)
         val youtubeRank = active.indexOfFirst { it.kind == SourceKind.YOUTUBE }
             .let { if (it < 0) active.size else it }
 

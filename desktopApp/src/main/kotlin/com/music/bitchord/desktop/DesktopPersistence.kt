@@ -103,6 +103,16 @@ class DesktopPersistence {
     fun saveSourceEnabled(sourceId: String, enabled: Boolean) =
         saveBoolean("source_${sourceId}_enabled", enabled)
 
+    /**
+     * Whether addons may be used without being asked. On by default, as on Android, so an addon
+     * configured in an earlier build keeps substituting and upgrading exactly as it did. Off only
+     * stops automatic lookups: the addon configs stay, and a row picked from an addon's own search
+     * still plays from that addon.
+     */
+    fun autoAddonUsage(): Boolean = boolean(KEY_AUTO_ADDON_USAGE, true)
+
+    fun saveAutoAddonUsage(value: Boolean) = saveBoolean(KEY_AUTO_ADDON_USAGE, value)
+
     /** The source list is the desktop equivalent of Android's encrypted SourceRegistry state. */
     internal fun sourceConfigs(): List<DesktopSourceConfig> {
         val protected = DesktopPreferenceChunks.read(preferences, KEY_SOURCE_CONFIGS_PROTECTED)
@@ -284,7 +294,11 @@ class DesktopPersistence {
         val id = decode(fields[0]).ifBlank { return null }
         val title = decode(fields[1]).ifBlank { return null }
         val songs = fields[2].split(SONG_DELIMITER).filter(String::isNotBlank).mapNotNull(::decodeSong)
-        return DesktopPlaylist(id, title, songs)
+        // Fields 3 and 4 were added after playlists had already been written,
+        // so an older line simply has neither and keeps the default artwork.
+        val customCoverPath = fields.getOrNull(3)?.let(::decode)?.ifBlank { null }
+        val coverHash = fields.getOrNull(4)?.let(::decode)?.ifBlank { null }
+        return DesktopPlaylist(id, title, songs, customCoverPath, coverHash)
     }
 
     private fun encode(value: String): String =
@@ -306,6 +320,7 @@ class DesktopPersistence {
         private const val KEY_AUDIO_QUALITY_RUNGS = "audio_quality_rungs"
         const val KEY_SOURCE_CONFIGS = "source_configs"
         const val KEY_SOURCE_CONFIGS_PROTECTED = "source_configs_dpapi_v1"
+        private const val KEY_AUTO_ADDON_USAGE = "auto_addon_usage"
         const val MAX_HISTORY = 100
         const val MAX_QUEUE = 200
         const val DELIMITER = "|"
@@ -318,6 +333,10 @@ data class DesktopPlaylist(
     val id: String = UUID.randomUUID().toString(),
     val title: String,
     val songs: List<Song> = emptyList(),
+    /** The 512px WebP written by [DesktopPlaylistCovers], or null for the normal artwork. */
+    val customCoverPath: String? = null,
+    /** SHA-256 of [customCoverPath], used to bypass a stale artwork cache entry. */
+    val coverHash: String? = null,
 )
 
 private fun DesktopPlaylist.toPreferenceLine(): String = listOf(
@@ -347,4 +366,8 @@ private fun DesktopPlaylist.toPreferenceLine(): String = listOf(
             Base64.getUrlEncoder().withoutPadding().encodeToString(field.toByteArray(StandardCharsets.UTF_8))
         })
     },
+    Base64.getUrlEncoder().withoutPadding()
+        .encodeToString(customCoverPath.orEmpty().toByteArray(StandardCharsets.UTF_8)),
+    Base64.getUrlEncoder().withoutPadding()
+        .encodeToString(coverHash.orEmpty().toByteArray(StandardCharsets.UTF_8)),
 ).joinToString("#")

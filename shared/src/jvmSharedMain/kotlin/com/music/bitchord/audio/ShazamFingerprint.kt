@@ -5,17 +5,21 @@ import kotlin.math.PI
 import kotlin.math.cos
 import kotlin.math.ln
 import kotlin.math.max
+import kotlin.math.roundToInt
 
 /**
  * Shazam's acoustic signature, generated the way SongRec's reference
  * fingerprinter does — the format Shazam's own clients send, and the only one
  * its discovery endpoint accepts.
  *
- * The pipeline: a 2048-sample Hann-windowed FFT every 128 samples (a 125 Hz
- * frame rate), frequency-domain peak spreading, peak picking against a
- * neighbourhood spread in both time and frequency, and then the peaks are
- * packed into a `data:audio/vnd.shazam.sig;base64,…` URI with the container
- * header and CRC-32 the endpoint validates.
+ * The pipeline: a 2048-sample Hann-windowed FFT every hop that keeps a 125 Hz
+ * frame rate (128 samples at the normal 16 kHz), frequency-domain peak
+ * spreading, peak picking against a neighbourhood spread in both time and
+ * frequency, and then the peaks are packed into a
+ * `data:audio/vnd.shazam.sig;base64,…` URI with the container header and CRC-32
+ * the endpoint validates. The hop and the bin-to-Hz conversion both use the
+ * supplied rate, so a non-16 kHz buffer is not silently given 16 kHz time and
+ * frequency axes.
  *
  * No key, no account and no service of ours: the whole recogniser is this file
  * and one POST.
@@ -50,7 +54,8 @@ object ShazamFingerprint {
     }
 
     private const val FFT_SIZE = 2048
-    private const val HOP = 128
+    /** Frames per second the reference fingerprinter uses at every rate. */
+    private const val FRAME_RATE_HZ = 125
     private const val BINS = FFT_SIZE / 2 + 1
     private const val RING = 256
     private const val PEAK_AGE = 46
@@ -61,7 +66,11 @@ object ShazamFingerprint {
     private const val HEADER_BYTES = 56
 
     /**
-     * Builds the signature of [samples] — 16 kHz mono, as [PcmRecorder] returns.
+     * Builds the signature of [samples] at [sampleRateHz].
+     *
+     * The normal path feeds this a [PcmRecording] resampled to [SAMPLE_RATE];
+     * the rate argument and the derived hop are still honoured so the
+     * fingerprint is correct if a caller has a buffer at another rate.
      *
      * The buffer is processed whole; callers hand over the five or six seconds
      * worth recording, rather than SongRec's twelve, because that is what this
@@ -70,6 +79,10 @@ object ShazamFingerprint {
     fun signature(samples: ShortArray, sampleRateHz: Int = SAMPLE_RATE): Signature {
         val window = HANNING
         val fft = RealFft(FFT_SIZE)
+        // At 16 kHz this is exactly the reference's 128-sample hop. At another
+        // rate it keeps the same 8 ms frame spacing, so the frame numbers in
+        // the payload still describe real time rather than a shortened axis.
+        val hop = (sampleRateHz.toDouble() / FRAME_RATE_HZ).roundToInt().coerceAtLeast(1)
 
         // Ring of the last 256 frames' power spectra, and of their spread
         // versions, exactly as the reference does: peaks are picked against
@@ -86,9 +99,9 @@ object ShazamFingerprint {
         var spreadIndex = 0
 
         var offset = 0
-        while (offset + HOP <= samples.size) {
-            for (i in 0 until HOP) history[(historyIndex + i) and (FFT_SIZE - 1)] = samples[offset + i].toInt()
-            historyIndex = (historyIndex + HOP) and (FFT_SIZE - 1)
+        while (offset + hop <= samples.size) {
+            for (i in 0 until hop) history[(historyIndex + i) and (FFT_SIZE - 1)] = samples[offset + i].toInt()
+            historyIndex = (historyIndex + hop) and (FFT_SIZE - 1)
 
             // Oldest sample first, times the Hann window.
             for (i in 0 until FFT_SIZE) {
@@ -117,9 +130,9 @@ object ShazamFingerprint {
             spreadIndex = (spreadIndex + 1) and (RING - 1)
 
             if (spectra >= PEAK_AGE) {
-                pickPeaks(ring, spread, spreadIndex, spectra, bandPeaks)
+                pickPeaks(ring, spread, spreadIndex, spectra, bandPeaks, sampleRateHz)
             }
-            offset += HOP
+            offset += hop
         }
 
         return Signature(
@@ -135,6 +148,7 @@ object ShazamFingerprint {
         spreadIndex: Int,
         spectra: Int,
         out: Array<MutableList<Peak>>,
+        sampleRateHz: Int,
     ) {
         // The spectrum as it was 46 frames ago, against the spread one 49
         // frames ago: a peak has to be a local maximum among its neighbours in
@@ -175,7 +189,10 @@ object ShazamFingerprint {
             val correction = (after - before) * 32f / variation
             val correctedBin = (bin shl 6) + correction.toInt()
 
-            val hz = correctedBin * (16_000f / 2f / 1024f / 64f)
+            // correctedBin is 64× the FFT bin, so divide the bin width by 64
+            // as well. The rate is the buffer's own; a hard-coded 16 kHz here
+            // shifted every band when a device captured at 44.1 or 48 kHz.
+            val hz = correctedBin * (sampleRateHz.toFloat() / FFT_SIZE / 64f)
             val band = Band.entries.firstOrNull { hz >= it.fromHz && hz <= it.toHz } ?: continue
             out[band.ordinal] += Peak(
                 fftPassNumber = spectra - PEAK_AGE,

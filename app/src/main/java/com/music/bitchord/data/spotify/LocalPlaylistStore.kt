@@ -2,6 +2,7 @@ package com.music.bitchord.data.spotify
 
 import android.content.Context
 import android.content.SharedPreferences
+import com.music.bitchord.data.PlaylistCoverStore
 import com.music.bitchord.data.model.Song
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -12,6 +13,10 @@ data class LocalPlaylist(
     val id: String,
     val title: String,
     val songs: List<Song>,
+    /** The 512px WebP written by [PlaylistCoverStore], or null for the normal artwork. */
+    val customCoverPath: String? = null,
+    /** SHA-256 of [customCoverPath], used to bypass a stale image-cache entry. */
+    val coverHash: String? = null,
 ) {
     val browseId: String get() = "local:playlist:$id"
 }
@@ -40,6 +45,10 @@ object LocalPlaylistStore {
                 val obj = jsonArray.getJSONObject(i)
                 val id = obj.getString("id")
                 val title = obj.getString("title")
+                val customCoverPath = obj.optString("customCoverPath", "")
+                    .takeIf { it.isNotBlank() && it != "null" }
+                val coverHash = obj.optString("coverHash", "")
+                    .takeIf { it.isNotBlank() && it != "null" }
                 val songsArray = obj.getJSONArray("songs")
                 val songs = mutableListOf<Song>()
                 for (j in 0 until songsArray.length()) {
@@ -57,7 +66,7 @@ object LocalPlaylistStore {
                     )
                     songs.add(song)
                 }
-                list.add(LocalPlaylist(id, title, songs))
+                list.add(LocalPlaylist(id, title, songs, customCoverPath, coverHash))
             }
             _playlists.value = list
         }
@@ -94,6 +103,37 @@ object LocalPlaylistStore {
         return _playlists.value.firstOrNull { it.id == cleanId || it.id == id || it.browseId == id }
     }
 
+    /**
+     * Saves a custom cover for this local playlist.
+     *
+     * The image is normalized and written by [PlaylistCoverStore]; the model's
+     * fields are the local entity's copy of that cover, so a later load can
+     * draw it without first reading the cover registry.
+     */
+    suspend fun setCustomPlaylistCover(
+        playlistId: String,
+        sourceUriOrPath: String,
+    ): Result<LocalPlaylist> = runCatching {
+        val playlist = getPlaylist(playlistId) ?: error("Playlist not found")
+        val cover = PlaylistCoverStore.setCover(playlist.browseId, sourceUriOrPath).getOrThrow()
+        val updated = playlist.copy(customCoverPath = cover.path, coverHash = cover.hash)
+        replacePlaylist(updated)
+        updated
+    }
+
+    /** Deletes the WebP and clears both model fields. */
+    suspend fun removeCustomPlaylistCover(playlistId: String): Result<Unit> = runCatching {
+        val playlist = getPlaylist(playlistId) ?: error("Playlist not found")
+        PlaylistCoverStore.removeCover(playlist.browseId).getOrThrow()
+        replacePlaylist(playlist.copy(customCoverPath = null, coverHash = null))
+    }
+
+    private fun replacePlaylist(updated: LocalPlaylist) {
+        val next = _playlists.value.map { if (it.id == updated.id) updated else it }
+        _playlists.value = next
+        persist(next)
+    }
+
     private fun persist(list: List<LocalPlaylist>) {
         if (!this::prefs.isInitialized) return
         runCatching {
@@ -102,6 +142,8 @@ object LocalPlaylistStore {
                 val pObj = JSONObject()
                 pObj.put("id", playlist.id)
                 pObj.put("title", playlist.title)
+                pObj.put("customCoverPath", playlist.customCoverPath)
+                pObj.put("coverHash", playlist.coverHash)
                 val songsArray = JSONArray()
                 for (song in playlist.songs) {
                     val sObj = JSONObject()
