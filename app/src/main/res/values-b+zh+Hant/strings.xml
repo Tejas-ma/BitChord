@@ -1463,4 +1463,10 @@
     <string name="google_search_unavailable">Google Sound Search is not available on this device.</string>
     <string name="set_custom_cover">Set custom cover</string>
     <string name="remove_custom_cover">Remove custom cover</string>
+    <string name="automix_overview">Automix 總覽</string>
+    <string name="lan_sync">區域網路播放與佇列同步</string>
+    <string name="lan_sync_subtitle">在此 Wi-Fi 下跟隨其他已登入裝置，無需配對</string>
+    <string name="diwali_title">BitChord 祝你排燈節快樂</string>
+    <string name="diwali_subtitle">願這光之節慶讓你的家充滿歡樂，讓你的日子充滿音樂。</string>
+    <string name="diwali_cta">一起慶祝</string>
 </resources>
