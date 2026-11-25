@@ -62,7 +62,7 @@ env:
 
 jobs:
   windows:
-    name: Windows · exe, msi, portable zip
+    name: Windows · installer, portable zip
     runs-on: windows-2025
     timeout-minutes: 45
 
@@ -78,30 +78,8 @@ jobs:
 
       - uses: gradle/actions/setup-gradle@v5
 
-      # jpackage's msi needs WiX 3's candle/light. The runner does not always
-      # ship them, and installing through a package manager costs minutes; the
-      # release zip is fetched once into RUNNER_TEMP instead.
-      - name: Ensure WiX Toolset 3 is on PATH
-        shell: pwsh
-        run: |
-          $candle = Get-Command candle.exe -ErrorAction SilentlyContinue
-          $light = Get-Command light.exe -ErrorAction SilentlyContinue
-          if ($candle -and $light) {
-            Write-Host "WiX already on PATH: $($candle.Source)"
-            exit 0
-          }
-          $zip = Join-Path $env:RUNNER_TEMP 'wix314-binaries.zip'
-          if (-not (Test-Path $zip)) {
-            Invoke-WebRequest -UseBasicParsing `
-              -Uri 'https://github.com/wixtoolset/wix3/releases/download/wix3141rtm/wix314-binaries.zip' `
-              -OutFile $zip
-          }
-          $dir = Join-Path $env:RUNNER_TEMP 'wix314'
-          Expand-Archive -Path $zip -DestinationPath $dir -Force
-          $dir | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
-          if (-not (Get-ChildItem $dir -Filter 'candle.exe' -Recurse)) {
-            throw 'candle.exe was not found in wix314-binaries.zip'
-          }
+      # No WiX step: WiX is only needed by jpackage's msi, and this job no
+      # longer builds one. See "Build the app image" below for why.
 
       # Windows Installer wants MAJOR.MINOR.BUILD, each field inside its own
       # range. The app's own version may be "1.9", "v1.9.1" or "1.9.1-beta1";
@@ -190,15 +168,19 @@ jobs:
             "-Pbitchord.skipAndroid=true" "-Pbitchord.version=${{ steps.version.outputs.value }}" `
             --no-daemon --stacktrace
 
-      # packageExe and packageMsi build the native libraries first (they depend
-      # on windowsNatives); createDistributable is the tree the portable zip and
-      # the Inno Setup wizard are made from.
-      - name: Build the installers and the app image
+      # One app image, two deliverables — deliberately. jpackage's own exe and
+      # msi each package another copy of the same image, and the Inno wizard a
+      # third, so building and uploading all four put ~1.25 GB of near-identical
+      # installers in one artifact. The wizard (custom pages, desktop icon and
+      # autostart tasks) and the portable zip are both made from this single
+      # createDistributable tree. packageExe/packageMsi still exist for local
+      # use: ./gradlew :desktopApp:packageMsi.
+      - name: Build the app image
         shell: pwsh
         run: |
           Remove-Item Env:ANDROID_HOME -ErrorAction SilentlyContinue
           Remove-Item Env:ANDROID_SDK_ROOT -ErrorAction SilentlyContinue
-          .\gradlew.bat :desktopApp:packageExe :desktopApp:packageMsi :desktopApp:createDistributable `
+          .\gradlew.bat :desktopApp:createDistributable `
             "-Pbitchord.skipAndroid=true" "-Pbitchord.version=${{ steps.version.outputs.value }}" `
             --no-daemon --stacktrace
 
@@ -265,10 +247,11 @@ jobs:
           Write-Host "Using Inno Setup compiler: $iscc"
           "iscc=$iscc" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
 
-      # A second installer over the same createDistributable app image: Welcome,
-      # Destination, Tasks (desktop shortcut and autostart), Ready, Installing,
-      # Finished. jpackage's own exe is still built above; this one is the
-      # wizard whose pages and install-time preferences can be customised.
+      # The installer: Welcome, Destination, Tasks (desktop shortcut and
+      # autostart), Ready, Installing, Finished. It packages the same
+      # createDistributable tree the portable zip is made from, and unlike
+      # jpackage's own wizard its pages and install-time preferences can be
+      # customised.
       - name: Build the Inno Setup wizard
         shell: pwsh
         env:
@@ -296,12 +279,6 @@ jobs:
           VERSION: ${{ steps.version.outputs.value }}
         run: |
           New-Item -ItemType Directory -Force -Path dist | Out-Null
-          Get-ChildItem 'desktopApp/build/compose/binaries/main/exe' -Filter '*.exe' -ErrorAction SilentlyContinue |
-            ForEach-Object { Copy-Item $_.FullName "dist/BitChord-$env:VERSION-windows-x64-setup.exe" }
-          Get-ChildItem 'desktopApp/build/compose/binaries/main/msi' -Filter '*.msi' -ErrorAction SilentlyContinue |
-            ForEach-Object { Copy-Item $_.FullName "dist/BitChord-$env:VERSION-windows-x64.msi" }
-          if (-not (Test-Path "dist/BitChord-$env:VERSION-windows-x64-setup.exe")) { throw 'no .exe was produced' }
-          if (-not (Test-Path "dist/BitChord-$env:VERSION-windows-x64.msi")) { throw 'no .msi was produced' }
 
           $appImage = Get-ChildItem 'desktopApp/build/compose/binaries/main/app' -Directory |
             Where-Object { Test-Path (Join-Path $_.FullName 'app') } |
@@ -323,10 +300,19 @@ jobs:
             Compress-Archive -Path "$($appImage.FullName)\*" -DestinationPath $portable -CompressionLevel Optimal -Force
           }
 
+          # The image is what both deliverables compress, so its breakdown is
+          # printed here: a dependency that doubles the payload is then visible
+          # in the log instead of only in the artifact size.
+          Write-Host 'App image size breakdown:'
+          Get-ChildItem $appImage.FullName -Directory | ForEach-Object {
+            $bytes = (Get-ChildItem $_.FullName -Recurse -File | Measure-Object -Property Length -Sum).Sum
+            Write-Host ('  {0,-10} {1,9:N1} MB' -f $_.Name, ($bytes / 1MB))
+          }
+          $imageBytes = (Get-ChildItem $appImage.FullName -Recurse -File | Measure-Object -Property Length -Sum).Sum
+          Write-Host ('  {0,-10} {1,9:N1} MB' -f 'total', ($imageBytes / 1MB))
+
           # Uploading an empty file is worse than failing here, where the name says which one.
           $artifacts = @(
-            "dist/BitChord-$env:VERSION-windows-x64-setup.exe",
-            "dist/BitChord-$env:VERSION-windows-x64.msi",
             $portable,
             "dist/BitChord-$env:VERSION-windows-x64-inno-setup.exe"
           )

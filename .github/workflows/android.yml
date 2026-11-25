@@ -58,7 +58,16 @@ permissions:
 
 concurrency:
   group: android-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  # A run reported as "cancelled" is not the timeout: a timeout says "The job
+  # running ... exceeded the maximum execution time". What ends a run as
+  # cancelled is this group, when a newer run of the same workflow on the same
+  # ref starts and this flag lets it kill the one already building — which is
+  # how the prodRelease run above died in the middle of
+  # :shared:lintVitalAnalyzeRelease with :app:assembleProdRelease still to go.
+  # Pull requests still cancel superseded runs, since duplicate feedback is
+  # worthless; pushes to Devlopment/main queue instead of killing each other,
+  # so a release APK that has started always finishes.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   GRADLE_OPTS: -Dorg.gradle.jvmargs=-Xmx4608m -Dkotlin.daemon.jvm.options=-Xmx2048m -Djava.net.preferIPv4Stack=true
@@ -67,7 +76,11 @@ jobs:
   apk:
     name: Android · ${{ inputs.build_variant || 'devDebug' }}
     runs-on: ubuntu-24.04
-    timeout-minutes: 45
+    # A full prodRelease is three native ABI builds, R8, and the lint vital
+    # analysis of :app, :shared, :sharedUi and :wearos. 45 minutes left no room
+    # once the SDK/NDK downloads landed inside the run; this is a ceiling, not a
+    # target.
+    timeout-minutes: 75
 
     steps:
       - name: Checkout repository
@@ -89,12 +102,31 @@ jobs:
       - name: Grant execute permission for gradlew
         run: chmod +x gradlew
 
-      - name: Accept the Android SDK licenses
+      # Anything missing from the SDK is fetched by AGP *inside* the build: the
+      # NDK and CMake used to appear mid-run, between compilation and lint,
+      # where a multi-hundred-megabyte download is invisible until the job is
+      # already tight. Installing the same components up front makes that cost a
+      # named, bounded step. The NDK line covers app/build.gradle.kts's pin and
+      # AGP's own default r27.0, whichever module asks for it.
+      - name: Install the Android SDK components the build needs
         run: |
-          sdkmanager="${ANDROID_HOME:-$ANDROID_SDK_ROOT}/cmdline-tools/latest/bin/sdkmanager"
-          if [ -x "$sdkmanager" ]; then
-            yes | "$sdkmanager" --licenses > /dev/null
+          sdk_root="${ANDROID_HOME:-$ANDROID_SDK_ROOT}"
+          sdkmanager="$sdk_root/cmdline-tools/latest/bin/sdkmanager"
+          if [ ! -x "$sdkmanager" ]; then
+            sdkmanager="$(ls -d "$sdk_root"/cmdline-tools/*/bin/sdkmanager 2>/dev/null | sort -V | tail -n 1 || true)"
           fi
+          if [ ! -x "$sdkmanager" ]; then
+            echo "::warning::sdkmanager not found; Gradle will fetch the SDK packages itself."
+            exit 0
+          fi
+          yes | "$sdkmanager" --licenses > /dev/null || true
+          "$sdkmanager" --install \
+            "platforms;android-37" \
+            "build-tools;35.0.0" \
+            "cmake;3.22.1" \
+            "ndk;27.3.13750724" \
+            "ndk;27.0.12077973" ||
+            echo "::warning::sdkmanager could not install every package; Gradle will fetch what is missing."
           exit 0
 
       # sdk.dir is written explicitly: the image sets ANDROID_HOME, but a
@@ -169,16 +201,29 @@ jobs:
       # inputs is empty on push and pull_request, where `inputs.run_tests` is
       # null and `null != false` is false by GitHub's numeric coercion — which
       # is why this used to be skipped everywhere but a manual dispatch.
+      # No --no-daemon: the daemon keeps the configuration and the Kotlin
+      # compiler warm for the build step below instead of paying for a second
+      # full configuration from scratch in a fresh JVM.
       - name: Unit tests
         if: ${{ github.event_name != 'workflow_dispatch' || inputs.run_tests }}
         run: >
           ./gradlew :app:testDevDebugUnitTest
-          -Pbitchord.skipDesktop=true --no-daemon --max-workers=2 --stacktrace
+          -Pbitchord.skipDesktop=true --max-workers=2 --build-cache --stacktrace
 
+      # lintVital is AGP's fatal-only lint, and it is the most expensive thing in
+      # a release assembly: it re-analyses :app, :shared, :sharedUi and :wearos
+      # with its own embedded Kotlin (2.1) compiler, which is also where the
+      # "metadata is 2.3.0/2.4.0, expected 2.1.0" warnings come from. The
+      # packaged APK is byte-for-byte the same without it, so a release build in
+      # CI does not pay for it; run ./gradlew :app:lintVitalProdRelease locally
+      # (or add a dedicated lint job) when lint itself needs to gate a change.
       - name: Build ${{ steps.variant.outputs.name }}
+        env:
+          LINT_EXCLUSIONS: ${{ steps.variant.outputs.signed == 'true' && '-x lintVitalAnalyzeRelease -x lintVitalAnalyzeProdRelease -x lintVitalReportProdRelease -x lintVitalProdRelease' || '' }}
         run: >
           ./gradlew ${{ steps.variant.outputs.task }}
-          -Pbitchord.skipDesktop=true --no-daemon --max-workers=2 --stacktrace
+          -Pbitchord.skipDesktop=true --max-workers=2 --build-cache --stacktrace
+          $LINT_EXCLUSIONS
 
       # ABI splits are on in app/build.gradle.kts, so a build is three per-ABI
       # APKs plus a universal one. archive: false uploads a single file each and

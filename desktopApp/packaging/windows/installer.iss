@@ -53,7 +53,11 @@ Name: "autostart"; Description: "Start {#AppName} when I sign in to Windows"; Gr
 
 [Files]
 ; The complete createDistributable image: runtime, jars, natives and models.
-Source: "..\..\build\compose\binaries\main\app\BitChord\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+; Nothing debug-only belongs in an installer, so symbol and linker
+; intermediates are excluded by pattern rather than trusted to be absent: a
+; Visual Studio native build can leave .pdb/.ilk beside a DLL, and including
+; them costs compression time and install size for files no one runs.
+Source: "..\..\build\compose\binaries\main\app\BitChord\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs; Excludes: "*.pdb,*.ilk,*.lib,*.exp,*.map,*.ipdb,*.iobj,*.dSYM\*"
 
 [Icons]
 Name: "{autoprograms}\{#AppName}"; Filename: "{app}\{#AppExeName}"; WorkingDir: "{app}"
