@@ -51,7 +51,15 @@ permissions:
 
 concurrency:
   group: windows-exe-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  # A run reported as "cancelled" is this group, not the timeout: a timeout
+  # says "The job running ... exceeded the maximum execution time" and reports
+  # as a failure. With this flag unconditional, any second push to the same ref
+  # killed the run already building — the push run at 45536030493 died 85
+  # seconds in, so an installer payload that costs the better part of an hour
+  # was thrown away and nothing was published. Pull requests still cancel
+  # superseded runs, since duplicate feedback is worthless; pushes to
+  # Devlopment/main queue instead of killing each other.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   # Deliberately absent: the desktop build must not configure the Android modules.
@@ -167,6 +175,27 @@ jobs:
           .\gradlew.bat :shared:jvmTest :desktopUi:jvmTest :desktopApp:test `
             "-Pbitchord.skipAndroid=true" "-Pbitchord.version=${{ steps.version.outputs.value }}" `
             --no-daemon --stacktrace
+
+      # A step log needs an account that can see the repository; the JUnit
+      # report does not. When this step failed, all that was visible was
+      # "Run the JVM tests failed" and the name of the failing test had to be
+      # guessed, so the reports of the three test tasks are uploaded whether or
+      # not the run is readable. Nothing to upload is ignored: a native build
+      # failure earlier in the job never reaches the tests at all.
+      - name: Upload the test reports
+        if: failure()
+        uses: actions/upload-artifact@v6
+        with:
+          name: windows-test-reports
+          path: |
+            shared/build/reports/tests/
+            shared/build/test-results/
+            desktopUi/build/reports/tests/
+            desktopUi/build/test-results/
+            desktopApp/build/reports/tests/
+            desktopApp/build/test-results/
+          if-no-files-found: ignore
+          retention-days: 14
 
       # One app image, two deliverables — deliberately. jpackage's own exe and
       # msi each package another copy of the same image, and the Inno wizard a
