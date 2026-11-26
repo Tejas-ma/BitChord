@@ -49,8 +49,8 @@
 - **Hi-Res lossless audio** — FLAC/ALAC from a configured module source, with YouTube Music as fallback.
 - **Gapless playback with true crossfade**, adjustable 0–12s.
 - **Automix [Beta]** — DJ-style transitions with beat-matching and tempo-stretching.
-- **Offline downloads** — save tracks with embedded metadata.
-- **Local music library** integration.
+- **Offline downloads** — save tracks with embedded metadata. A finished download is recorded once, in place, and shows up in the device's library and in search without a second copy or a re-encode; partial `.part`/`.tmp` files are ignored.
+- **Local music library** integration, indexed as files land — on Android through MediaStore, on desktop by watching the music folders — so an offline track is found by text or voice search with no connection.
 - **Background playback** via a proper foreground media session.
 - **Apple-like lyrics animation** — credit to [binimum](https://github.com/binimum/am-lyrics).
 
@@ -61,6 +61,7 @@
 - **Scrobbling** to Last.fm and ListenBrainz.
 - **Listen Together** — host or join a synced listening party, with same-account LAN sync and hand-off between devices on the same network.
 - **Pluggable sources** — add, edit, test and health-check module sources.
+- **Google Drive backup** (Android) — your listening history, settings and custom covers sync between your own devices through BitChord's hidden app folder in your Drive. Restoring as a device writes its custom playlist and album covers back into this device's own cover directory and re-applies them, so they appear straight away; older backups without covers still restore.
 
     </td>
     <td width="50%" valign="top">
@@ -74,7 +75,7 @@
 - **Lyrics providers** — credit to [lrc.red](https://lrc.red), [BiniLyrics](https://github.com/binimum), [BetterLyrics](https://github.com/better-lyrics/better-lyrics), [PaxSenix](https://lyrics.paxsenix.org), [LyricsPlus](https://github.com/ibratabian17/YouLyPlus), [SimpMusic](https://github.com/maxrave-dev/SimpMusic), [Unison](https://unison.boidu.dev), [Megalobiz](https://www.megalobiz.com), [KuGou](https://www.kugou.com), [LRCLIB](https://lrclib.net), [Musixmatch](https://www.musixmatch.com) and [Genius](https://genius.com).
 - **Dynamic, artwork-driven theming** — Material palette extracted from album art.
 - **Frosted-glass UI** — Telegram-style translucent bars via Haze, Material 3 theming.
-- **Custom covers** — give a playlist or an album your own artwork; it is stored on the device and drawn on its header and cards, falling back to the embedded or fetched image when the file is missing or unreadable.
+- **Custom covers** — give a playlist or an album your own artwork from its header, overflow menu or bottom sheet on Android and desktop alike; it is stored on the device, drawn on its header and cards ahead of any fetched thumbnail, and the stored hash changes with it so an open page and the library behind it redraw instead of showing the previous image. It falls back to the embedded or fetched image when the file is missing or unreadable.
 
 #### Controls & Tweaks
 - **Per-network audio quality** — separate quality ceilings for Wi-Fi and mobile data.

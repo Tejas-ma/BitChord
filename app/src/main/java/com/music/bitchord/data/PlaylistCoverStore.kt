@@ -99,6 +99,65 @@ object PlaylistCoverStore {
         return lookup(albumKeyFor(raw))
     }
 
+    /**
+     * Every cover whose file is still on disk, keyed as [covers] is.
+     *
+     * This is what the cloud backup uploads: an entry whose file has been
+     * deleted is left out rather than serialised as a path to nothing.
+     */
+    fun exportCovers(): Map<String, PlaylistCover> =
+        _covers.value.filterValues { File(it.path).isFile }
+
+    /**
+     * Writes a cover that came back from the cloud into this device's own
+     * cover directory and registers it under [key].
+     *
+     * The bytes are the 512px WebP this store produced on the other device, so
+     * they are written as they are: re-encoding would only lose quality. The
+     * file name comes from [key], which means a restored cover replaces the
+     * local one at the same path; the fresh hash is what makes every consumer
+     * with a hash-derived cache key decode it again instead of drawing the old
+     * bitmap from memory.
+     */
+    suspend fun restoreCover(key: String, bytes: ByteArray): Result<PlaylistCover> = runCatching {
+        require(key.isNotBlank()) { "A cover key is required" }
+        require(this::appContext.isInitialized) { "PlaylistCoverStore has not been initialised" }
+        val cover = withContext(Dispatchers.IO) { writeRestored(key, bytes) }
+        _covers.value = _covers.value + (key to cover)
+        persist()
+        cover
+    }
+
+    private fun writeRestored(key: String, bytes: ByteArray): PlaylistCover {
+        require(bytes.size > 16) { "The backed-up cover is empty" }
+        // The backup holds exactly the WebP this store wrote, so the container
+        // is checked rather than decoded: a truncated or foreign file is
+        // refused here instead of being written over a cover that works.
+        val riff = bytes.size >= 12 &&
+            bytes[0] == 'R'.code.toByte() && bytes[1] == 'I'.code.toByte() &&
+            bytes[2] == 'F'.code.toByte() && bytes[3] == 'F'.code.toByte() &&
+            bytes[8] == 'W'.code.toByte() && bytes[9] == 'E'.code.toByte() &&
+            bytes[10] == 'B'.code.toByte() && bytes[11] == 'P'.code.toByte()
+        require(riff) { "The backed-up cover is not a WebP image" }
+
+        val directory = coverDirectory()
+        if (!directory.isDirectory && !directory.mkdirs()) {
+            error("The playlist cover folder could not be created")
+        }
+        val target = File(directory, coverFileName(key))
+        val temporary = File(directory, "${target.name}.tmp")
+        try {
+            temporary.writeBytes(bytes)
+            if (target.exists() && !target.delete()) {
+                error("The existing cover could not be replaced")
+            }
+            check(temporary.renameTo(target)) { "The cover could not be saved" }
+        } finally {
+            temporary.delete()
+        }
+        return PlaylistCover(target.absolutePath, sha256(target))
+    }
+
     /** [key], or the legacy spelling it replaced (`VL…` keys written before normalisation). */
     private fun lookup(key: String, legacy: String? = null): PlaylistCover? {
         val cover = _covers.value[key] ?: legacy?.takeIf { it != key }?.let { _covers.value[it] }

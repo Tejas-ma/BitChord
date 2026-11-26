@@ -2,6 +2,7 @@ package com.music.bitchord.data.spotify
 
 import android.content.Context
 import android.content.SharedPreferences
+import com.music.bitchord.data.PlaylistCover
 import com.music.bitchord.data.PlaylistCoverStore
 import com.music.bitchord.data.model.Song
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -156,6 +157,29 @@ object LocalPlaylistStore {
         val playlist = getPlaylist(playlistId) ?: error("Playlist not found")
         PlaylistCoverStore.removeCover(playlist.browseId).getOrThrow()
         replacePlaylist(playlist.copy(customCoverPath = null, coverHash = null))
+    }
+
+    /**
+     * Points every playlist whose cover key is [key] at a cover that has just
+     * been restored.
+     *
+     * A restored cover is written to this device's own directory, so the path
+     * the backup came from no longer exists; without this the playlist model
+     * would keep naming the old device's file and the list would draw the
+     * normal artwork until the playlist was next touched.
+     */
+    fun applyRestoredCover(key: String, cover: PlaylistCover) {
+        val target = PlaylistCoverStore.keyFor(key)
+        val updated = _playlists.value.map { playlist ->
+            if (PlaylistCoverStore.keyFor(playlist.browseId) == target) {
+                playlist.copy(customCoverPath = cover.path, coverHash = cover.hash)
+            } else {
+                playlist
+            }
+        }
+        if (updated == _playlists.value) return
+        _playlists.value = updated
+        persist(updated)
     }
 
     private fun replacePlaylist(updated: LocalPlaylist) {

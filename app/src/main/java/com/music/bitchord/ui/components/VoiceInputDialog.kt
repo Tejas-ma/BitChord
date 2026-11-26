@@ -203,6 +203,14 @@ fun VoiceInputDialog(
         // Paused before the capture starts, not after: the first second of a
         // Shazam capture is the one that matters most.
         onPausePlayback()
+        // One microphone, one owner. A recogniser left alive by the previous
+        // attempt holds the microphone — and Android's green indicator — and
+        // the song capture then reads a line that never starts, which is
+        // exactly the flat waveform this sheet must never show. Every path
+        // begins by tearing down whatever the last one opened.
+        runCatching { speech.cancel() }
+        runCatching { recognition.stop() }
+        runCatching { recorder.stop() }
         try {
             when {
                 tab == Tab.VOICE -> {
