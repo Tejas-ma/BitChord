@@ -74,6 +74,15 @@ jobs:
     runs-on: windows-2025
     timeout-minutes: 45
 
+    # `secrets` is not an accepted name in any `if:` expression (not at job
+    # level and not at step level), so asking whether the SignPath token exists
+    # happens here, where `env` does accept `secrets`. The value is a plain
+    # flag, never the token itself, so no other step is handed the secret.
+    # An unset secret evaluates to '', so a repo without them gets 'false' and
+    # publishes the installer unsigned instead of failing the run.
+    env:
+      SIGNPATH_ENABLED: ${{ secrets.SIGNPATH_API_TOKEN != '' && vars.SIGNPATH_ORGANIZATION_ID != '' }}
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6
@@ -379,10 +388,11 @@ jobs:
       # been approved and has the token and organization id to ask. The guard is
       # what keeps every other run — a pull request, a fork, the period before
       # approval — green: the setup is published unsigned instead of the job
-      # failing on a missing secret.
+      # failing on a missing secret. The flag is computed in the job env above
+      # because `secrets` cannot be read from an `if:`.
       - name: Submit the setup for signing
         id: signpath
-        if: ${{ secrets.SIGNPATH_API_TOKEN != '' && vars.SIGNPATH_ORGANIZATION_ID != '' }}
+        if: env.SIGNPATH_ENABLED == 'true'
         uses: SignPath/github-action-submit-signing-request@v2
         with:
           api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
