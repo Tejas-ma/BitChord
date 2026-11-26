@@ -42,6 +42,10 @@ class DesktopCollectionCoverTest {
         // A shelf card and the page it opens name the same playlist differently.
         assertEquals("abc", DesktopPlaylistCovers.keyFor("local:playlist:abc"))
         assertEquals("abc", DesktopPlaylistCovers.keyFor("  abc  "))
+        // A playlist's page carries the `VL` prefix its own model does not, and
+        // both have to name the same cover file or a cover set from a card
+        // never appears on the page it belongs to.
+        assertEquals("PLabc", DesktopPlaylistCovers.keyFor("VLPLabc"))
         // Album ids are already bare, and stay so.
         assertEquals("MPREb_album", DesktopPlaylistCovers.keyFor("MPREb_album"))
     }

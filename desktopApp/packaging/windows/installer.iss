@@ -39,7 +39,7 @@ DisableProgramGroupPage=yes
 ; The default output used by a local compile; CI overrides it with /O to stage
 ; the setup beside the other Windows artifacts.
 OutputDir=..\..\build\installer
-OutputBaseFilename={#AppName}-{#AppVersion}-windows-x64-inno-setup
+OutputBaseFilename={#AppName}-{#AppVersion}-windows-x64-setup
 Compression=lzma2/ultra64
 SolidCompression=yes
 WizardStyle=modern dynamic

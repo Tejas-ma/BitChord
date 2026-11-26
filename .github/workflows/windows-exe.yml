@@ -297,7 +297,7 @@ jobs:
           & $env:ISCC "/DAppVersion=$env:VERSION" "/O$outputDir" $script
           if ($LASTEXITCODE -ne 0) { throw "ISCC failed with exit code $LASTEXITCODE" }
 
-          $setup = Join-Path $outputDir "BitChord-$env:VERSION-windows-x64-inno-setup.exe"
+          $setup = Join-Path $outputDir "BitChord-$env:VERSION-windows-x64-setup.exe"
           $item = Get-Item $setup -ErrorAction SilentlyContinue
           if (-not $item -or $item.Length -le 0) { throw "Inno Setup produced a missing or empty setup: $setup" }
           Write-Host "Inno Setup wizard: $($item.FullName) ($($item.Length) bytes)"
@@ -316,7 +316,7 @@ jobs:
 
           # 7z is not guaranteed on PATH. Prefer it (it preserves the tree exactly), then the
           # standard install location, then the built-in Compress-Archive.
-          $portable = "dist/BitChord-$env:VERSION-windows-portable.zip"
+          $portable = "dist/BitChord-$env:VERSION-windows-x64-portable.zip"
           $sevenZip = (Get-Command 7z -ErrorAction SilentlyContinue).Source
           if (-not $sevenZip) {
             $candidate = Join-Path $env:ProgramFiles '7-Zip\7z.exe'
@@ -343,7 +343,7 @@ jobs:
           # Uploading an empty file is worse than failing here, where the name says which one.
           $artifacts = @(
             $portable,
-            "dist/BitChord-$env:VERSION-windows-x64-inno-setup.exe"
+            "dist/BitChord-$env:VERSION-windows-x64-setup.exe"
           )
           foreach ($artifact in $artifacts) {
             $item = Get-Item $artifact -ErrorAction SilentlyContinue
@@ -351,10 +351,71 @@ jobs:
           }
           Get-ChildItem dist | Format-Table Name, Length
 
-      - name: Upload the installers
-        uses: actions/upload-artifact@v6
+      # Each output is uploaded as itself (`archive: false`), never inside a
+      # `windows.zip`: a download is then the installer rather than an archive
+      # that has to be opened first, and the SignPath step below receives
+      # exactly the bytes this job built.
+      - name: Upload the setup
+        id: upload-setup
+        uses: actions/upload-artifact@v7
         with:
-          name: bitchord-windows-exe
-          path: dist/*
+          name: BitChord-${{ steps.version.outputs.value }}-windows-x64-setup
+          path: dist/BitChord-${{ steps.version.outputs.value }}-windows-x64-setup.exe
           if-no-files-found: error
+          archive: false
+          compression-level: 0
+
+      - name: Upload the portable build
+        id: upload-portable
+        uses: actions/upload-artifact@v7
+        with:
+          name: BitChord-${{ steps.version.outputs.value }}-windows-x64-portable
+          path: dist/BitChord-${{ steps.version.outputs.value }}-windows-x64-portable.zip
+          if-no-files-found: error
+          archive: false
+          compression-level: 0
+
+      # SignPath Foundation signs the installer only when this repository has
+      # been approved and has the token and organization id to ask. The guard is
+      # what keeps every other run — a pull request, a fork, the period before
+      # approval — green: the setup is published unsigned instead of the job
+      # failing on a missing secret.
+      - name: Submit the setup for signing
+        id: signpath
+        if: ${{ secrets.SIGNPATH_API_TOKEN != '' && vars.SIGNPATH_ORGANIZATION_ID != '' }}
+        uses: SignPath/github-action-submit-signing-request@v2
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: ${{ vars.SIGNPATH_PROJECT_SLUG || 'bitchord' }}
+          signing-policy-slug: ${{ vars.SIGNPATH_SIGNING_POLICY_SLUG || 'release-signing' }}
+          artifact-configuration-slug: ${{ vars.SIGNPATH_ARTIFACT_CONFIGURATION_SLUG || 'windows-installer' }}
+          github-artifact-id: ${{ steps.upload-setup.outputs.artifact-id }}
+          wait-for-completion: true
+          output-artifact-directory: signed
+          skip-decompress: true
+
+      # The signed copy replaces the uploaded one so the release attaches a
+      # signed installer. It is copied, never rewritten or repackaged: anything
+      # touching the file after signing would invalidate the signature.
+      - name: Take the signed setup
+        if: ${{ steps.signpath.outcome == 'success' }}
+        shell: pwsh
+        run: |
+          $name = "BitChord-${{ steps.version.outputs.value }}-windows-x64-setup.exe"
+          $signed = Get-ChildItem 'signed' -Recurse -Filter $name -File -ErrorAction SilentlyContinue |
+            Select-Object -First 1
+          if (-not $signed) { throw "SignPath returned no $name" }
+          Copy-Item $signed.FullName "dist/$name" -Force
+          Write-Host "Signed setup: $($signed.FullName) ($($signed.Length) bytes)"
+
+      - name: Upload the signed setup
+        if: ${{ steps.signpath.outcome == 'success' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: BitChord-${{ steps.version.outputs.value }}-windows-x64-setup
+          path: dist/BitChord-${{ steps.version.outputs.value }}-windows-x64-setup.exe
+          if-no-files-found: error
+          archive: false
+          overwrite: true
           compression-level: 0

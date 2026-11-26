@@ -39,6 +39,17 @@ class LocalPlaylistRemoveSongTest {
         assertEquals(listOf("b", "a"), idsOf(playlist.browseId))
     }
 
+    /**
+     * Ids are drawn from the clock, so playlists made back to back used to be
+     * able to land in the same millisecond and share an id — which collapsed
+     * the second one into the first, and pointed both at one cover file.
+     */
+    @Test
+    fun `playlists made back to back keep distinct ids`() {
+        val ids = (1..200).map { index -> save("t$index").id }
+        assertEquals(ids.size, ids.toSet().size)
+    }
+
     @Test
     fun `a song not on the playlist changes nothing`() {
         val playlist = save("a", "b")

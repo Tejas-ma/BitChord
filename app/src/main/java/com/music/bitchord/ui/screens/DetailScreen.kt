@@ -129,6 +129,8 @@ import androidx.compose.material.icons.automirrored.rounded.QueueMusic
 import androidx.compose.material.icons.rounded.Album
 import com.music.bitchord.data.LocalGroups
 import com.music.bitchord.data.OfflinePlaylists
+import com.music.bitchord.data.PlaylistCover
+import com.music.bitchord.data.PlaylistCoverStore
 import com.music.bitchord.data.matchesSearch
 import com.music.bitchord.data.sortedForLibrary
 import com.music.bitchord.data.useTrackTags
@@ -376,6 +378,19 @@ fun DetailScreen(
     /** Hash of [customCoverPath], so replacing it invalidates the image cache. */
     customCoverHash: String? = null,
 ) {
+    // The custom covers registered on this device. Read here rather than passed
+    // in: an artist's shelves and the top-release card draw albums, not this
+    // page, so they need the same overlay the album's own page uses — otherwise
+    // a cover set on an album would show in its header and be missing from
+    // every card linking to it.
+    val albumCovers by PlaylistCoverStore.covers.collectAsStateWithLifecycle()
+    // An album's own cover, when one is set and its file is still there. The
+    // caller's [customCoverPath] is a playlist's or a folder's, never an album's.
+    val albumCover = if (page.type == BrowseType.ALBUM) {
+        albumCovers[PlaylistCoverStore.albumKeyFor(page.browseId)]?.takeIf { File(it.path).isFile }
+    } else {
+        null
+    }
     val rawSongs = (page.songs as? UiState.Success)?.data.orEmpty()
     // A folder keeps its own sort — the one its top bar menu sets — rather
     // than the per-page one a release takes.
@@ -611,8 +626,8 @@ fun DetailScreen(
                         onArtistClick = onArtistClick.takeIf { folder == null },
                         onToggleLibrary = onToggleLibrary,
                         onDownloadAll = folder?.onDownload?.let { download -> { download(songs) } },
-                        customCoverPath = customCoverPath,
-                        customCoverHash = customCoverHash,
+                        customCoverPath = customCoverPath ?: albumCover?.path,
+                        customCoverHash = customCoverHash ?: albumCover?.hash,
                     )
                 }
             }
@@ -659,6 +674,7 @@ fun DetailScreen(
                         onToggleSaved = onToggleReleaseLibrary?.let { toggle ->
                             topRelease.browseId?.let { id -> { toggle(id) } }
                         },
+                        cover = albumCovers.coverFor(topRelease.browseId),
                     )
                 }
             }
@@ -882,6 +898,7 @@ fun DetailScreen(
                                 onClick = { onSectionItemClick(item) },
                                 onLongPress = onSectionItemLongPress?.let { { it(item) } },
                                 modifier = Modifier.width(if (item.isVideo) VIDEO_CARD_WIDTH else SHELF_CARD_WIDTH),
+                                cover = albumCovers.coverFor(item.browseId),
                             )
                         }
                     }
@@ -909,6 +926,7 @@ fun DetailScreen(
         onItemClick = onSectionItemClick,
         onItemLongPress = onSectionItemLongPress,
         contentPadding = contentPadding,
+        albumCovers = albumCovers,
     )
 }
 }
@@ -2289,6 +2307,8 @@ private fun TopReleaseCard(
     saved: Boolean?,
     /** Null hides the button. */
     onToggleSaved: (() -> Unit)?,
+    /** The user's own cover for this album, when one is set and still on disk. */
+    cover: PlaylistCover? = null,
 ) {
     val shape = remember { RoundedCornerShape(TOP_RELEASE_CORNER).continuous() }
     // Concentric with the panel: its corner less the inset the sleeve sits at.
@@ -2316,7 +2336,7 @@ private fun TopReleaseCard(
         verticalAlignment = Alignment.CenterVertically,
     ) {
         AsyncImage(
-            model = item.thumbnailUrl.artworkAt(CARD_ART_PX),
+            model = customCoverModel(item.thumbnailUrl.artworkAt(CARD_ART_PX), cover?.path, cover?.hash),
             contentDescription = null,
             modifier = Modifier
                 .size(96.dp)
@@ -2409,6 +2429,8 @@ private fun SectionCard(
     onClick: () -> Unit,
     modifier: Modifier = Modifier.width(SHELF_CARD_WIDTH),
     onLongPress: (() -> Unit)? = null,
+    /** The user's own cover for this album, when one is set and still on disk. */
+    cover: PlaylistCover? = null,
 ) {
     // An artist's Videos shelf: widescreen, as on the web player.
     if (item.isVideo) {
@@ -2428,7 +2450,7 @@ private fun SectionCard(
             .longPressMenuClickable(onClick = onClick, onLongClick = onLongPress),
     ) {
         AsyncImage(
-            model = item.thumbnailUrl.artworkAt(CARD_ART_PX),
+            model = customCoverModel(item.thumbnailUrl.artworkAt(CARD_ART_PX), cover?.path, cover?.hash),
             contentDescription = null,
             modifier = Modifier
                 .fillMaxWidth()
@@ -2463,6 +2485,7 @@ private fun ArtistShelfGridPage(
     onItemLongPress: ((ShelfItem) -> Unit)?,
     contentPadding: PaddingValues,
     modifier: Modifier = Modifier,
+    albumCovers: Map<String, PlaylistCover> = emptyMap(),
 ) {
     val gridState = rememberLazyGridState()
     BoxWithConstraints(modifier.fillMaxSize().background(palette.background)) {
@@ -2487,8 +2510,48 @@ private fun ArtistShelfGridPage(
                     onClick = { onItemClick(item) },
                     onLongPress = onItemLongPress?.let { { it(item) } },
                     modifier = Modifier.fillMaxWidth(),
+                    cover = albumCovers.coverFor(item.browseId),
                 )
             }
+        }
+    }
+}
+
+/**
+ * This album's custom cover, when one is registered and its file is still there.
+ *
+ * A missing or unreadable file is the fallback path, so the card draws the
+ * fetched artwork instead of an empty square.
+ */
+private fun Map<String, PlaylistCover>.coverFor(browseId: String?): PlaylistCover? =
+    browseId
+        ?.let { this[PlaylistCoverStore.albumKeyFor(it)] }
+        ?.takeIf { File(it.path).isFile }
+
+/**
+ * The image a card draws: the user's custom cover when it is set and readable,
+ * the fetched artwork otherwise.
+ *
+ * A missing or unreadable file falls through to [remote] rather than drawing an
+ * empty square — the same fallback the album's own header uses. The custom file
+ * is keyed by its hash (or mtime) so replacing it invalidates Coil's memory and
+ * disk entries, which are keyed on the unchanged path otherwise.
+ */
+@Composable
+private fun customCoverModel(remote: Any?, path: String?, hash: String?): Any? {
+    val file = remember(path) { path?.let(::File)?.takeIf { it.isFile } }
+    val version = hash ?: file?.lastModified()?.toString()
+    val context = LocalPlatformContext.current
+    return remember(remote, file, version) {
+        if (file == null) {
+            remote
+        } else {
+            val key = "custom-cover:${file.absolutePath}:$version"
+            ImageRequest.Builder(context)
+                .data(file)
+                .memoryCacheKey(key)
+                .diskCacheKey(key)
+                .build()
         }
     }
 }

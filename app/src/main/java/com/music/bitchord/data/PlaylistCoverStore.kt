@@ -18,20 +18,24 @@ import kotlinx.coroutines.withContext
 import org.json.JSONObject
 import kotlin.math.min
 
-/** A custom playlist cover on disk, and the hash that invalidates image caches when it changes. */
+/** A custom playlist or album cover on disk, and the hash that invalidates image caches when it changes. */
 data class PlaylistCover(
     val path: String,
     val hash: String,
 )
 
 /**
- * The account's local overlay of playlist covers.
+ * The account's local overlay of playlist and album covers.
  *
  * Covers are not a YouTube feature: there is nowhere in the playlist response
  * to put one, and a read-only or saved playlist must not be given one. So the
  * file and its metadata live here, keyed by the playlist's page or local id,
- * and the UI draws it over the normal thumbnail only for playlists whose edit
- * controls are already shown.
+ * and the UI draws it over the normal thumbnail.
+ *
+ * Albums share the same file, directory and preference record, under the
+ * `album:` key prefix: their browse ids (`MPRE…`) never collide with a
+ * playlist's (`PL…` or a local `sp_local_…` id), so one registry answers both
+ * and an album cover survives the same way a playlist's does.
  *
  * The file is centre-cropped to a square, scaled to 512×512 and encoded as
  * WebP at 80% quality under `filesDir/playlist_covers`. Keeping the hash beside
@@ -42,6 +46,9 @@ object PlaylistCoverStore {
     private const val KEY_COVERS = "covers_json"
     private const val TARGET_PX = 512
     private const val WEBP_QUALITY = 80
+
+    /** Album covers are namespaced in the same map so a browse id can never clash. */
+    private const val ALBUM_PREFIX = "album:"
 
     private lateinit var appContext: Context
     private lateinit var prefs: SharedPreferences
@@ -56,13 +63,46 @@ object PlaylistCoverStore {
         load()
     }
 
-    /** Local model ids and page ids name the same playlist; the cover key must too. */
+    /**
+     * Local model ids and page ids name the same playlist; the cover key must too.
+     *
+     * The `VL` prefix is what a playlist's page browse id carries and its own
+     * model does not (`VLPL…` against `PL…`), so it is stripped as well: a cover
+     * set from a card's menu has to be the one its page draws.
+     */
     fun keyFor(playlistId: String): String =
-        playlistId.trim().removePrefix("local:playlist:")
+        playlistId.trim().removePrefix("local:playlist:").removePrefix("VL")
+
+    /** The registry key for an album's own browse id. */
+    fun albumKeyFor(albumId: String): String = ALBUM_PREFIX + albumId.trim()
+
+    /** Whether [key] names an album rather than a playlist. */
+    fun isAlbumKey(key: String): Boolean = key.startsWith(ALBUM_PREFIX)
+
+    /** The album browse id inside an [albumKeyFor] key. */
+    fun albumIdOf(key: String): String = key.removePrefix(ALBUM_PREFIX)
 
     fun coverFor(playlistId: String?): PlaylistCover? {
-        val key = playlistId?.takeIf(String::isNotBlank)?.let(::keyFor) ?: return null
-        return _covers.value[key]?.takeIf { File(it.path).isFile }
+        val raw = playlistId?.takeIf(String::isNotBlank) ?: return null
+        return lookup(keyFor(raw), raw.trim())
+    }
+
+    /**
+     * This album's custom cover, or null when it has none or the file is gone.
+     *
+     * The missing-file check is the fallback path: an unreadable or deleted
+     * cover is treated as "no custom cover" so the embedded/fetched artwork is
+     * drawn instead of an empty square.
+     */
+    fun albumCoverFor(albumId: String?): PlaylistCover? {
+        val raw = albumId?.takeIf(String::isNotBlank) ?: return null
+        return lookup(albumKeyFor(raw))
+    }
+
+    /** [key], or the legacy spelling it replaced (`VL…` keys written before normalisation). */
+    private fun lookup(key: String, legacy: String? = null): PlaylistCover? {
+        val cover = _covers.value[key] ?: legacy?.takeIf { it != key }?.let { _covers.value[it] }
+        return cover?.takeIf { File(it.path).isFile }
     }
 
     /**
@@ -74,26 +114,55 @@ object PlaylistCoverStore {
      */
     suspend fun setCover(playlistId: String, sourceUriOrPath: String): Result<PlaylistCover> =
         runCatching {
-            require(this::appContext.isInitialized) { "PlaylistCoverStore has not been initialised" }
-            val key = keyFor(playlistId)
-            require(key.isNotBlank()) { "A playlist id is required" }
-            val cover = withContext(Dispatchers.IO) { writeCover(key, sourceUriOrPath) }
-            _covers.value = _covers.value + (key to cover)
-            persist()
-            cover
+            require(keyFor(playlistId).isNotBlank()) { "A playlist id is required" }
+            store(keyFor(playlistId), sourceUriOrPath)
         }
 
-    suspend fun removeCover(playlistId: String): Result<Unit> = runCatching {
-        val key = keyFor(playlistId)
-        withContext(Dispatchers.IO) {
-            val file = File(coverDirectory(), coverFileName(key))
-            if (file.exists() && !file.delete()) {
-                error("The playlist cover file could not be deleted")
-            }
+    /** Copies and normalises [sourceUriOrPath] into this album's cover. */
+    suspend fun setAlbumCover(albumId: String, sourceUriOrPath: String): Result<PlaylistCover> =
+        runCatching {
+            require(albumId.isNotBlank()) { "An album id is required" }
+            store(albumKeyFor(albumId), sourceUriOrPath)
         }
-        _covers.value = _covers.value - key
-        persist()
+
+    suspend fun removeCover(playlistId: String): Result<Unit> =
+        delete(keyFor(playlistId), playlistId.trim())
+
+    /** Deletes this album's cover file and clears its registry entry. */
+    suspend fun removeAlbumCover(albumId: String): Result<Unit> = runCatching {
+        require(albumId.isNotBlank()) { "An album id is required" }
+        delete(albumKeyFor(albumId)).getOrThrow()
     }
+
+    private suspend fun store(key: String, sourceUriOrPath: String): PlaylistCover {
+        require(this::appContext.isInitialized) { "PlaylistCoverStore has not been initialised" }
+        val cover = withContext(Dispatchers.IO) { writeCover(key, sourceUriOrPath) }
+        _covers.value = _covers.value + (key to cover)
+        persist()
+        return cover
+    }
+
+    /**
+     * Removes [key] and any spelling it replaced.
+     *
+     * A cover written before keys were normalised still names a real file, so
+     * the old entry is dropped alongside the current one rather than being
+     * left behind to reappear.
+     */
+    private suspend fun delete(key: String, legacy: String? = null): Result<Unit> =
+        runCatching {
+            val stale = listOfNotNull(key, legacy?.takeIf { it != key })
+            withContext(Dispatchers.IO) {
+                for (name in stale) {
+                    val file = File(coverDirectory(), coverFileName(name))
+                    if (file.exists() && !file.delete()) {
+                        error("The cover file could not be deleted")
+                    }
+                }
+            }
+            _covers.value = _covers.value - stale.toSet()
+            persist()
+        }
 
     private fun writeCover(key: String, sourceUriOrPath: String): PlaylistCover {
         val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }

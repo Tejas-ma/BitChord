@@ -202,7 +202,9 @@ import com.music.bitchord.ui.screens.SourcesScreen
 import com.music.bitchord.data.sources.TrackMatcher
 import com.music.bitchord.ui.screens.SpotifyCanvasAuthScreen
 import com.music.bitchord.ui.screens.SpotifyLibraryScreen
+import com.music.bitchord.data.PlaylistCover
 import com.music.bitchord.data.PlaylistCoverStore
+import com.music.bitchord.data.spotify.LocalPlaylist
 import java.io.File
 import com.music.bitchord.data.spotify.LocalPlaylistStore
 import com.music.bitchord.data.spotify.SPOTIFY_PAGE_PREFIX
@@ -1439,13 +1441,10 @@ private fun BitChordApp(
     var pendingPlaylistCoverKey by rememberSaveable { mutableStateOf<String?>(null) }
     val applyPlaylistCover: (String, String) -> Unit = { key, source ->
         scope.launch {
-            val local = LocalPlaylistStore.getPlaylist(key)
-            val failure = if (local != null) {
-                LocalPlaylistStore.setCustomPlaylistCover(local.id, source).exceptionOrNull()
-            } else {
-                PlaylistCoverStore.setCover(key, source).exceptionOrNull()
-            }
-            if (failure != null) {
+            // The write itself lives in a helper: this composable is close to
+            // the JVM's 64 KB method limit, and every branch left inside it is
+            // bytecode spent on something that does not touch composition.
+            if (applyCustomCover(key, source) != null) {
                 Toast.makeText(context, context.getString(R.string.failed), Toast.LENGTH_SHORT).show()
             }
         }
@@ -3506,7 +3505,8 @@ private fun BitChordApp(
                             // A local playlist carries its own cover fields; a remote owned
                             // playlist has no local entity, so its cover lives in the
                             // registry. The default artwork is used whenever neither has a
-                            // file that is still on disk.
+                            // file that is still on disk. An album's own cover is read by
+                            // [DetailScreen] itself, from the same registry.
                             val localPagePlaylist = localPlaylists.firstOrNull {
                                 it.browseId == page.browseId || it.id == page.browseId
                             }
@@ -4084,35 +4084,18 @@ private fun BitChordApp(
                 }
 
                 FrostedTopBar(
-                    title = when (route) {
-                        AppRoute.Spotify -> stringResource(R.string.spotify)
-                        AppRoute.Downloads -> stringResource(R.string.downloads)
-                        AppRoute.Discord -> "Discord"
-                        AppRoute.History -> stringResource(R.string.history)
-                        is AppRoute.LibraryShowAll -> route.shelf.title
-                        is AppRoute.ArtistShelf -> route.shelf.title
-                        AppRoute.Moods -> stringResource(R.string.find_your_mood)
-                        AppRoute.AccountScrobbling -> stringResource(R.string.account_scrobbling)
-                        AppRoute.Sources -> stringResource(R.string.sources)
-                        AppRoute.ListenTogether -> stringResource(R.string.listen_together)
-                        AppRoute.WearOs -> stringResource(R.string.wear_os_page_title)
-                        AppRoute.DriveBackup -> stringResource(R.string.drive_backup_title)
-                        AppRoute.DriveDevices -> stringResource(R.string.drive_devices_title)
-                        AppRoute.Equalizer -> stringResource(R.string.equalizer)
-                        AppRoute.Settings -> stringResource(R.string.settings)
-                        is AppRoute.SettingsSection -> stringResource(route.category.title)
-                        is AppRoute.SettingsChoice -> stringResource(route.choice.title)
-                        AppRoute.EqualizerPresets -> stringResource(R.string.equalizer_preset)
-                        AppRoute.Replay -> stringResource(R.string.replay)
-                        null -> when {
-                            detail != null && detailActiveShelf != null -> detailActiveShelf?.title.orEmpty()
-                            detail != null -> detail.title
-                            selectedMoodGenre != null -> selectedMoodGenre?.title.orEmpty()
-                            else -> tabs[selectedTab].let {
-                                if (it.label == "Play") stringResource(R.string.listen_now) else it.label
-                            }
-                        }
-                    },
+                    // The title's thirty-odd branches are a helper: this composable
+                    // is at the JVM's 64 KB method limit, and the `when` alone is
+                    // hundreds of bytes of it.
+                    title = topBarTitleFor(
+                        route = route,
+                        detailTitle = detail?.title,
+                        shelfTitle = detailActiveShelf?.title?.takeIf { detail != null },
+                        moodTitle = selectedMoodGenre?.title.orEmpty().takeIf { selectedMoodGenre != null },
+                        homeTitle = tabs[selectedTab].label.let { label ->
+                            if (label == "Play") stringResource(R.string.listen_now) else label
+                        },
+                    ),
                     // Every page, in either material, uses separated floating
                     // circles over the shared gradient — no full-width pane.
                     transparentBackdrop = true,
@@ -5538,18 +5521,13 @@ private fun BitChordApp(
                 offlineEditable,
                 localPlaylistForCover,
             ) {
-                target.browseId
-                    ?.takeIf { target.type == BrowseType.PLAYLIST }
-                    ?.let {
-                        when {
-                            localPlaylistForCover != null -> localPlaylistForCover.browseId
-                            playlist != null -> playlist.browseId
-                            offlineEditable != null -> offlineEditable.browseId
-                            else -> null
-                        }
-                    }
+                coverKeyForTarget(target, playlist, offlineEditable?.browseId, localPlaylistForCover)
             }
-            val storedCover = remember(coverTargetKey) { coverTargetKey?.let(PlaylistCoverStore::coverFor) }
+            // Reads the collected map rather than the store directly, so the
+            // menu observes a cover being written or removed.
+            val storedCover = remember(coverTargetKey, playlistCovers) {
+                storedCoverFor(coverTargetKey, playlistCovers)
+            }
             val hasCustomCover = localPlaylistForCover?.customCoverPath
                 ?.let { File(it).isFile } == true || storedCover != null
             // A playlist imported onto this device (signed out, or YouTube
@@ -5695,13 +5673,7 @@ private fun BitChordApp(
                     {
                         browseActions = null
                         scope.launch {
-                            val local = LocalPlaylistStore.getPlaylist(key)
-                            val failure = if (local != null) {
-                                LocalPlaylistStore.removeCustomPlaylistCover(local.id).exceptionOrNull()
-                            } else {
-                                PlaylistCoverStore.removeCover(key).exceptionOrNull()
-                            }
-                            if (failure != null) {
+                            if (removeCustomCover(key) != null) {
                                 Toast.makeText(context, context.getString(R.string.failed), Toast.LENGTH_SHORT).show()
                             }
                         }
@@ -6900,4 +6872,112 @@ private fun AcrCloudEditorHost(
         },
         onDismiss = onDismiss,
     )
+}
+
+/**
+ * The registry key a browse target's cover lives under, or null when the menu
+ * offers no cover action for it.
+ *
+ * An album is keyed in the registry's album namespace by its browse id, which
+ * is the same key its own page reads — so a cover set from a card is drawn the
+ * moment the page opens.
+ */
+private fun coverKeyForTarget(
+    target: BrowseTarget,
+    playlist: UserPlaylist?,
+    offlineEditableId: String?,
+    localPlaylist: LocalPlaylist?,
+): String? {
+    val id = target.browseId ?: return null
+    return when {
+        target.type == BrowseType.ALBUM -> PlaylistCoverStore.albumKeyFor(id)
+        target.type != BrowseType.PLAYLIST -> null
+        localPlaylist != null -> localPlaylist.browseId
+        playlist != null -> playlist.browseId
+        offlineEditableId != null -> offlineEditableId
+        else -> null
+    }
+}
+
+/** The stored cover for [key], read through the collected map so a write is seen. */
+private fun storedCoverFor(key: String?, covers: Map<String, PlaylistCover>): PlaylistCover? {
+    if (key == null) return null
+    return if (PlaylistCoverStore.isAlbumKey(key)) {
+        covers[key]?.takeIf { File(it.path).isFile }
+    } else {
+        PlaylistCoverStore.coverFor(key)
+    }
+}
+
+/**
+ * Writes a picked image as [key]'s cover, returning the failure to show or null.
+ *
+ * An album has no local entity to carry the file: its cover lives in the
+ * registry under the album namespace, keyed by the same browse id its page
+ * reads. A local playlist keeps its own copy of both fields as well.
+ */
+private suspend fun applyCustomCover(key: String, source: String): Throwable? =
+    if (PlaylistCoverStore.isAlbumKey(key)) {
+        PlaylistCoverStore.setAlbumCover(PlaylistCoverStore.albumIdOf(key), source).exceptionOrNull()
+    } else {
+        val local = com.music.bitchord.data.spotify.LocalPlaylistStore.getPlaylist(key)
+        if (local != null) {
+            com.music.bitchord.data.spotify.LocalPlaylistStore
+                .setCustomPlaylistCover(local.id, source)
+                .exceptionOrNull()
+        } else {
+            PlaylistCoverStore.setCover(key, source).exceptionOrNull()
+        }
+    }
+
+/** Removes [key]'s cover from wherever it was stored, returning the failure or null. */
+private suspend fun removeCustomCover(key: String): Throwable? =
+    if (PlaylistCoverStore.isAlbumKey(key)) {
+        PlaylistCoverStore.removeAlbumCover(PlaylistCoverStore.albumIdOf(key)).exceptionOrNull()
+    } else {
+        val local = com.music.bitchord.data.spotify.LocalPlaylistStore.getPlaylist(key)
+        if (local != null) {
+            com.music.bitchord.data.spotify.LocalPlaylistStore
+                .removeCustomPlaylistCover(local.id)
+                .exceptionOrNull()
+        } else {
+            PlaylistCoverStore.removeCover(key).exceptionOrNull()
+        }
+    }
+
+/**
+ * The floating bar's title for whatever is on screen.
+ *
+ * Every pushed route names itself; over a tab, the open page or shelf does,
+ * and otherwise the tab does. Kept out of `BitChordApp` because that `when` is
+ * a large slice of a composable already at the JVM's 64 KB method limit.
+ */
+@Composable
+private fun topBarTitleFor(
+    route: AppRoute?,
+    detailTitle: String?,
+    shelfTitle: String?,
+    moodTitle: String?,
+    homeTitle: String,
+): String = when (route) {
+    AppRoute.Spotify -> stringResource(R.string.spotify)
+    AppRoute.Downloads -> stringResource(R.string.downloads)
+    AppRoute.Discord -> "Discord"
+    AppRoute.History -> stringResource(R.string.history)
+    is AppRoute.LibraryShowAll -> route.shelf.title
+    is AppRoute.ArtistShelf -> route.shelf.title
+    AppRoute.Moods -> stringResource(R.string.find_your_mood)
+    AppRoute.AccountScrobbling -> stringResource(R.string.account_scrobbling)
+    AppRoute.Sources -> stringResource(R.string.sources)
+    AppRoute.ListenTogether -> stringResource(R.string.listen_together)
+    AppRoute.WearOs -> stringResource(R.string.wear_os_page_title)
+    AppRoute.DriveBackup -> stringResource(R.string.drive_backup_title)
+    AppRoute.DriveDevices -> stringResource(R.string.drive_devices_title)
+    AppRoute.Equalizer -> stringResource(R.string.equalizer)
+    AppRoute.Settings -> stringResource(R.string.settings)
+    is AppRoute.SettingsSection -> stringResource(route.category.title)
+    is AppRoute.SettingsChoice -> stringResource(route.choice.title)
+    AppRoute.EqualizerPresets -> stringResource(R.string.equalizer_preset)
+    AppRoute.Replay -> stringResource(R.string.replay)
+    null -> shelfTitle ?: detailTitle ?: moodTitle ?: homeTitle
 }

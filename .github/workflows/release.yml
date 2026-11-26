@@ -133,14 +133,83 @@ jobs:
             [ -e "$f" ] || continue
             cp "$f" "out/BitChord-$v-windows-x64.msi"
           done
-          cp desktopApp/build/distributions/*portable.zip out/ 2>/dev/null || true
+          cp desktopApp/build/distributions/*portable.zip "out/BitChord-$v-windows-x64-portable.zip" 2>/dev/null || true
           ls -l out
 
-      - uses: actions/upload-artifact@v6
+      # One direct artifact per installer (`archive: false`): the release
+      # attaches the .exe, .msi and .zip themselves rather than a zip of a zip.
+      # Each step is separate because an un-archived upload takes one file, and
+      # a folder or a multi-file glob would be uploaded as an archive anyway.
+      - name: Upload the setup
+        id: upload-setup
+        uses: actions/upload-artifact@v7
         with:
-          name: windows
-          path: out/*
+          name: BitChord-${{ steps.version.outputs.value }}-windows-x64-setup
+          path: out/BitChord-${{ steps.version.outputs.value }}-windows-x64-setup.exe
           if-no-files-found: error
+          archive: false
+          compression-level: 0
+
+      - name: Upload the MSI
+        id: upload-msi
+        uses: actions/upload-artifact@v7
+        with:
+          name: BitChord-${{ steps.version.outputs.value }}-windows-x64-msi
+          path: out/BitChord-${{ steps.version.outputs.value }}-windows-x64.msi
+          if-no-files-found: error
+          archive: false
+          compression-level: 0
+
+      - name: Upload the portable build
+        id: upload-portable
+        uses: actions/upload-artifact@v7
+        with:
+          name: BitChord-${{ steps.version.outputs.value }}-windows-x64-portable
+          path: out/BitChord-${{ steps.version.outputs.value }}-windows-x64-portable.zip
+          if-no-files-found: error
+          archive: false
+          compression-level: 0
+
+      # SignPath Foundation, guarded the same way as in windows-exe.yml: a
+      # repository without the token and organization id publishes the setup
+      # unsigned instead of failing the release.
+      - name: Submit the setup for signing
+        id: signpath
+        if: ${{ secrets.SIGNPATH_API_TOKEN != '' && vars.SIGNPATH_ORGANIZATION_ID != '' }}
+        uses: SignPath/github-action-submit-signing-request@v2
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: ${{ vars.SIGNPATH_PROJECT_SLUG || 'bitchord' }}
+          signing-policy-slug: ${{ vars.SIGNPATH_SIGNING_POLICY_SLUG || 'release-signing' }}
+          artifact-configuration-slug: ${{ vars.SIGNPATH_ARTIFACT_CONFIGURATION_SLUG || 'windows-installer' }}
+          github-artifact-id: ${{ steps.upload-setup.outputs.artifact-id }}
+          wait-for-completion: true
+          output-artifact-directory: signed
+          skip-decompress: true
+
+      # Copied, never rewritten: anything that touches the file after signing
+      # would invalidate the signature.
+      - name: Take the signed setup
+        if: ${{ steps.signpath.outcome == 'success' }}
+        shell: pwsh
+        run: |
+          $name = "BitChord-${{ steps.version.outputs.value }}-windows-x64-setup.exe"
+          $signed = Get-ChildItem 'signed' -Recurse -Filter $name -File -ErrorAction SilentlyContinue |
+            Select-Object -First 1
+          if (-not $signed) { throw "SignPath returned no $name" }
+          Copy-Item $signed.FullName "out/$name" -Force
+          Write-Host "Signed setup: $($signed.FullName) ($($signed.Length) bytes)"
+
+      - name: Upload the signed setup
+        if: ${{ steps.signpath.outcome == 'success' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: BitChord-${{ steps.version.outputs.value }}-windows-x64-setup
+          path: out/BitChord-${{ steps.version.outputs.value }}-windows-x64-setup.exe
+          if-no-files-found: error
+          archive: false
+          overwrite: true
           compression-level: 0
 
   macos:

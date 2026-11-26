@@ -82,8 +82,15 @@ object DesktopPlaylistCovers {
      * Local model ids and page ids name the same playlist; the cover key must
      * too. Album ids are returned unchanged.
      */
+    /**
+     * Local model ids and page ids name the same playlist, and so must the key.
+     *
+     * A playlist's page carries the `VL` prefix its own model does not
+     * (`VLPL…` against `PL…`), so it is stripped as well: a cover set from a
+     * card's menu has to be the one its page draws.
+     */
     fun keyFor(playlistId: String): String =
-        playlistId.trim().removePrefix("local:playlist:")
+        playlistId.trim().removePrefix("local:playlist:").removePrefix("VL")
 
     /** The file a cover lives in, as a `file:` URL the artwork loader can read. */
     fun fileUrlFor(path: Path): String = path.toAbsolutePath().toUri().toString()
@@ -106,9 +113,13 @@ object DesktopPlaylistCovers {
     suspend fun removeCustomAlbumCover(albumId: String): Result<Unit> = removeCover(albumId)
 
     fun coverFor(playlistId: String?): DesktopPlaylistCover? {
-        val key = playlistId?.takeIf(String::isNotBlank)?.let(::keyFor) ?: return null
+        val raw = playlistId?.takeIf(String::isNotBlank) ?: return null
         ensureLoaded()
-        return _covers[key]?.takeIf { Files.isRegularFile(Path.of(it.path)) }
+        val key = keyFor(raw)
+        // A cover written before keys were normalised sits under the page's own
+        // `VL…` spelling; it is the same playlist's file, so it still counts.
+        val cover = _covers[key] ?: raw.trim().takeIf { it != key }?.let { _covers[it] }
+        return cover?.takeIf { Files.isRegularFile(Path.of(it.path)) }
     }
 
     /**

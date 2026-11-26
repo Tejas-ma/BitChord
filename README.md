@@ -66,7 +66,7 @@
     <td width="50%" valign="top">
 
 #### Experience
-- **Voice search and Identify Song** — speak a request, or let the microphone name the track playing around you.
+- **Voice search and Identify Song** — speak a request, or let the microphone name the track playing around you, with a live waveform while it listens; on desktop the same sheet names a track from the microphone.
 - **Every screen** — a remote-first Android TV interface, a Wear OS remote-and-speaker app, and Windows, macOS and Linux desktop builds from the same code.
 - **Command palette** (desktop) — a fuzzy keyboard jump to any song, playlist, output or player action.
 - **Animated album canvas** — motion artwork on the now-playing screen.
@@ -74,6 +74,7 @@
 - **Lyrics providers** — credit to [lrc.red](https://lrc.red), [BiniLyrics](https://github.com/binimum), [BetterLyrics](https://github.com/better-lyrics/better-lyrics), [PaxSenix](https://lyrics.paxsenix.org), [LyricsPlus](https://github.com/ibratabian17/YouLyPlus), [SimpMusic](https://github.com/maxrave-dev/SimpMusic), [Unison](https://unison.boidu.dev), [Megalobiz](https://www.megalobiz.com), [KuGou](https://www.kugou.com), [LRCLIB](https://lrclib.net), [Musixmatch](https://www.musixmatch.com) and [Genius](https://genius.com).
 - **Dynamic, artwork-driven theming** — Material palette extracted from album art.
 - **Frosted-glass UI** — Telegram-style translucent bars via Haze, Material 3 theming.
+- **Custom covers** — give a playlist or an album your own artwork; it is stored on the device and drawn on its header and cards, falling back to the embedded or fetched image when the file is missing or unreadable.
 
 #### Controls & Tweaks
 - **Per-network audio quality** — separate quality ceilings for Wi-Fi and mobile data.
@@ -100,6 +101,25 @@
 Grab the latest signed APK from the [Releases](https://github.com/kushagrasinghx/BitChord/releases) page. Sideloading requires enabling "Install unknown apps" for whichever app you download it with.
 
 Desktop builds for Windows, macOS and Linux are on the same page — `.exe`, `.msi` and portable `.zip`, `.dmg`, and `.deb`, `.rpm` and `.AppImage`. Every download carries its own Java runtime, FFmpeg and ONNX natives, so nothing else has to be installed first; see [DESKTOP.md](DESKTOP.md) for install notes.
+
+The Windows installers are built by the **Windows EXE** workflow and uploaded as the files themselves, not inside another archive: `BitChord-<version>-windows-x64-setup.exe`, `BitChord-<version>-windows-x64.msi` and the portable `BitChord-<version>-windows-x64-portable.zip`. When the repository has been accepted by the [SignPath Foundation](https://signpath.org/), the setup is submitted for signing during the build and the signed copy is the one published; without that approval the same build ships unsigned rather than failing.
+
+### Build from source
+
+A JDK 21 is the only requirement for the desktop app; the Android build also needs the Android SDK (compile SDK as configured in `app/build.gradle.kts`).
+
+```bash
+# Android: the unit tests, with the desktop modules left out
+./gradlew :app:testDevDebugUnitTest -Pbitchord.skipDesktop=true
+
+# Desktop: the shared, desktop-UI and desktop-app test suites
+./gradlew :shared:jvmTest :desktopUi:jvmTest :desktopApp:test -Pbitchord.skipAndroid=true
+
+# Desktop: a runnable image for the host platform
+./gradlew :desktopApp:createDistributable -Pbitchord.skipAndroid=true
+```
+
+Windows installers are produced with `:desktopApp:packageExe`, `:desktopApp:packageMsi` and `:desktopApp:windowsPortable` (see [desktopApp/BUILDING-WINDOWS.md](desktopApp/BUILDING-WINDOWS.md)); `.github/workflows/windows-exe.yml` does the same on a Windows runner and uploads the results.
 
 
 </div>

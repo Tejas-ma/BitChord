@@ -72,8 +72,23 @@ object LocalPlaylistStore {
         }
     }
 
+    /**
+     * Creates a playlist holding [songs], newest first.
+     *
+     * The id is a timestamp, plus a suffix when that millisecond already names
+     * a playlist. Two playlists created in the same frame used to share an id,
+     * which made the second replace the first instead of appearing beside it —
+     * and, because the cover file is named from the id, could overwrite the
+     * first one's artwork too.
+     */
     fun savePlaylist(title: String, songs: List<Song>): LocalPlaylist {
-        val id = "sp_local_" + System.currentTimeMillis()
+        val stamp = System.currentTimeMillis()
+        var id = "sp_local_$stamp"
+        var suffix = 0
+        while (_playlists.value.any { it.id == id }) {
+            suffix += 1
+            id = "sp_local_${stamp}_$suffix"
+        }
         val playlist = LocalPlaylist(id = id, title = title, songs = songs)
         val updated = listOf(playlist) + _playlists.value.filterNot { it.id == id }
         _playlists.value = updated
