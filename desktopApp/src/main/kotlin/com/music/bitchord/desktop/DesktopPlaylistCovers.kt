@@ -21,26 +21,41 @@ import org.jetbrains.skia.Rect
 import org.jetbrains.skia.SamplingMode
 import org.jetbrains.skia.Surface
 
-/** A custom playlist cover on disk, plus the hash that invalidates its artwork cache entry. */
+/** A custom playlist or album cover on disk, plus the hash that invalidates its artwork cache entry. */
 data class DesktopPlaylistCover(
     val path: String,
     val hash: String,
 )
 
 /**
- * Desktop's local playlist cover overlay.
+ * Desktop's local playlist and album cover overlay.
  *
- * YouTube Music has no place for a custom playlist image, so this is kept
- * beside the playlist rather than in its response: a WebP at
+ * YouTube Music has no place for a custom playlist or album image, so this is
+ * kept beside the collection rather than in its response: a WebP at
  * `{appDataDir}/bitchord/playlist_covers/{id}.webp`, with a small preference
- * record mapping the playlist id to that file and its SHA-256. The file is
+ * record mapping the collection id to that file and its SHA-256. The file is
  * centre-cropped, drawn to 512×512 and encoded at 80% quality.
+ *
+ * Albums are keyed by their own browse id in the same map and directory: the
+ * two id spaces do not overlap (`MPREb…` albums, `VL…`/local ids playlists),
+ * and the directory keeps its original name so covers written by earlier
+ * builds are still found.
  */
 object DesktopPlaylistCovers {
     private const val TARGET_PX = 512
     private const val WEBP_QUALITY = 80
     private const val KEY_COVERS = "playlist_covers"
     private const val DELIMITER = "#"
+
+    /** Leaves room for `.webp` and a `.tmp` suffix within the usual 255-byte limit. */
+    private const val MAX_FILE_NAME_LENGTH = 120
+
+    /** Names Windows reserves for devices, with or without an extension. */
+    private val RESERVED_NAMES = setOf(
+        "CON", "PRN", "AUX", "NUL",
+        "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8", "COM9",
+        "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9",
+    )
 
     /** The extensions the chooser accepts and Skia decodes on every desktop target. */
     private val SUPPORTED_EXTENSIONS = setOf("png", "jpg", "jpeg", "webp")
@@ -63,7 +78,32 @@ object DesktopPlaylistCovers {
             return _covers
         }
 
-    fun keyFor(playlistId: String): String = playlistId.trim()
+    /**
+     * Local model ids and page ids name the same playlist; the cover key must
+     * too. Album ids are returned unchanged.
+     */
+    fun keyFor(playlistId: String): String =
+        playlistId.trim().removePrefix("local:playlist:")
+
+    /** The file a cover lives in, as a `file:` URL the artwork loader can read. */
+    fun fileUrlFor(path: Path): String = path.toAbsolutePath().toUri().toString()
+
+    /** The cover of [browseId] as a `file:` URL, or null when it has none. */
+    fun coverUrlFor(browseId: String?): String? =
+        coverFor(browseId)?.let { cover ->
+            runCatching { fileUrlFor(Path.of(cover.path)) }.getOrNull()
+        }
+
+    /**
+     * An album's custom cover, if it has one. Albums are not local entities,
+     * so the overlay is the only record of it.
+     */
+    fun albumCoverFor(albumId: String?): DesktopPlaylistCover? = coverFor(albumId)
+
+    suspend fun setCustomAlbumCover(albumId: String, source: Path): Result<DesktopPlaylistCover> =
+        setCover(albumId, source)
+
+    suspend fun removeCustomAlbumCover(albumId: String): Result<Unit> = removeCover(albumId)
 
     fun coverFor(playlistId: String?): DesktopPlaylistCover? {
         val key = playlistId?.takeIf(String::isNotBlank)?.let(::keyFor) ?: return null
@@ -161,7 +201,7 @@ object DesktopPlaylistCovers {
 
     /** A native file chooser filtered to the formats Skia can decode here. */
     fun chooseCoverFile(): Path? {
-        val dialog = FileDialog(null as Frame?, "Choose playlist cover", FileDialog.LOAD)
+        val dialog = FileDialog(null as Frame?, "Choose cover", FileDialog.LOAD)
         dialog.filenameFilter = FilenameFilter { _, name ->
             name.substringAfterLast('.', "").lowercase() in SUPPORTED_EXTENSIONS
         }
@@ -181,7 +221,7 @@ object DesktopPlaylistCovers {
         if (extension !in SUPPORTED_EXTENSIONS) {
             JOptionPane.showMessageDialog(
                 null,
-                "BitChord can use PNG, JPEG or WebP images for a playlist cover.",
+                "BitChord can use PNG, JPEG or WebP images for a cover.",
                 "Unsupported image",
                 JOptionPane.WARNING_MESSAGE,
             )
@@ -214,8 +254,26 @@ object DesktopPlaylistCovers {
 
     private fun coverDirectory(): Path = appDataDirectory().resolve("playlist_covers")
 
-    private fun coverFileName(key: String): String =
-        key.replace(Regex("[^A-Za-z0-9._-]"), "_").ifBlank { "playlist" } + ".webp"
+    /** The file name a key is stored under; exposed so the Windows rules can be tested. */
+    internal fun coverFileNameFor(key: String): String = coverFileName(key)
+
+    /**
+     * A file name that is legal on every target — Windows included.
+     *
+     * Besides characters Windows refuses, it also has to avoid the reserved
+     * device names (`CON`, `NUL`, `COM1`, …), which stay reserved whatever
+     * extension is appended, and a component too long for the filesystem.
+     * Writing either of those fails at the filesystem rather than in this
+     * code, so they are normalised here instead.
+     */
+    private fun coverFileName(key: String): String {
+        val cleaned = key.trim().replace(Regex("[^A-Za-z0-9._-]"), "_")
+            .trimEnd('.', ' ')
+            .ifBlank { "collection" }
+            .take(MAX_FILE_NAME_LENGTH)
+        val safe = if (cleaned.substringBefore('.').uppercase() in RESERVED_NAMES) "_$cleaned" else cleaned
+        return "$safe.webp"
+    }
 
     private fun appDataDirectory(): Path {
         val home = Path.of(System.getProperty("user.home"))

@@ -1540,6 +1540,36 @@ fun BitChordDesktopApp() {
     fun localPlaylistFor(collection: DesktopCollection?): DesktopPlaylist? =
         collection?.let { current -> playlists.firstOrNull { it.id == current.browseId } }
 
+    /**
+     * The custom cover the open page shows, if it still exists.
+     *
+     * The local playlist's own record wins for a playlist — it is the copy
+     * that survives this app's data moving — and the overlay answers for an
+     * album, which has no local record to hold one. A file that has been
+     * deleted reports null, so the page falls back to the release's artwork.
+     */
+    fun openCollectionCover(): DesktopPlaylistCover? {
+        val collection = openedCollection ?: return null
+        val local = localPlaylistFor(collection)
+        val localPath = local?.customCoverPath?.takeIf { File(it).isFile }
+        if (localPath != null) return DesktopPlaylistCover(localPath, local.coverHash.orEmpty())
+        return DesktopPlaylistCovers.coverFor(collection.browseId)
+    }
+
+    /**
+     * Whether the open page is offered the cover rows: a playlist the account
+     * owns or keeps here, or any album — an album cover is this device's alone,
+     * so there is nobody else's collection to protect.
+     */
+    fun openCollectionCoverEditable(): Boolean {
+        val collection = openedCollection ?: return false
+        return when (collection.type) {
+            BrowseType.PLAYLIST -> collection.owned == true || localPlaylistFor(collection) != null
+            BrowseType.ALBUM -> true
+            else -> false
+        }
+    }
+
     fun setPlaylistCover(collection: DesktopCollection, source: Path) {
         scope.launch {
             DesktopPlaylistCovers.setCustomPlaylistCover(collection.browseId, source)
@@ -1564,13 +1594,14 @@ fun BitChordDesktopApp() {
         }
     }
 
-    fun chooseAndSetOpenPlaylistCover() {
+    /** The cover chooser for whatever page is open — a playlist or an album alike. */
+    fun chooseAndSetOpenCollectionCover() {
         val collection = openedCollection ?: return
         val source = DesktopPlaylistCovers.chooseCoverFile() ?: return
         setPlaylistCover(collection, source)
     }
 
-    fun removeOpenPlaylistCover() {
+    fun removeOpenCollectionCover() {
         val collection = openedCollection ?: return
         scope.launch {
             DesktopPlaylistCovers.removeCustomPlaylistCover(collection.browseId)
@@ -2543,12 +2574,13 @@ fun BitChordDesktopApp() {
             ShelfItem(
                 title = playlist.title,
                 subtitle = "Playlist • ${playlist.songs.size} songs",
+                // A `file:` URL, not a `file:` URL with `?v=` glued on: the
+                // query is not part of a file name, and on Windows it made the
+                // path unreadable. The artwork cache follows the file's
+                // modification time instead, so a new cover still shows.
                 thumbnailUrl = playlist.customCoverPath
                     ?.takeIf { File(it).isFile }
-                    ?.let { path ->
-                        val version = playlist.coverHash ?: File(path).lastModified().toString()
-                        "${File(path).toURI()}?v=$version"
-                    }
+                    ?.let { path -> runCatching { DesktopPlaylistCovers.fileUrlFor(Path.of(path)) }.getOrNull() }
                     ?: playlist.songs.firstOrNull()?.thumbnailUrl,
                 videoId = null,
                 browseId = LOCAL_PLAYLIST_PREFIX + playlist.id,
@@ -3925,6 +3957,9 @@ fun BitChordDesktopApp() {
                                 voiceDialog = null
                                 runSearch(spoken)
                             },
+                            // The microphone's other job is one tap away when this
+                            // build cannot transcribe speech at all.
+                            onIdentifySong = { voiceDialog = VoiceAction.IDENTIFY_SONG },
                         )
                     }
 
@@ -4474,25 +4509,15 @@ fun BitChordDesktopApp() {
                             loadingMore = collectionLoadingMore,
                             onLoadMore = ::loadMoreCollectionSongs,
                             onRename = { overlays.rename = true }.takeIf { openedCollection?.owned == true },
-                            onSetCustomCover = { chooseAndSetOpenPlaylistCover() }.takeIf {
-                                openedCollection?.type == BrowseType.PLAYLIST &&
-                                    (openedCollection?.owned == true || localPlaylistFor(openedCollection) != null)
-                            },
-                            onRemoveCustomCover = { removeOpenPlaylistCover() }.takeIf {
-                                openedCollection?.type == BrowseType.PLAYLIST &&
-                                    (openedCollection?.owned == true || localPlaylistFor(openedCollection) != null) &&
-                                    (localPlaylistFor(openedCollection)?.customCoverPath
-                                        ?.let { File(it).isFile } == true ||
-                                        DesktopPlaylistCovers.coverFor(openedCollection?.browseId) != null)
-                            },
-                            hasCustomCover = localPlaylistFor(openedCollection)?.customCoverPath
-                                ?.let { File(it).isFile } == true ||
-                                DesktopPlaylistCovers.coverFor(openedCollection?.browseId) != null,
-                            customCoverPath = localPlaylistFor(openedCollection)?.customCoverPath
-                                ?.takeIf { File(it).isFile }
-                                ?: DesktopPlaylistCovers.coverFor(openedCollection?.browseId)?.path,
-                            customCoverHash = localPlaylistFor(openedCollection)?.coverHash
-                                ?: DesktopPlaylistCovers.coverFor(openedCollection?.browseId)?.hash,
+                            // A playlist's cover is also recorded on the local playlist, so it
+                            // survives moving this app's data; an album's is only in the overlay.
+                            onSetCustomCover = { chooseAndSetOpenCollectionCover() }
+                                .takeIf { openCollectionCoverEditable() },
+                            onRemoveCustomCover = { removeOpenCollectionCover() }
+                                .takeIf { openCollectionCoverEditable() && openCollectionCover() != null },
+                            hasCustomCover = openCollectionCover() != null,
+                            customCoverPath = openCollectionCover()?.path,
+                            customCoverHash = openCollectionCover()?.hash,
                             onShare = openedCollection
                                 ?.takeIf { it.type == BrowseType.ALBUM || it.type == BrowseType.PLAYLIST }
                                 ?.let { collection -> { shareCollection(collection) } },
@@ -7443,7 +7468,7 @@ private fun DesktopCollectionPage(
     /** The three edits only a playlist's owner is offered. */
     onRename: (() -> Unit)?,
     onDelete: (() -> Unit)?,
-    /** Null unless this playlist can be edited; a read-only playlist gets no cover rows. */
+    /** Null unless this collection can be given a cover; a read-only playlist gets no cover rows. */
     onSetCustomCover: (() -> Unit)? = null,
     onRemoveCustomCover: (() -> Unit)? = null,
     hasCustomCover: Boolean = false,
@@ -8206,6 +8231,12 @@ internal fun BoxScope.DesktopShelfArrow(
 private fun DesktopShelfCard(item: ShelfItem, onClick: (ShelfItem) -> Unit) {
     val width = 158.dp
     val shape = RoundedCornerShape(10.dp)
+    // A card draws the cover chosen for it on its own page: albums are only
+    // recorded in the overlay, and reading it here redraws the card the moment
+    // one is set or removed.
+    val customCover = remember(item.browseId, DesktopPlaylistCovers.covers) {
+        DesktopPlaylistCovers.coverUrlFor(item.browseId)
+    }
     Column(
         Modifier
             .width(width)
@@ -8221,7 +8252,7 @@ private fun DesktopShelfCard(item: ShelfItem, onClick: (ShelfItem) -> Unit) {
                 .background(DesktopGlass)
                 .border(1.dp, Color.White.copy(alpha = 0.12f), shape),
         ) {
-            DesktopArtwork(item.thumbnailUrl, Modifier.fillMaxSize())
+            DesktopArtwork(customCover ?: item.thumbnailUrl, Modifier.fillMaxSize())
         }
         Spacer(Modifier.height(8.dp))
         Text(item.title, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)

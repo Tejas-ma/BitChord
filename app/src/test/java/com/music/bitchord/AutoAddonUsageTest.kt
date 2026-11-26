@@ -11,6 +11,7 @@ import com.music.bitchord.data.sources.SourceStream
 import com.music.bitchord.data.sources.StreamFormat
 import com.music.bitchord.data.sources.StreamRequest
 import com.music.bitchord.data.sources.TrackMatcher
+
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -58,6 +59,7 @@ class AutoAddonUsageTest {
             limit: Int,
             waitForAll: Boolean,
             request: StreamRequest?,
+            target: TrackMatcher.Target?,
         ): List<Song> {
             asked = true
             return listOf(

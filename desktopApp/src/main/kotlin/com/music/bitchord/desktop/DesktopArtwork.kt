@@ -17,6 +17,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import androidx.compose.ui.graphics.decodeToImageBitmap
 import java.net.URI
+import java.nio.file.Files
+import java.nio.file.Path
 
 /**
  * Decoded artwork, kept to a budget.
@@ -45,15 +47,56 @@ internal object DesktopArtworkCache {
     /** Everything held, dropped — what the Storage settings' "Clear image cache" does. */
     fun clear() = images.clear()
 
-    suspend fun load(url: String?, cacheKey: String = url.orEmpty()): ImageBitmap? {
+    suspend fun load(url: String?, cacheKey: String? = null): ImageBitmap? {
         if (url.isNullOrBlank()) return null
-        images.get(cacheKey)?.let { return it }
+        // A local file's cache entry follows its contents: replacing the file
+        // at the same path (a new custom cover) must not draw yesterday's
+        // cover. Network URLs are already versioned by their own address.
+        val key = cacheKey?.takeIf(String::isNotBlank)
+            ?: localFileFor(url)?.let { file ->
+                "$url@${runCatching { Files.getLastModifiedTime(file).toMillis() }.getOrDefault(0L)}"
+            }
+            ?: url
+        images.get(key)?.let { return it }
         return runCatching {
-            URI(url).toURL().openConnection().apply {
-                connectTimeout = 10_000
-                readTimeout = 10_000
-            }.getInputStream().use { stream -> stream.readBytes().decodeToImageBitmap() }
-        }.getOrNull()?.also { images.put(cacheKey, it) }
+            val file = localFileFor(url)
+            if (file != null) {
+                // Read straight off the disk rather than through a `file:`
+                // URLConnection: on Windows a path from `Path.toUri()` reads
+                // `file:///C:/…`, and a connection would resolve that to a
+                // path Java cannot open, so every custom cover silently
+                // failed to decode there.
+                Files.readAllBytes(file).decodeToImageBitmap()
+            } else {
+                URI(url).toURL().openConnection().apply {
+                    connectTimeout = 10_000
+                    readTimeout = 10_000
+                }.getInputStream().use { stream -> stream.readBytes().decodeToImageBitmap() }
+            }
+        }.getOrNull()?.also { images.put(key, it) }
+    }
+
+    /**
+     * The file [url] names, when it names one: a `file:` URL or a bare path.
+     * Any `?v=`-style query is dropped, since a cache-buster is not part of a
+     * file name.
+     */
+    internal fun localFileFor(url: String): Path? {
+        val withoutQuery = url.substringBefore('#').substringBefore('?')
+        return runCatching {
+            when {
+                withoutQuery.startsWith("file:", ignoreCase = true) ->
+                    Path.of(URI(withoutQuery)).takeIf(Files::isRegularFile)
+
+                // A bare path has no scheme and no "//"; a URL always has one.
+                "://" !in withoutQuery &&
+                    !withoutQuery.startsWith("//") &&
+                    !withoutQuery.startsWith("data:", ignoreCase = true) ->
+                    Path.of(withoutQuery).takeIf(Files::isRegularFile)
+
+                else -> null
+            }
+        }.getOrNull()
     }
 }
 
