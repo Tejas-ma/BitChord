@@ -92,7 +92,9 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
+import com.music.bitchord.ui.components.BiometricGate
 import com.music.bitchord.ui.components.IosSwitch
+import com.music.bitchord.data.security.CollectionLocks
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -228,6 +230,13 @@ fun SettingsScreen(
     onOpenSection: (SettingsCategory) -> Unit = {},
     /** Opens a choice with more options than its row can show, as a page. */
     onOpenChoice: (SettingsChoiceKind) -> Unit = {},
+    /**
+     * Security & Privacy: the PIN verifier is raised by the app root, so the
+     * same gate that opens a locked playlist also guards these two rows.
+     */
+    onChangeLockPin: () -> Unit = {},
+    /** Asks for the PIN/biometric before the switch is allowed to move. */
+    onToggleBiometricUnlock: () -> Unit = {},
 ) {
     val context = LocalContext.current
 
@@ -1703,6 +1712,55 @@ fun SettingsScreen(
 
         // No footer: it only restated the stop-on-close row's own subtitle,
         // which sits four rows above it and says the same thing in fewer words.
+        if (shows(SettingsCategory.SECURITY)) SearchableSettingsGroup(
+            search,
+            header = stringResource(R.string.security_privacy),
+        ) {
+            // The biometric switch is read from the same registry the menus
+            // write to, and its row states plainly why it is unavailable
+            // rather than moving a switch that cannot do anything.
+            val pinRecord by CollectionLocks.pin.collectAsStateWithLifecycle()
+            val biometricEnabled by CollectionLocks.biometricEnabled.collectAsStateWithLifecycle()
+            val biometricHardware = remember(context) { BiometricGate.isAvailable(context) }
+            val biometricTitle = stringResource(R.string.enable_biometric_unlock)
+            row(biometricTitle, "biometric", "fingerprint", "face", "security", "privacy") {
+                SettingsRow(
+                    icon = SfIcons.Lock,
+                    title = biometricTitle,
+                    subtitle = when {
+                        !biometricHardware -> stringResource(R.string.security_biometric_unavailable)
+                        pinRecord == null -> stringResource(R.string.security_biometric_needs_pin)
+                        else -> stringResource(R.string.security_biometric_subtitle)
+                    },
+                    trailing = {
+                        IosSwitch(
+                            checked = biometricEnabled && biometricHardware && pinRecord != null,
+                            onCheckedChange = {
+                                if (biometricHardware && pinRecord != null) onToggleBiometricUnlock()
+                            },
+                        )
+                    },
+                    onClick = {
+                        if (biometricHardware && pinRecord != null) onToggleBiometricUnlock()
+                    },
+                )
+            }
+            RowDivider()
+            val changePinTitle = stringResource(R.string.change_pin)
+            row(changePinTitle, "pin", "security", "privacy") {
+                SettingsRow(
+                    icon = SfIcons.Lock,
+                    title = changePinTitle,
+                    subtitle = if (pinRecord == null) {
+                        stringResource(R.string.no_pin_set)
+                    } else {
+                        stringResource(R.string.change_pin_subtitle)
+                    },
+                    onClick = onChangeLockPin,
+                )
+            }
+        }
+
         if (shows(SettingsCategory.MISCELLANEOUS)) SearchableSettingsGroup(search, header = stringResource(R.string.miscellaneous)) {
             val playNextOnSwipeTitle = stringResource(R.string.play_next_on_swipe)
             row(playNextOnSwipeTitle, "swipe", "queue") {
@@ -3069,6 +3127,7 @@ internal fun SegmentedControl(
 enum class SettingsCategory(@param:StringRes val title: Int) {
     DOWNLOADS(R.string.downloads),
     PLAYBACK(R.string.playback),
+    SECURITY(R.string.security_privacy),
     CONTENT_PREFERENCES(R.string.content_preferences),
     APPEARANCE(R.string.appearance),
     PERFORMANCE(R.string.performance),
@@ -3083,6 +3142,7 @@ enum class SettingsCategory(@param:StringRes val title: Int) {
         get() = when (this) {
             DOWNLOADS -> SfIcons.Download
             PLAYBACK -> SfIcons.PlayCircle
+            SECURITY -> SfIcons.Lock
             CONTENT_PREFERENCES -> SfIcons.Video
             APPEARANCE -> SfIcons.Appearance
             PERFORMANCE -> SfIcons.Performance

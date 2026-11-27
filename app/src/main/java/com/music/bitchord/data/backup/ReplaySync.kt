@@ -3,6 +3,7 @@ package com.music.bitchord.data.backup
 import android.content.Context
 import com.music.bitchord.BuildConfig
 import com.music.bitchord.data.PlaylistCoverStore
+import com.music.bitchord.data.security.CollectionLocks
 import com.music.bitchord.data.settings.AppSettings
 import com.music.bitchord.data.settings.SearchHistory
 import com.music.bitchord.data.spotify.LocalPlaylistStore
@@ -66,6 +67,15 @@ data class DeviceManifest(
      * back — the rest of it is read exactly as before.
      */
     val covers: Map<String, String> = emptyMap(),
+    /**
+     * The collection ids this device has locked behind its PIN.
+     *
+     * The PIN itself deliberately never travels — only the list of what it
+     * guards. A restore re-applies the list, so a locked playlist comes back
+     * locked and asks the restoring device's own PIN; a manifest written
+     * before locks existed has none and restores as it always did.
+     */
+    val locked: List<String> = emptyList(),
 ) {
     companion object {
         const val SCHEMA = 1
@@ -332,6 +342,7 @@ object ReplaySync {
                 months = hashes,
                 settings = AppSettings.exportPrefs().mapNotNull { (k, v) -> Backup.PrefValue.of(v)?.let { k to it } }.toMap(),
                 covers = manifestCovers,
+                locked = CollectionLocks.exportLocked().sorted(),
             )
             val written = DriveApi.put(
                 token = token,
@@ -469,6 +480,12 @@ object ReplaySync {
             }
             restoredCovers++
         }
+
+        // The lock list is the last of the overlay: applying it turns the
+        // restored playlists back into the locked ones they were, guarded by
+        // the PIN this device has (which is never the one the backup came
+        // from, since the PIN itself is not in it).
+        CollectionLocks.restoreLocked(manifest.locked)
 
         // What is in Drive for this partition is exactly what came down, so
         // the next sync uploads only what this phone adds to it.

@@ -157,6 +157,10 @@ class BitChordApplication : Application(), SingletonImageLoader.Factory, Configu
         // Voice search's platform recogniser needs a context to be constructed from,
         // and the shared module cannot reach one from common code.
         com.music.bitchord.audio.AndroidVoiceInput.install(this)
+        // The device's PIN, its locked playlists and albums, and the biometric
+        // switch: read before any menu or card asks whether a collection is
+        // locked.
+        com.music.bitchord.data.security.LockPrefs.install(this)
         // After AppSettings: fetches Automix's models as soon as Automix is on,
         // rather than waiting for the first song it would mix.
         com.music.bitchord.playback.smart.AutomixModels.install(this)

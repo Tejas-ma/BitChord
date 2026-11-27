@@ -138,6 +138,14 @@ fun BrowseActionsMenu(
     onSetCustomCover: (() -> Unit)? = null,
     /** Null unless [hasCustomCover] and the playlist is editable. */
     onRemoveCustomCover: (() -> Unit)? = null,
+    /**
+     * Whether this playlist or album is currently locked behind the device PIN.
+     * Only meaningful when [onToggleLock] is supplied, which the caller does
+     * for a playlist or an album — the two things a lock can protect.
+     */
+    isLocked: Boolean = false,
+    /** The Lock/Unlock row; null where a lock has nothing to protect (artists, folders). */
+    onToggleLock: (() -> Unit)? = null,
     onRename: ((String) -> Unit)? = null,
     /**
      * Opens the reorder page for one of the account's own playlists — set
@@ -268,6 +276,13 @@ fun BrowseActionsMenu(
                 ActionRow(
                     SfIcons.Pin,
                     stringResource(if (isPinned) R.string.unpin else R.string.pin),
+                    onClick = it,
+                )
+            }
+            onToggleLock?.let {
+                ActionRow(
+                    SfIcons.Lock,
+                    stringResource(if (isLocked) R.string.unlock else R.string.lock),
                     onClick = it,
                 )
             }

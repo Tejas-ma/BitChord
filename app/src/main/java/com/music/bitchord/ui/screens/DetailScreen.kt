@@ -1,6 +1,8 @@
 package com.music.bitchord.ui.screens
 
 import com.music.bitchord.ui.components.trackArtSize
+import com.music.bitchord.ui.components.LockBadge
+import com.music.bitchord.ui.components.isCollectionLocked
 import android.os.Build
 import com.music.bitchord.R
 
@@ -964,6 +966,9 @@ private fun ReleaseHeader(
     customCoverPath: String? = null,
     customCoverHash: String? = null,
 ) {
+    // The same registry the collection's own menu writes to, read here so the
+    // page's sleeve carries the lock marker the card behind it already had.
+    val lockBadge = isCollectionLocked(page.browseId)
     val (credit, meta) = page.headerLines(songs.size, songs.playtime())
     // Every row on a release carries the same credit — see [pageCredit] — so
     // the first one speaks for the whole page, the same source the rows'
@@ -1066,6 +1071,7 @@ private fun ReleaseHeader(
                         modifier = Modifier.matchParentSize(),
                     )
                 }
+                if (lockBadge) LockBadge(modifier = Modifier.align(Alignment.TopEnd))
             }
         } else Box(
             Modifier
@@ -1108,6 +1114,7 @@ private fun ReleaseHeader(
                     modifier = Modifier.matchParentSize(),
                 )
             }
+            if (lockBadge) LockBadge(modifier = Modifier.align(Alignment.TopEnd))
         }
 
         Spacer(Modifier.height(20.dp))

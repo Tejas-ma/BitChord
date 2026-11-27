@@ -253,6 +253,9 @@ import com.music.bitchord.download.MediaTagger
 import com.music.bitchord.download.DownloadTarget
 import com.music.bitchord.download.Downloads
 import com.music.bitchord.ui.components.BrowseActionsMenu
+import com.music.bitchord.ui.components.LockFlow
+import com.music.bitchord.ui.components.LockFlowHost
+import com.music.bitchord.data.security.CollectionLocks
 import com.music.bitchord.ui.components.BrowseTarget
 import com.music.bitchord.ui.components.ConfirmationAlert
 import com.music.bitchord.ui.components.InfoAlert
@@ -841,6 +844,9 @@ private fun BitChordApp(
     // The search field's microphone, and the RECORD_AUDIO ask that must come
     // before either of its jobs can listen.
     var voiceOpen by remember { mutableStateOf(false) }
+    // The lock gate: one instance for the whole app, so the PIN prompt a card
+    // raises is the same one its page and the Settings rows raise.
+    val lockFlow = remember { LockFlow() }
     val microphonePermission = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission(),
     ) { granted -> if (granted) voiceOpen = true }
@@ -2357,16 +2363,21 @@ private fun BitChordApp(
             if ((id == "local:all" || id == "local:downloads") && !LocalMediaRepository.hasStoragePermission(context)) {
                 mediaPermissionLauncher.launch(mediaPermission)
             }
-            // Opened from a shelf's "Show all" page, it stacks over the grid
-            // exactly as one opened from the Library tab stacks over that, so
-            // back from the release lands on the grid rather than skipping
-            // past it.
-            viewModel.openDetail(
-                browseId = id,
-                title = item.title,
-                subtitle = item.subtitle,
-                thumbnailUrl = item.thumbnailUrl,
-            )
+            // A locked playlist or album asks for the PIN before its contents
+            // are fetched, not after: the page request is what would reveal
+            // them. Everything unlocked falls straight through.
+            lockFlow.guard(id, item.title) {
+                // Opened from a shelf's "Show all" page, it stacks over the grid
+                // exactly as one opened from the Library tab stacks over that, so
+                // back from the release lands on the grid rather than skipping
+                // past it.
+                viewModel.openDetail(
+                    browseId = id,
+                    title = item.title,
+                    subtitle = item.subtitle,
+                    thumbnailUrl = item.thumbnailUrl,
+                )
+            }
         }
     }
     // Takes a list so a single tap on an album/playlist header can queue the
@@ -3369,6 +3380,8 @@ private fun BitChordApp(
                                 onEditSignatureApi = { editingSignatureApi = true },
                                 onConfirmBitPerfect = { confirmBitPerfect = it },
                                 onConfirmFixedVolume = { confirmFixedVolume = true },
+                                onChangeLockPin = { lockFlow.startChangePin() },
+                                onToggleBiometricUnlock = { lockFlow.startBiometricToggle() },
                                 contentPadding = listPadding,
                             )
                         } else if (page != null) {
@@ -5535,6 +5548,16 @@ private fun BitChordApp(
             val importEditable = remember(target.browseId, localPlaylists) {
                 localPlaylists.firstOrNull { it.browseId == target.browseId }
             }
+            // Locking is offered for the two things a lock protects: a playlist
+            // and an album. Collected rather than read, so the row flips to
+            // Unlock the moment the lock is applied.
+            val lockedCollections by CollectionLocks.locked.collectAsStateWithLifecycle()
+            val lockableId = remember(target.browseId, target.type) {
+                target.browseId?.takeIf {
+                    target.type == BrowseType.PLAYLIST || target.type == BrowseType.ALBUM
+                }
+            }
+            val menuLocked = lockableId?.let { CollectionLocks.normalize(it) in lockedCollections } == true
             BrowseActionsMenu(
                 // The live answer, not the one the target was built with.
                 target = target.copy(
@@ -5578,13 +5601,15 @@ private fun BitChordApp(
                     ?.let { id ->
                         {
                             browseActions = null
-                            viewModel.openDetail(
-                                browseId = id,
-                                title = target.title,
-                                subtitle = target.subtitle,
-                                thumbnailUrl = target.thumbnailUrl,
-                                type = target.type,
-                            )
+                            lockFlow.guard(id, target.title) {
+                                viewModel.openDetail(
+                                    browseId = id,
+                                    title = target.title,
+                                    subtitle = target.subtitle,
+                                    thumbnailUrl = target.thumbnailUrl,
+                                    type = target.type,
+                                )
+                            }
                         }
                     },
                 // The one place a whole release is asked for, from a card and
@@ -5648,6 +5673,13 @@ private fun BitChordApp(
                             ).show()
                         }
                         browseActions = null
+                    }
+                },
+                isLocked = menuLocked,
+                onToggleLock = lockableId?.let { id ->
+                    {
+                        browseActions = null
+                        lockFlow.toggleLock(id, target.title)
                     }
                 },
                 hasCustomCover = hasCustomCover,
@@ -5952,6 +5984,8 @@ private fun BitChordApp(
                 )
             }
         }
+
+        LockFlowHost(lockFlow)
 
         if (showLyricsSources) {
             BackHandler { showLyricsSources = false }

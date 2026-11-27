@@ -29,6 +29,9 @@ import org.jetbrains.compose.resources.painterResource
 fun main() {
     // Before any WebView exists, so the sign-in window can start over with an empty jar.
     DesktopWebCookies.install()
+    // The device's PIN and its locked playlists and albums, read before the
+    // first card asks whether it is locked.
+    com.music.bitchord.desktop.DesktopLockPrefs.install()
     DesktopWindowVisibility.install()
     // The player is the phone's, from the shared UI module; this is what it reads underneath.
     PlayerPlatform.install(DesktopPlayerHost)

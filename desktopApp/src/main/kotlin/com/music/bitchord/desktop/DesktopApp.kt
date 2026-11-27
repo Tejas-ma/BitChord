@@ -24,6 +24,7 @@ import com.music.bitchord.ui.replay.ReplayCreditCard
 import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.material3.pulltorefresh.rememberPullToRefreshState
 import com.music.bitchord.data.TopPicks
+import com.music.bitchord.data.security.CollectionLocks
 import com.music.bitchord.data.YtMusicRepository
 import com.music.bitchord.data.model.TopPick
 import com.music.bitchord.data.model.TopPickMood
@@ -137,6 +138,7 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.automirrored.rounded.PlaylistAdd
 import androidx.compose.material.icons.automirrored.rounded.PlaylistPlay
 import androidx.compose.material.icons.rounded.AccountCircle
@@ -1138,6 +1140,15 @@ fun BitChordDesktopApp() {
      * [fallback] is what the card that was clicked already knew.
      */
     fun openCollection(browseId: String, fallback: BrowseItem? = null) {
+        // A locked collection asks for the PIN before its page is requested —
+        // that request is what would reveal the tracks. The retry runs this
+        // same function again, which by then finds the collection unlocked.
+        if (CollectionLocks.isLocked(browseId)) {
+            DesktopLocks.unlock = DesktopLockRequest(browseId, fallback?.title.orEmpty()) {
+                openCollection(browseId, fallback)
+            }
+            return
+        }
         val current = openedCollection
         if (current?.browseId == browseId && !current.loading) {
             showCollection(current)
@@ -4075,6 +4086,8 @@ fun BitChordDesktopApp() {
                             onDismiss = ::closePlaylistDialogs,
                         )
                     }
+                    DesktopLockDialogs()
+
                     if (overlays.rename) {
                         DesktopRenamePlaylistDialog(
                             current = openedCollection?.title.orEmpty(),
@@ -4515,6 +4528,13 @@ fun BitChordDesktopApp() {
                                 .takeIf { openCollectionCoverEditable() },
                             onRemoveCustomCover = { removeOpenCollectionCover() }
                                 .takeIf { openCollectionCoverEditable() && openCollectionCover() != null },
+                            onToggleLock = openedCollection
+                                ?.takeIf { it.type == BrowseType.PLAYLIST || it.type == BrowseType.ALBUM }
+                                ?.let { collection ->
+                                    {
+                                        DesktopLocks.toggleLock(collection.browseId, collection.title)
+                                    }
+                                },
                             hasCustomCover = openCollectionCover() != null,
                             customCoverPath = openCollectionCover()?.path,
                             customCoverHash = openCollectionCover()?.hash,
@@ -6335,6 +6355,7 @@ private enum class DesktopSettingsSection {
     LOCAL_MUSIC,
     STORAGE,
     MISCELLANEOUS,
+    SECURITY,
     LANGUAGE,
     ADVANCED,
 }
@@ -6787,6 +6808,37 @@ private fun DesktopSettingsScreen(
                     )
                 }
             }
+            if (section == DesktopSettingsSection.SECURITY) item {
+                SettingsGroup(DesktopStrings["security_privacy", "Security & Privacy"]) {
+                    val pinRecord by CollectionLocks.pin.collectAsState()
+                    val biometric by CollectionLocks.biometricEnabled.collectAsState()
+                    SettingsToggle(
+                        DesktopStrings["enable_biometric_unlock", "Enable Biometric Unlock"],
+                        // The desktop cannot drive a system fingerprint sheet, so the row says
+                        // what it is instead of offering a switch that would do nothing.
+                        if (pinRecord == null) {
+                            DesktopStrings["security_biometric_needs_pin", "Set up a Lock PIN first."]
+                        } else {
+                            DesktopStrings[
+                                "security_biometric_unavailable",
+                                "This device has no biometric hardware, or no secure lock screen is set up.",
+                            ]
+                        },
+                        biometric && pinRecord != null,
+                        { if (pinRecord != null) DesktopLocks.startBiometricToggle() },
+                    )
+                    SettingsNavigationRow(
+                        DesktopStrings["change_pin", "Change PIN"],
+                        if (pinRecord == null) {
+                            DesktopStrings["no_pin_set", "No PIN set"]
+                        } else {
+                            DesktopStrings["change_pin_subtitle", "Update the PIN that protects locked playlists and albums."]
+                        },
+                        onClick = { DesktopLocks.startChangePin() },
+                    )
+                }
+            }
+
             if (section == DesktopSettingsSection.APPEARANCE) item {
                 SettingsGroup(DesktopStrings["appearance", "Appearance"]) {
                     val reduceDynamicBlur by DesktopAppearanceSettings.reduceDynamicBlur.collectAsState()
@@ -7471,6 +7523,9 @@ private fun DesktopCollectionPage(
     /** Null unless this collection can be given a cover; a read-only playlist gets no cover rows. */
     onSetCustomCover: (() -> Unit)? = null,
     onRemoveCustomCover: (() -> Unit)? = null,
+    /** The device PIN lock on this playlist or album, and the menu row that changes it. */
+    isLocked: Boolean = false,
+    onToggleLock: (() -> Unit)? = null,
     hasCustomCover: Boolean = false,
     customCoverPath: String? = null,
     customCoverHash: String? = null,
@@ -7492,6 +7547,11 @@ private fun DesktopCollectionPage(
     contentPadding: PaddingValues,
 ) {
     val songs = collection.songs
+    // Collected rather than read once: this registry is what the menu writes
+    // to, and the badge and the Lock/Unlock row have to follow that write
+    // without the page being reopened.
+    val lockedIds by CollectionLocks.locked.collectAsState()
+    val locked = CollectionLocks.normalize(collection.browseId) in lockedIds
     // The phone's "search this list": a filter over the rows already loaded.
     var searching by remember(collection.browseId) { mutableStateOf(false) }
     var listQuery by remember(collection.browseId) { mutableStateOf("") }
@@ -7578,6 +7638,9 @@ private fun DesktopCollectionPage(
                                 DesktopCanvasView(it.url, Modifier.fillMaxSize(), fallbackUrl = it.fallbackUrl)
                             }
                         }
+                        if (locked) {
+                            DesktopLockBadge(Modifier.align(Alignment.TopEnd))
+                        }
                     }
                     Spacer(Modifier.width(30.dp))
                     Column(Modifier.weight(1f)) {
@@ -7660,6 +7723,21 @@ private fun DesktopCollectionPage(
                                             onClick = {
                                                 moreOpen = false
                                                 setCover()
+                                            },
+                                        )
+                                    }
+                                    onToggleLock?.let { toggleLock ->
+                                        DropdownMenuItem(
+                                            text = {
+                                                Text(
+                                                    if (locked) DesktopStrings["unlock", "Unlock"]
+                                                    else DesktopStrings["lock", "Lock"],
+                                                )
+                                            },
+                                            leadingIcon = { Icon(Icons.Filled.Lock, null) },
+                                            onClick = {
+                                                moreOpen = false
+                                                toggleLock()
                                             },
                                         )
                                     }
@@ -8253,6 +8331,12 @@ private fun DesktopShelfCard(item: ShelfItem, onClick: (ShelfItem) -> Unit) {
                 .border(1.dp, Color.White.copy(alpha = 0.12f), shape),
         ) {
             DesktopArtwork(customCover ?: item.thumbnailUrl, Modifier.fillMaxSize())
+            // The same registry the collection's menu writes to, so a lock
+            // applied there shows on this card at once.
+            val lockedIds by CollectionLocks.locked.collectAsState()
+            if (CollectionLocks.normalize(item.browseId) in lockedIds) {
+                DesktopLockBadge(Modifier.align(Alignment.TopEnd))
+            }
         }
         Spacer(Modifier.height(8.dp))
         Text(item.title, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
