@@ -66,16 +66,20 @@ internal object DesktopUpdateChecker {
     }.getOrNull()
 
     /**
-     * The release names its files `BitChord-<version>-windows-x64-setup.exe` and
+     * The release names its files `BitChord-<version>-windows-x64-setup.exe`,
+     * `BitChord-<version>-macos-arm64.dmg` and
      * `BitChord-<version>-linux-x86_64.AppImage` (see .github/workflows/release.yml); match on the
-     * platform part so a version change does not matter.
+     * platform and architecture part so a version change does not matter and an Intel Mac is not
+     * handed the Apple Silicon disk image.
      */
     private fun installerUrl(release: JsonObject): String? {
-        val suffixes = when {
-            DesktopPlatform.isWindows -> listOf("-windows-x64-setup.exe")
-            DesktopPlatform.isLinux -> listOf(".AppImage", "-linux-amd64.deb")
+        val target = when {
+            DesktopPlatform.isWindows -> "windows"
+            DesktopPlatform.isMac -> "macos"
+            DesktopPlatform.isLinux -> "linux"
             else -> return null
         }
+        val suffixes = installerSuffixes(target, DesktopPlatform.arch)
         val assets = release["assets"]?.jsonArray?.mapNotNull { it as? JsonObject }.orEmpty()
         for (suffix in suffixes) {
             val hit = assets.firstOrNull { asset ->
@@ -85,6 +89,30 @@ internal object DesktopUpdateChecker {
             hit?.get("browser_download_url")?.jsonPrimitive?.contentOrNull?.let { return it }
         }
         return null
+    }
+
+    /**
+     * The asset-name endings that fit [os] and [arch], most specific first.
+     *
+     * Pure so the choice can be tested for all four shipped combinations on
+     * one machine. A trailing generic suffix is deliberate: a release built
+     * before per-architecture Linux names existed still offers `.AppImage`.
+     */
+    internal fun installerSuffixes(os: String, arch: String): List<String> = when (os) {
+        "windows" -> listOf("-windows-x64-setup.exe")
+        "macos" -> if (arch == DesktopPlatform.ARCH_ARM64) {
+            listOf("-macos-arm64.dmg", "-macos-aarch64.dmg")
+        } else {
+            listOf("-macos-x64.dmg", "-macos-x86_64.dmg", "-macos-intel.dmg")
+        }
+
+        "linux" -> if (arch == DesktopPlatform.ARCH_ARM64) {
+            listOf("-linux-arm64.AppImage", "-linux-aarch64.AppImage", "-linux-arm64.deb", ".AppImage")
+        } else {
+            listOf("-linux-x86_64.AppImage", "-linux-amd64.deb", ".AppImage")
+        }
+
+        else -> emptyList()
     }
 
     private class Parsed(val parts: List<Int>, val preRelease: Boolean)

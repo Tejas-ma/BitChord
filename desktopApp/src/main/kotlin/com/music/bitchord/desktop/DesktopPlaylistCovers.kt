@@ -263,7 +263,8 @@ object DesktopPlaylistCovers {
         persistence.saveString(KEY_COVERS, value)
     }
 
-    private fun coverDirectory(): Path = appDataDirectory().resolve("playlist_covers")
+    private fun coverDirectory(): Path =
+        DesktopDirectories.ensure(DesktopDirectories.data).resolve("playlist_covers")
 
     /** The file name a key is stored under; exposed so the Windows rules can be tested. */
     internal fun coverFileNameFor(key: String): String = coverFileName(key)
@@ -284,22 +285,6 @@ object DesktopPlaylistCovers {
             .take(MAX_FILE_NAME_LENGTH)
         val safe = if (cleaned.substringBefore('.').uppercase() in RESERVED_NAMES) "_$cleaned" else cleaned
         return "$safe.webp"
-    }
-
-    private fun appDataDirectory(): Path {
-        val home = Path.of(System.getProperty("user.home"))
-        val os = System.getProperty("os.name").orEmpty()
-        val base = when {
-            os.startsWith("Windows", ignoreCase = true) ->
-                System.getenv("APPDATA")?.takeIf(String::isNotBlank)?.let(Path::of)
-                    ?: home.resolve("AppData").resolve("Roaming")
-
-            os.startsWith("Mac", ignoreCase = true) -> home.resolve("Library").resolve("Application Support")
-            else ->
-                System.getenv("XDG_DATA_HOME")?.takeIf(String::isNotBlank)?.let(Path::of)
-                    ?: home.resolve(".local").resolve("share")
-        }
-        return base.resolve("bitchord")
     }
 
     private fun sha256(file: Path): String {

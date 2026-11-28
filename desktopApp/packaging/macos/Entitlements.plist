@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Entitlements for a signed BitChord.app.
+
+  Skiko and JavaFX execute JIT-compiled code and map memory the hardened
+  runtime otherwise forbids; without the first two keys the player renders a
+  blank window once the app is signed. The microphone entitlement is what the
+  system sheet for sound search checks, and the network entitlement is what
+  NewPipeExtractor, Google Drive backup and Listen Together need.
+-->
+<plist version="1.0">
+<dict>
+    <key>com.apple.security.cs.allow-jit</key>
+    <true/>
+    <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+    <true/>
+    <key>com.apple.security.cs.disable-library-validation</key>
+    <true/>
+    <key>com.apple.security.device.audio-input</key>
+    <true/>
+    <key>com.apple.security.network.client</key>
+    <true/>
+</dict>
+</plist>

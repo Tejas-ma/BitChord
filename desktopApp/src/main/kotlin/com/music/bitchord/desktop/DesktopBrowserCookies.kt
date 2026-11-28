@@ -9,6 +9,7 @@ import java.nio.file.Paths
 import java.nio.file.StandardCopyOption
 import java.sql.DriverManager
 import java.util.Base64
+import java.util.concurrent.TimeUnit
 import javax.crypto.Cipher
 import javax.crypto.SecretKeyFactory
 import javax.crypto.spec.GCMParameterSpec
@@ -34,6 +35,8 @@ internal object DesktopBrowserCookies {
         val database: Path,
         val secretAttribute: String? = null,
         val localState: Path? = null,
+        /** macOS keeps the same key in the login Keychain, under this service name. */
+        val macService: String? = null,
     ) {
         val label: String get() = if (profile.isBlank()) browser else "$browser · $profile"
     }
@@ -85,6 +88,7 @@ internal object DesktopBrowserCookies {
                                     database = database,
                                     secretAttribute = attribute,
                                     localState = localState,
+                                    macService = spec.macService,
                                 ),
                             )
                         }
@@ -135,10 +139,15 @@ internal object DesktopBrowserCookies {
     }
 
     private fun readChromium(database: Path, profile: Profile): Result {
-        val linuxPassword = if (DesktopPlatform.isLinux) {
-            profile.secretAttribute?.let { DesktopSecretStore.lookup(mapOf("application" to it)) }
-        } else {
-            null
+        // The same Chromium cookie format on Linux and macOS, but the key is
+        // filed differently and stretched with a different work factor.
+        val posixPassword = when {
+            DesktopPlatform.isLinux ->
+                profile.secretAttribute?.let { DesktopSecretStore.lookup(mapOf("application" to it)) }
+
+            DesktopPlatform.isMac -> profile.macService?.let(::keychainPassword)
+
+            else -> null
         }
         val windowsKey = if (DesktopPlatform.isWindows) windowsMasterKey(profile.localState) else null
         return query(database) { connection ->
@@ -157,7 +166,7 @@ internal object DesktopBrowserCookies {
                         val value = when {
                             !plain.isNullOrBlank() -> plain
                             sealed == null || sealed.isEmpty() -> null
-                            else -> decrypt(sealed, host, linuxPassword, windowsKey).also {
+                            else -> decrypt(sealed, host, posixPassword, windowsKey).also {
                                 if (it == null) undecipherable++
                                 if (name in SIGNING_COOKIES && sealed.hasPrefix(APP_BOUND_PREFIX)) {
                                     appBoundSigningCookie = true
@@ -186,12 +195,20 @@ internal object DesktopBrowserCookies {
     private fun decrypt(
         sealed: ByteArray,
         host: String,
-        keyringPassword: ByteArray?,
+        posixPassword: ByteArray?,
         windowsKey: ByteArray?,
-    ): String? = if (DesktopPlatform.isWindows) {
-        decryptWindows(sealed, windowsKey, host)
-    } else {
-        decryptLinux(sealed, host, keyringPassword)
+    ): String? = when {
+        DesktopPlatform.isWindows -> decryptWindows(sealed, windowsKey, host)
+        // Chromium on macOS derives the cookie key through 1003 rounds of
+        // PBKDF2 and has no "peanuts" fallback: the Keychain is the key.
+        DesktopPlatform.isMac -> decryptPosix(sealed, host, posixPassword, MAC_ITERATIONS, null)
+        else -> decryptPosix(
+            sealed,
+            host,
+            posixPassword,
+            LINUX_ITERATIONS,
+            FALLBACK_PASSWORD.toByteArray(Charsets.UTF_8),
+        )
     }
 
     /** Chromium's AES-GCM cookie format after its browser key has been unwrapped with DPAPI. */
@@ -214,18 +231,34 @@ internal object DesktopBrowserCookies {
         }.getOrNull()
     }
 
-    /** Chromium's cookie encryption on Linux. */
-    private fun decryptLinux(sealed: ByteArray, host: String, keyringPassword: ByteArray?): String? {
+    /**
+     * Chromium's AES-128-CBC cookie format, as both POSIX desktops write it.
+     *
+     * [iterations] is the only difference between them: Linux stretches the
+     * keyring password once, macOS a thousand and three times. [fallbackPassword]
+     * is Linux's `peanuts` for a v10 cookie written before a keyring existed;
+     * macOS passes null, because a Keychain that cannot be read means the cookie
+     * really is not recoverable.
+     */
+    internal fun decryptPosix(
+        sealed: ByteArray,
+        host: String,
+        keyringPassword: ByteArray?,
+        iterations: Int,
+        fallbackPassword: ByteArray?,
+    ): String? {
         if (sealed.size <= PREFIX_BYTES) return null
         val version = String(sealed, 0, PREFIX_BYTES, Charsets.US_ASCII)
         val password = when (version) {
-            "v10" -> FALLBACK_PASSWORD.toByteArray(Charsets.UTF_8)
+            "v10" -> keyringPassword ?: fallbackPassword ?: return null
             "v11" -> keyringPassword ?: return null
             else -> return null
         }
         val plain = runCatching {
             val key = SecretKeyFactory.getInstance("PBKDF2WithHmacSHA1")
-                .generateSecret(PBEKeySpec(String(password, Charsets.UTF_8).toCharArray(), SALT, ITERATIONS, KEY_BITS))
+                .generateSecret(
+                    PBEKeySpec(String(password, Charsets.UTF_8).toCharArray(), SALT, iterations, KEY_BITS),
+                )
                 .encoded
             Cipher.getInstance("AES/CBC/PKCS5Padding").run {
                 init(Cipher.DECRYPT_MODE, SecretKeySpec(key, "AES"), IvParameterSpec(ByteArray(16) { ' '.code.toByte() }))
@@ -234,6 +267,35 @@ internal object DesktopBrowserCookies {
         }.getOrElse { return null }
 
         return String(stripHostDigest(plain, host), Charsets.UTF_8)
+    }
+
+    /**
+     * A browser's "Safe Storage" password from the login Keychain.
+     *
+     * `security` is what ships with macOS and needs no entitlement or prompt
+     * of its own; reading the item is the same act the browser performed when
+     * it wrote it. Cached per service because a profile list asks once per
+     * browser and each call forks a process.
+     */
+    private fun keychainPassword(service: String): ByteArray? {
+        keychain[service]?.let { return it }
+        val password = runCatching {
+            val process = ProcessBuilder("security", "find-generic-password", "-w", "-s", service)
+                .redirectErrorStream(false)
+                .start()
+            val finished = process.waitFor(5, TimeUnit.SECONDS)
+            if (!finished) {
+                process.destroyForcibly()
+                return@runCatching null
+            }
+            val text = process.inputStream.bufferedReader().use { it.readText() }.trim()
+            if (process.exitValue() == 0 && text.isNotEmpty()) text.toByteArray(Charsets.UTF_8) else null
+        }.getOrElse {
+            DesktopTrackLog.log("keychain unavailable for $service: ${it.message}")
+            null
+        } ?: return null
+        keychain[service] = password
+        return password
     }
 
     /** Cookie databases at schema 24+ bind encrypted values to their host with this prefix. */
@@ -282,8 +344,15 @@ internal object DesktopBrowserCookies {
     /** Chromium's constant when no keyring is in use; its own choice of word. */
     private const val FALLBACK_PASSWORD = "peanuts"
     private val SALT = "saltysalt".toByteArray(Charsets.UTF_8)
-    private const val ITERATIONS = 1
+
+    /** Linux stretches the keyring password once; macOS Chrome uses 1003 rounds. */
+    private const val LINUX_ITERATIONS = 1
+    internal const val MAC_ITERATIONS = 1003
+
     private const val KEY_BITS = 128
+
+    /** Keychain passwords already read, so a profile list does not fork per browser. */
+    private val keychain = java.util.concurrent.ConcurrentHashMap<String, ByteArray>()
     private const val PREFIX_BYTES = 3
     private const val GCM_NONCE_BYTES = 12
     private const val GCM_TAG_BYTES = 16
@@ -342,31 +411,63 @@ internal object DesktopBrowserCookies {
         "Opera" to (".config/opera" to "chromium"),
     )
 
-    private data class ChromiumRoot(val browser: String, val root: Path, val secretAttribute: String?)
+    private data class ChromiumRoot(
+        val browser: String,
+        val root: Path,
+        val secretAttribute: String?,
+        /** The Keychain service macOS files the same key under. */
+        val macService: String? = null,
+    )
 
-    private fun firefoxRoots(): List<Pair<String, Path>> = if (DesktopPlatform.isWindows) {
-        val roaming = System.getenv("APPDATA")?.let(Paths::get) ?: home.resolve("AppData/Roaming")
-        listOf(
-            "Firefox" to roaming.resolve("Mozilla/Firefox/Profiles"),
-            "LibreWolf" to roaming.resolve("librewolf/Profiles"),
-            "Waterfox" to roaming.resolve("Waterfox/Profiles"),
-            "Zen" to roaming.resolve("zen/Profiles"),
-        )
-    } else {
-        LINUX_FIREFOX_ROOTS.map { (name, relative) -> name to home.resolve(relative) }
+    /** Where macOS keeps each Chromium browser's profile, and its Safe Storage entry. */
+    private val MAC_CHROMIUM_ROOTS = listOf(
+        Triple("Chrome", "Library/Application Support/Google/Chrome", "Chrome Safe Storage"),
+        Triple("Chromium", "Library/Application Support/Chromium", "Chromium Safe Storage"),
+        Triple("Brave", "Library/Application Support/BraveSoftware/Brave-Browser", "Brave Safe Storage"),
+        Triple("Edge", "Library/Application Support/Microsoft Edge", "Microsoft Edge Safe Storage"),
+        Triple("Vivaldi", "Library/Application Support/Vivaldi", "Vivaldi Safe Storage"),
+    )
+
+    private val MAC_FIREFOX_ROOTS = listOf(
+        "Firefox" to "Library/Application Support/Firefox/Profiles",
+        "LibreWolf" to "Library/Application Support/librewolf/Profiles",
+        "Waterfox" to "Library/Application Support/Waterfox/Profiles",
+        "Zen" to "Library/Application Support/zen/Profiles",
+    )
+
+    private fun firefoxRoots(): List<Pair<String, Path>> = when {
+        DesktopPlatform.isWindows -> {
+            val roaming = System.getenv("APPDATA")?.let(Paths::get) ?: home.resolve("AppData/Roaming")
+            listOf(
+                "Firefox" to roaming.resolve("Mozilla/Firefox/Profiles"),
+                "LibreWolf" to roaming.resolve("librewolf/Profiles"),
+                "Waterfox" to roaming.resolve("Waterfox/Profiles"),
+                "Zen" to roaming.resolve("zen/Profiles"),
+            )
+        }
+
+        DesktopPlatform.isMac -> MAC_FIREFOX_ROOTS.map { (name, relative) -> name to home.resolve(relative) }
+
+        else -> LINUX_FIREFOX_ROOTS.map { (name, relative) -> name to home.resolve(relative) }
     }
 
-    private fun chromiumRoots(): List<ChromiumRoot> = if (DesktopPlatform.isWindows) {
-        val local = System.getenv("LOCALAPPDATA")?.let(Paths::get) ?: home.resolve("AppData/Local")
-        listOf(
-            ChromiumRoot("Chrome", local.resolve("Google/Chrome/User Data"), null),
-            ChromiumRoot("Chromium", local.resolve("Chromium/User Data"), null),
-            ChromiumRoot("Edge", local.resolve("Microsoft/Edge/User Data"), null),
-            ChromiumRoot("Brave", local.resolve("BraveSoftware/Brave-Browser/User Data"), null),
-            ChromiumRoot("Vivaldi", local.resolve("Vivaldi/User Data"), null),
-        )
-    } else {
-        LINUX_CHROMIUM_ROOTS.map { (name, spec) ->
+    private fun chromiumRoots(): List<ChromiumRoot> = when {
+        DesktopPlatform.isWindows -> {
+            val local = System.getenv("LOCALAPPDATA")?.let(Paths::get) ?: home.resolve("AppData/Local")
+            listOf(
+                ChromiumRoot("Chrome", local.resolve("Google/Chrome/User Data"), null),
+                ChromiumRoot("Chromium", local.resolve("Chromium/User Data"), null),
+                ChromiumRoot("Edge", local.resolve("Microsoft/Edge/User Data"), null),
+                ChromiumRoot("Brave", local.resolve("BraveSoftware/Brave-Browser/User Data"), null),
+                ChromiumRoot("Vivaldi", local.resolve("Vivaldi/User Data"), null),
+            )
+        }
+
+        DesktopPlatform.isMac -> MAC_CHROMIUM_ROOTS.map { (name, relative, service) ->
+            ChromiumRoot(name, home.resolve(relative), null, service)
+        }
+
+        else -> LINUX_CHROMIUM_ROOTS.map { (name, spec) ->
             ChromiumRoot(name, home.resolve(spec.first), spec.second)
         }
     }

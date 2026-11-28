@@ -26,7 +26,21 @@ val targetOs: String = (providers.gradleProperty("bitchord.target").orNull ?: wh
 }).lowercase()
 
 val hostArch = System.getProperty("os.arch").lowercase()
-val isArm64 = hostArch == "aarch64" || hostArch == "arm64"
+
+/**
+ * Which processor this build is for: the host's, unless `-Pbitchord.arch` names another.
+ *
+ * Every per-architecture dependency — FFmpeg's javacpp natives, JavaFX's WebKit, Skiko —
+ * is chosen from this one flag, so a Linux arm64 runner, an Apple Silicon Mac and a
+ * cross-check on CI all agree. Packaging itself still runs on a matching host: jpackage
+ * cannot assemble an architecture it is not running on.
+ */
+val isArm64: Boolean = when (val requested = providers.gradleProperty("bitchord.arch").orNull?.trim()?.lowercase()) {
+    null, "" -> hostArch == "aarch64" || hostArch == "arm64"
+    "arm64", "aarch64", "armv8" -> true
+    "x64", "x86_64", "amd64", "x86-64" -> false
+    else -> error("Unknown -Pbitchord.arch=$requested; use x64 or arm64")
+}
 
 // Windows installer metadata requires MAJOR.MINOR.BUILD, each field inside its own range, even
 // though the app's public version is intentionally displayed without a patch number (1.7 rather
@@ -46,7 +60,7 @@ val javacppVersion = "1.5.12"
 val ffmpegVersion = "7.1.1-$javacppVersion"
 val nativeClassifier = when (targetOs) {
     "windows" -> "windows-x86_64"
-    "linux" -> "linux-x86_64"
+    "linux" -> if (isArm64) "linux-arm64" else "linux-x86_64"
     "macos" -> if (isArm64) "macosx-arm64" else "macosx-x86_64"
     else -> error("BitChord desktop supports Linux, Windows, and macOS only")
 }
@@ -66,6 +80,17 @@ val desktopModuleIndexUrl = localProperty("MODULE_INDEX_URL")
 val listenTogetherServer = localProperty("LISTEN_TOGETHER_SERVER")
 val lastfmApiKey = localProperty("LASTFM_API_KEY")
 val lastfmSecret = localProperty("LASTFM_SECRET")
+
+// macOS code signing and notarization, supplied locally or by CI.
+//
+// Absent, the build still makes an unsigned DMG, which is what a fork, a pull
+// request and any machine without an Apple developer identity should get: a
+// missing certificate must not turn a packaging run into a failure. See
+// desktopApp/BUILDING-MACOS.md for what each value is.
+val macSigningIdentity = localProperty("MACOS_SIGNING_IDENTITY")
+val macNotaryAppleId = localProperty("MACOS_NOTARY_APPLE_ID")
+val macNotaryPassword = localProperty("MACOS_NOTARY_PASSWORD")
+val macNotaryTeamId = localProperty("MACOS_NOTARY_TEAM_ID")
 
 plugins {
     id("org.jetbrains.kotlin.jvm")
@@ -87,7 +112,7 @@ dependencies {
     val javafxClassifier = when (targetOs) {
         "windows" -> "win"
         "macos" -> if (isArm64) "mac-aarch64" else "mac"
-        else -> "linux"
+        else -> if (isArm64) "linux-aarch64" else "linux"
     }
     listOf("base", "graphics", "controls", "media", "web").forEach { module ->
         implementation("org.openjfx:javafx-$module:21.0.10:$javafxClassifier")
@@ -122,7 +147,7 @@ dependencies {
         when (targetOs) {
             "windows" -> compose.desktop.windows_x64
             "macos" -> if (isArm64) compose.desktop.macos_arm64 else compose.desktop.macos_x64
-            else -> compose.desktop.linux_x64
+            else -> if (isArm64) compose.desktop.linux_arm64 else compose.desktop.linux_x64
         }
     )
 
@@ -724,11 +749,35 @@ compose.desktop {
                 bundleID = "com.music.bitchord"
                 appCategory = "public.app-category.music"
                 dockName = "BitChord"
+                // The hardened runtime the signature implies needs these for
+                // Skiko/JavaFX's JIT and for the microphone the sound search
+                // records from. The file also covers a notarized build.
+                entitlementsFile.set(project.file("packaging/macos/Entitlements.plist"))
                 infoPlist {
                     extraKeysRawXml = """
                         <key>NSRequiresAquaSystemAppearance</key>
                         <false/>
+                        <key>NSMicrophoneUsageDescription</key>
+                        <string>BitChord listens through your microphone to recognise the music playing around you.</string>
                     """.trimIndent()
+                }
+                if (macSigningIdentity.isNotBlank()) {
+                    signing {
+                        sign.set(true)
+                        identity.set(macSigningIdentity)
+                    }
+                }
+                if (
+                    macSigningIdentity.isNotBlank() &&
+                    macNotaryAppleId.isNotBlank() &&
+                    macNotaryPassword.isNotBlank() &&
+                    macNotaryTeamId.isNotBlank()
+                ) {
+                    notarization {
+                        appleID.set(macNotaryAppleId)
+                        password.set(macNotaryPassword)
+                        teamID.set(macNotaryTeamId)
+                    }
                 }
             }
 
