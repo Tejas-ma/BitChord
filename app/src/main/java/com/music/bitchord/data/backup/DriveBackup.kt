@@ -108,6 +108,22 @@ object DriveBackup {
     /** The grant has gone; the run stops and the screen asks again. */
     class NeedsSignIn : Exception("Sign in to Google Drive again to continue")
 
+    /**
+     * A backup that will not open until its passphrase is given.
+     *
+     * Raised as state rather than as a failed run: the passphrase is a
+     * question for the listener, not an error to report and forget.
+     * [rejected] marks a guess that did not verify, so the prompt can say so.
+     */
+    data class PassphrasePrompt(
+        val context: Context,
+        /** The device being restored as, or null when a sync met an encrypted peer. */
+        val device: RemoteDevice?,
+        val rejected: Boolean,
+    ) {
+        val restoring: Boolean get() = device != null
+    }
+
     private const val PREFS = "bitchord_drive_backup"
     private const val KEY_ACCOUNT = "account"
     private const val KEY_ACCOUNT_NAME = "account_name"
@@ -146,6 +162,14 @@ object DriveBackup {
     private val _result = MutableStateFlow<Result?>(null)
     val result: StateFlow<Result?> = _result.asStateFlow()
 
+    private val _passphrasePrompt = MutableStateFlow<PassphrasePrompt?>(null)
+    val passphrasePrompt: StateFlow<PassphrasePrompt?> = _passphrasePrompt.asStateFlow()
+
+    private val _encryption = MutableStateFlow(false)
+
+    /** Whether uploads are sealed with a passphrase, for the Settings row. */
+    val encryptionEnabled: StateFlow<Boolean> = _encryption.asStateFlow()
+
     /**
      * Reads the settings and keeps the schedule in step with them. Off — no
      * account, no device, or no frequency — this never touches WorkManager on
@@ -154,6 +178,9 @@ object DriveBackup {
      */
     fun init(app: Application) {
         prefs = app.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        // Before the first manifest is read: every file may carry a header.
+        BackupCipher.init(app)
+        _encryption.value = BackupCipher.isEnabled()
         _settings.value = read()
         if (_settings.value.identity.installId.isEmpty()) {
             save { it.copy(identity = it.identity.copy(installId = UUID.randomUUID().toString())) }
@@ -201,6 +228,39 @@ object DriveBackup {
 
     fun clearResult() {
         _result.value = null
+    }
+
+    // ---- Encryption ---------------------------------------------------------
+
+    /** Whether this account's backups are sealed before they leave the phone. */
+    fun hasPassphrase(): Boolean = runCatching { BackupCipher.isEnabled() }.getOrDefault(false)
+
+    /** Sets (or clears, with a blank) the passphrase future backups are sealed with. */
+    fun setBackupPassphrase(passphrase: String?): Boolean {
+        val accepted = BackupCipher.setPassphrase(passphrase)
+        if (accepted) _encryption.value = BackupCipher.isEnabled()
+        return accepted
+    }
+
+    /** Gives up on the prompt: nothing is retried and no guess is kept. */
+    fun dismissPassphrasePrompt() {
+        BackupCipher.clearPending()
+        _passphrasePrompt.value = null
+    }
+
+    /**
+     * Tries [passphrase] against the file that asked for it and carries on with
+     * what was waiting — the restore, or the sync.
+     *
+     * A guess only becomes this phone's passphrase once a file actually opened
+     * with it, so a wrong one leaves the account's real key alone.
+     */
+    fun submitPassphrase(passphrase: String) {
+        val prompt = _passphrasePrompt.value ?: return
+        _passphrasePrompt.value = null
+        BackupCipher.tryPassphrase(passphrase)
+        val device = prompt.device
+        if (device != null) restoreAs(prompt.context, device) else syncNow(prompt.context)
     }
 
     fun dismissForkNotice() = save { it.copy(forkedTo = null) }
@@ -273,6 +333,13 @@ object DriveBackup {
             Devices.Loaded(withToken(context) { ReplaySync.devices(it) })
         } catch (e: CancellationException) {
             throw e
+        } catch (e: BackupCipher.PassphraseRequired) {
+            // The devices are there; none of their manifests can be read yet.
+            _passphrasePrompt.value = PassphrasePrompt(context.applicationContext, null, rejected = false)
+            Devices.Failed(e.message ?: "This backup is encrypted")
+        } catch (e: BackupCipher.PassphraseRejected) {
+            _passphrasePrompt.value = PassphrasePrompt(context.applicationContext, null, rejected = true)
+            Devices.Failed(e.message ?: "This backup is encrypted")
         } catch (e: Exception) {
             Devices.Failed(e.message ?: e.javaClass.simpleName)
         }
@@ -320,6 +387,12 @@ object DriveBackup {
                 throw e
             } catch (e: NeedsSignIn) {
                 // Already marked on the settings; the screen asks.
+            } catch (e: BackupCipher.PassphraseRequired) {
+                _passphrasePrompt.value = PassphrasePrompt(app, device, rejected = false)
+            } catch (e: BackupCipher.PassphraseRejected) {
+                _passphrasePrompt.value = PassphrasePrompt(app, device, rejected = true)
+            } catch (e: BackupCipher.UnreadableBackup) {
+                _result.value = Result.Failed(e.message ?: "The backup could not be read", restoring = true)
             } catch (e: Exception) {
                 _result.value = Result.Failed(e.message ?: e.javaClass.simpleName, restoring = true)
             } finally {
@@ -425,6 +498,14 @@ object DriveBackup {
             throw e
         } catch (e: NeedsSignIn) {
             RunOutcome.NeedsSignIn
+        } catch (e: BackupCipher.PassphraseRequired) {
+            // A peer's files are encrypted and this phone has no passphrase for
+            // them yet. The run stops where it is; the prompt continues it.
+            _passphrasePrompt.value = PassphrasePrompt(context.applicationContext, null, rejected = false)
+            RunOutcome.Failed(e.message ?: "This backup is encrypted", retryable = false)
+        } catch (e: BackupCipher.PassphraseRejected) {
+            _passphrasePrompt.value = PassphrasePrompt(context.applicationContext, null, rejected = true)
+            RunOutcome.Failed(e.message ?: "This backup is encrypted", retryable = false)
         } catch (e: Exception) {
             val message = e.message ?: e.javaClass.simpleName
             save { it.copy(lastError = message) }

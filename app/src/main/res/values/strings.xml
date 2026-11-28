@@ -1559,4 +1559,16 @@
     <string name="change_pin_subtitle">Update the PIN that protects locked playlists and albums.</string>
     <string name="no_pin_set">No PIN set</string>
     <string name="lock_pin_set">Lock PIN set</string>
+
+    <string name="backup_encryption_header">Backup encryption</string>
+    <string name="backup_passphrase">Passphrase</string>
+    <string name="backup_passphrase_subtitle">Backups are encrypted with AES-256-GCM before they are uploaded, once a passphrase is set.</string>
+    <string name="backup_passphrase_on">Encrypted (AES-256-GCM)</string>
+    <string name="backup_passphrase_off">Not encrypted</string>
+    <string name="backup_passphrase_change">Change</string>
+    <string name="backup_passphrase_set_title">Backup passphrase</string>
+    <string name="backup_passphrase_set_body">This passphrase encrypts this phone\'s backups before they are uploaded. It is never sent to Google Drive, so keep it safe: a restore needs it.</string>
+    <string name="backup_passphrase_required">This backup is encrypted. Enter its passphrase to continue.</string>
+    <string name="backup_passphrase_wrong">That passphrase did not unlock the backup, or the file is damaged. Try again.</string>
+    <string name="backup_passphrase_hint">Passphrase</string>
 </resources>

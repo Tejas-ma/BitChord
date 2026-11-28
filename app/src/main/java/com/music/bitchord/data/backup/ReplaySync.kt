@@ -207,8 +207,17 @@ object ReplaySync {
             .mapValues { (_, list) -> list.mapNotNull { f -> f.properties[TARGET]?.let { it to f } }.toMap() }
     }
 
+    /**
+     * One device's manifest, decrypted when it carries a header and read as it
+     * is when it is one of the older unencrypted files. A manifest sealed with a
+     * passphrase this device has not been given throws
+     * [BackupCipher.PassphraseRequired], which the screen turns into a prompt.
+     */
     private suspend fun readManifest(token: String, file: DriveApi.DriveFile): DeviceManifest =
-        json.decodeFromString(DeviceManifest.serializer(), gunzip(DriveApi.download(token, file.id)).decodeToString())
+        json.decodeFromString(
+            DeviceManifest.serializer(),
+            gunzip(BackupCipher.open(DriveApi.download(token, file.id))).decodeToString(),
+        )
 
     /** Every device in Drive, this one included, newest sync first. */
     suspend fun devices(token: String): List<RemoteDevice> {
@@ -284,10 +293,15 @@ object ReplaySync {
             )
             plan.upload.forEachIndexed { index, month ->
                 onStep(Step.Uploading(index, plan.upload.size))
+                val unsealed = gzip(bytes.getValue(month))
+                val payload = BackupCipher.seal(unsealed)
+                // The gzipped month is the only unencrypted copy that ever
+                // leaves memory's owner; it is wiped once it has been sealed.
+                if (payload !== unsealed) unsealed.fill(0)
                 DriveApi.put(
                     token = token,
                     name = "replay-$myId-$month.json.gz",
-                    bytes = gzip(bytes.getValue(month)),
+                    bytes = payload,
                     properties = mapOf(KIND to KIND_REPLAY, DEVICE_ID to myId, MONTH to month),
                     existingId = remoteOwn[month]?.id,
                 )
@@ -313,11 +327,14 @@ object ReplaySync {
                     val cover = localCovers[key] ?: return@forEach
                     val bytes = runCatching { File(cover.path).readBytes() }.getOrNull()
                         ?: return@forEach
+                    val unsealed = gzip(bytes)
+                    val payload = BackupCipher.seal(unsealed)
+                    if (payload !== unsealed) unsealed.fill(0)
                     val written = runCatching {
                         DriveApi.put(
                             token = token,
                             name = "cover-$myId-${cover.hash.take(16)}.webp.gz",
-                            bytes = gzip(bytes),
+                            bytes = payload,
                             properties = mapOf(KIND to KIND_COVER, DEVICE_ID to myId, TARGET to key),
                             existingId = remoteCovers[key]?.id,
                         )
@@ -344,10 +361,15 @@ object ReplaySync {
                 covers = manifestCovers,
                 locked = CollectionLocks.exportLocked().sorted(),
             )
+            // The manifest names the covers and the locked collections, so it
+            // is sealed the same way the months and covers are.
+            val unsealed = gzip(json.encodeToString(DeviceManifest.serializer(), manifest).toByteArray())
+            val payload = BackupCipher.seal(unsealed)
+            if (payload !== unsealed) unsealed.fill(0)
             val written = DriveApi.put(
                 token = token,
                 name = "device-$myId.json.gz",
-                bytes = gzip(json.encodeToString(DeviceManifest.serializer(), manifest).toByteArray()),
+                bytes = payload,
                 properties = mapOf(KIND to KIND_DEVICE, DEVICE_ID to myId),
                 existingId = listing.manifests[myId]?.id,
             )
@@ -389,7 +411,7 @@ object ReplaySync {
             plan.download.forEachIndexed { index, month ->
                 onStep(Step.Downloading(device.name, index, plan.download.size))
                 val file = files.getValue(month)
-                val bytes = gunzip(DriveApi.download(token, file.id, file.sizeBytes))
+                val bytes = gunzip(BackupCipher.open(DriveApi.download(token, file.id, file.sizeBytes)))
                 // Parsed before it is kept: a month this build can't read is
                 // left out rather than breaking the Replay it would be added to.
                 if (runCatching { BucketMath.decode(bytes) }.isSuccess) {
@@ -435,7 +457,7 @@ object ReplaySync {
 
         val remote = months.mapIndexed { index, month ->
             onStep(Step.Downloading(manifest.name, index, months.size))
-            val bytes = gunzip(DriveApi.download(token, files.getValue(month).id))
+            val bytes = gunzip(BackupCipher.open(DriveApi.download(token, files.getValue(month).id)))
             month to BucketMath.decode(bytes)
         }.toMap()
         onStep(Step.Restoring)
@@ -467,8 +489,9 @@ object ReplaySync {
         manifest.covers.keys.sorted().forEachIndexed { index, key ->
             val file = coverFiles[key] ?: return@forEachIndexed
             onStep(Step.Downloading(manifest.name, index, manifest.covers.size))
-            val bytes = runCatching { gunzip(DriveApi.download(token, file.id, file.sizeBytes)) }
-                .getOrNull() ?: return@forEachIndexed
+            val bytes = runCatching {
+                gunzip(BackupCipher.open(DriveApi.download(token, file.id, file.sizeBytes)))
+            }.getOrNull() ?: return@forEachIndexed
             val cover = PlaylistCoverStore.restoreCover(key, bytes).getOrNull()
                 ?: return@forEachIndexed
             // An album's cover is read straight from the registry, so writing

@@ -3325,6 +3325,7 @@ private fun BitChordApp(
                                 onConfirmDisconnect = { driveAlerts.disconnect = true },
                                 onConfirmRemove = { driveAlerts.remove = it },
                                 onRename = { driveAlerts.renaming = it },
+                                onSetPassphrase = { driveAlerts.settingPassphrase = "" },
                             )
                         } else if (pageRoute == AppRoute.DriveDevices) {
                             DriveDevicesScreen(

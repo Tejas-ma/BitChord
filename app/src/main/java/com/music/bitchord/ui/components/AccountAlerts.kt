@@ -265,6 +265,8 @@ fun TextValueAlert(
     saveEnabled: Boolean = true,
     /** A third action between Save and Cancel, for a value that can be cleared. */
     onRemove: (() -> Unit)? = null,
+    /** Masks the field: a passphrase should not be read off the screen over a shoulder. */
+    masked: Boolean = false,
 ) {
     AlertScaffold(hazeState = hazeState, onDismiss = onDismiss) {
         Column(
@@ -290,7 +292,11 @@ fun TextValueAlert(
                 value = value,
                 onValueChange = onValueChange,
                 placeholder = placeholder,
-                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                isPassword = masked,
+                keyboardOptions = KeyboardOptions(
+                    keyboardType = if (masked) KeyboardType.Password else KeyboardType.Text,
+                    imeAction = ImeAction.Done,
+                ),
                 keyboardActions = KeyboardActions(onDone = { onSave() }),
             )
         }

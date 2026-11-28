@@ -90,11 +90,14 @@ fun DriveBackupScreen(
     onConfirmDisconnect: () -> Unit,
     onConfirmRemove: (RemoteDevice) -> Unit,
     onRename: (String) -> Unit,
+    /** Opens the passphrase alert that turns encryption on, changes or clears it. */
+    onSetPassphrase: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val settings by DriveBackup.settings.collectAsStateWithLifecycle()
+    val encrypted by DriveBackup.encryptionEnabled.collectAsStateWithLifecycle()
     val progress by DriveBackup.progress.collectAsStateWithLifecycle()
     val devices by DriveBackup.devices.collectAsStateWithLifecycle()
     val result by DriveBackup.result.collectAsStateWithLifecycle()
@@ -316,6 +319,25 @@ fun DriveBackupScreen(
                     )
                 },
                 onClick = { DriveBackup.setOverCellular(!settings.overCellular) },
+            )
+        }
+
+        // ---- Encryption -----------------------------------------------------
+        // Stated plainly whether the uploads are sealed, because it decides
+        // whether a restore on another phone needs something typed into it.
+        SettingsGroup(
+            header = stringResource(R.string.backup_encryption_header),
+            footer = stringResource(R.string.backup_passphrase_subtitle),
+        ) {
+            SettingsRow(
+                icon = SfIcons.Lock,
+                title = stringResource(R.string.backup_passphrase),
+                subtitle = stringResource(
+                    if (encrypted) R.string.backup_passphrase_on else R.string.backup_passphrase_off,
+                ),
+                value = stringResource(R.string.backup_passphrase_change),
+                enabled = !running,
+                onClick = onSetPassphrase,
             )
         }
 
