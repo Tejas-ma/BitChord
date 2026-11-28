@@ -88,6 +88,10 @@ val lastfmSecret = localProperty("LASTFM_SECRET")
 // missing certificate must not turn a packaging run into a failure. See
 // desktopApp/BUILDING-MACOS.md for what each value is.
 val macSigningIdentity = localProperty("MACOS_SIGN_IDENTITY")
+// An "Install macOS" certificate for the .pkg itself. Separate from the app's
+// identity: a package can be signed by a different certificate than the bundle
+// inside it, and CI may have only one of the two.
+val macPkgSigningIdentity = localProperty("MACOS_PKG_SIGN_IDENTITY")
 val macNotaryAppleId = localProperty("APPLE_ID")
 val macNotaryPassword = localProperty("APPLE_APP_SPECIFIC_PASSWORD")
 val macNotaryTeamId = localProperty("APPLE_TEAM_ID")
@@ -717,6 +721,9 @@ val packageAppImage by tasks.registering(Exec::class) {
     val tool = providers.gradleProperty("bitchord.appimageTool")
         .orElse(providers.environmentVariable("APPIMAGE_TOOL"))
         .getOrElse("appimagetool")
+    // A changed script has to rebuild the bundle; without this the task is
+    // considered up to date and the previous .AppImage is silently kept.
+    inputs.file(project.file("packaging/appimage.sh"))
 
     doFirst {
         check(targetOs == "linux") {
@@ -733,6 +740,94 @@ val packageAppImage by tasks.registering(Exec::class) {
     )
     // Read by appimage.sh: appimagetool refuses to label an arm64 tree x86_64.
     environment("APPIMAGE_ARCH", appImageArch)
+}
+
+/**
+ * BitChord's macOS installer package.
+ *
+ * jpackage writes a plain .pkg, which cannot carry the pages this ships:
+ * productbuild assembles the app image into one product archive with BitChord's
+ * own welcome and conclusion screens, a macOS 12 floor and the bundle placed in
+ * /Applications. See packaging/macos/distribution.xml.
+ */
+val packageMacInstaller by tasks.registering(Exec::class) {
+    group = "distribution"
+    description = "Builds BitChord-<version>-macos-<arch>.pkg with the custom installer wizard."
+    dependsOn("createDistributable")
+
+    val archLabel = if (isArm64) "arm64" else "x64"
+    val appDir = layout.buildDirectory.dir("compose/binaries/main/app")
+    val output = layout.buildDirectory.file("distributions/BitChord-$appVersion-macos-$archLabel.pkg")
+    val signIdentity = macPkgSigningIdentity
+
+    outputs.file(output)
+    inputs.property("version", appVersion)
+    inputs.property("arch", archLabel)
+    // Everything the package is made from, so editing the wizard or the
+    // postinstall rebuilds the .pkg instead of keeping the old one.
+    inputs.files(
+        project.file("packaging/macos/build-pkg.sh"),
+        project.file("packaging/macos/distribution.xml"),
+        project.file("packaging/macos/postinstall"),
+        project.file("packaging/macos/welcome.html"),
+        project.file("packaging/macos/conclusion.html"),
+    )
+
+    doFirst {
+        check(targetOs == "macos") {
+            "packageMacInstaller needs a macOS host: pkgbuild and productbuild are Apple's own tools."
+        }
+    }
+    commandLine(
+        "bash",
+        project.file("packaging/macos/build-pkg.sh").absolutePath,
+        appDir.get().asFile.absolutePath,
+        output.get().asFile.absolutePath,
+        appVersion,
+        archLabel,
+    )
+    // Read by build-pkg.sh: absent, the same package is produced unsigned rather
+    // than failing a fork's build.
+    environment("MACOS_PKG_SIGN_IDENTITY", signIdentity)
+}
+
+/**
+ * The self-extracting Linux installer: one executable file that installs
+ * BitChord into the user's home without a package manager, or into /opt when
+ * run as root, and writes its own uninstaller. See packaging/linux/install.sh.
+ */
+val packageLinuxRunInstaller by tasks.registering(Exec::class) {
+    group = "distribution"
+    description = "Bundles the Linux app image into BitChord-<version>-linux-<arch>.run."
+    dependsOn("createDistributable")
+
+    val archLabel = if (isArm64) "arm64" else "x64"
+    val appDir = layout.buildDirectory.dir("compose/binaries/main/app/BitChord")
+    val output = layout.buildDirectory.file("distributions/BitChord-$appVersion-linux-$archLabel.run")
+
+    outputs.file(output)
+    inputs.property("version", appVersion)
+    inputs.property("arch", archLabel)
+    // The header and the assembler are part of the artifact: change either and
+    // the .run is rebuilt rather than reported up to date.
+    inputs.files(
+        project.file("packaging/linux/install.sh"),
+        project.file("packaging/linux/build-run-installer.sh"),
+    )
+
+    doFirst {
+        check(targetOs == "linux") {
+            "packageLinuxRunInstaller needs a Linux host: its payload is a Linux app image."
+        }
+    }
+    commandLine(
+        "bash",
+        project.file("packaging/linux/build-run-installer.sh").absolutePath,
+        appDir.get().asFile.absolutePath,
+        output.get().asFile.absolutePath,
+        appVersion,
+        archLabel,
+    )
 }
 
 compose.desktop {
@@ -815,6 +910,8 @@ compose.desktop {
                         <false/>
                         <key>NSMicrophoneUsageDescription</key>
                         <string>BitChord listens through your microphone to recognise the music playing around you.</string>
+                        <key>LSMinimumSystemVersion</key>
+                        <string>12.0</string>
                     """.trimIndent()
                 }
                 if (macSigningIdentity.isNotBlank()) {
@@ -842,7 +939,7 @@ compose.desktop {
                 // The package id, separate from the display name: Debian and RPM
                 // both require it to be lowercase.
                 packageName = "bitchord"
-                menuGroup = "AudioVideo"
+                menuGroup = "AudioVideo;Music;"
                 appCategory = "AudioVideo;Music;Player"
                 debMaintainer = "85984486+AbhiTheModder@users.noreply.github.com"
                 rpmLicenseType = "GPL-3.0"

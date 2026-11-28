@@ -1,0 +1,24 @@
+#!/bin/sh
+#
+# BitChord's macOS postinstall, run by Installer as root after the payload lands.
+#
+# It does the three things a copied .app needs and a package cannot express:
+# strip the quarantine flag a downloaded archive carries, make sure the launcher
+# is executable after the copy, and register the bundle with LaunchServices so
+# the icon and the app's URL handling are known immediately instead of after the
+# next login.
+set -eu
+
+APP="/Applications/BitChord.app"
+LAUNCHER="$APP/Contents/MacOS/BitChord"
+LSREGISTER="/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister"
+
+if [ -d "$APP" ]; then
+    # A quarantined bundle shows the "downloaded from the internet" prompt and,
+    # on some systems, refuses to start under the hardened runtime.
+    /usr/bin/xattr -dr com.apple.quarantine "$APP" 2>/dev/null || true
+    [ -f "$LAUNCHER" ] && /bin/chmod 755 "$LAUNCHER" 2>/dev/null || true
+    [ -x "$LSREGISTER" ] && "$LSREGISTER" -f "$APP" 2>/dev/null || true
+fi
+
+exit 0

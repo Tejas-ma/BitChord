@@ -101,7 +101,21 @@
 
 Grab the latest signed APK from the [Releases](https://github.com/kushagrasinghx/BitChord/releases) page. Sideloading requires enabling "Install unknown apps" for whichever app you download it with.
 
-Desktop builds for Windows, macOS and Linux are on the same page — `.exe`, `.msi` and portable `.zip`, `.dmg`, and `.deb`, `.rpm` and `.AppImage`. Every download carries its own Java runtime, FFmpeg and ONNX natives, so nothing else has to be installed first; see [DESKTOP.md](DESKTOP.md) for install notes.
+Desktop builds for Windows, macOS and Linux are on the same page — `.exe`, `.msi` and portable `.zip`, `.pkg` and `.dmg`, and `.run`, `.deb`, `.rpm` and `.AppImage`. Every download carries its own Java runtime, FFmpeg and ONNX natives, so nothing else has to be installed first; see [DESKTOP.md](DESKTOP.md) for install notes.
+
+| Platform | File | Install |
+|---|---|---|
+| Android | `BitChord-<version>.apk` | Sideload it, with "Install unknown apps" enabled for the app you download it with. |
+| Windows | `BitChord-<version>-windows-x64-setup.exe` | Run the wizard. Per-user, no administrator rights needed. |
+| Windows | `BitChord-<version>-windows-x64.msi` | The same install, for deployment tools. |
+| Windows | `BitChord-<version>-windows-x64-portable.zip` | Unzip anywhere and run `BitChord.bat`; needs a Java 21 runtime. |
+| macOS | `BitChord-<version>-macos-<arch>.pkg` | Double-click: welcome page, macOS 12 check, installs to `/Applications`. |
+| macOS | `BitChord-<version>-macos-<arch>.dmg` | Drag BitChord onto Applications. |
+| Linux | `BitChord-<version>-linux-<arch>.run` | `chmod +x` and run it — wizard, or `--unattended --prefix <dir>`; `--uninstall` removes it. |
+| Linux | `BitChord-<version>-linux-<arch>.deb` | `sudo apt install ./BitChord-<version>-linux-<arch>.deb` |
+| Linux | `BitChord-<version>-linux-<arch>.AppImage` | `chmod +x` and run it; nothing to install. |
+
+`<arch>` is `arm64` or `x64`, and each desktop artifact is built on a runner of that architecture. The `.run` installer needs no package manager: without sudo it installs into `~/.local/opt/bitchord` with a launcher in `~/.local/bin` and a menu entry in `~/.local/share/applications`; as root it uses `/opt/bitchord`, `/usr/local/bin` and `/usr/share/applications`.
 
 The Windows installers are built by the **Windows EXE** workflow and uploaded as the files themselves, not inside another archive: `BitChord-<version>-windows-x64-setup.exe`, `BitChord-<version>-windows-x64.msi` and the portable `BitChord-<version>-windows-x64-portable.zip`. When the repository has been accepted by the [SignPath Foundation](https://signpath.org/), the setup is submitted for signing during the build and the signed copy is the one published; without that approval the same build ships unsigned rather than failing.
 
@@ -125,16 +139,16 @@ Windows installers are produced with `:desktopApp:packageExe`, `:desktopApp:pack
 macOS and Linux are built the same way, on a runner of the target architecture (neither can be cross-packaged):
 
 ```bash
-# macOS: BitChord.app and BitChord-<version>-macos-<arch>.dmg for the host
-./gradlew :desktopApp:packageDmg -Pbitchord.skipAndroid=true
+# macOS: BitChord.app, the .dmg, and the custom-installer .pkg
+./gradlew :desktopApp:packageDmg :desktopApp:packageMacInstaller -Pbitchord.skipAndroid=true
 
-# Linux: BitChord-<version>-linux-<arch>.deb, .rpm and a single-file .AppImage
-./gradlew :desktopApp:packageDeb :desktopApp:packageRpm :desktopApp:packageAppImage -Pbitchord.skipAndroid=true
+# Linux: .deb, .rpm, the single-file .AppImage, and the self-extracting .run installer
+./gradlew :desktopApp:packageDeb :desktopApp:packageRpm :desktopApp:packageAppImage :desktopApp:packageLinuxRunInstaller -Pbitchord.skipAndroid=true
 ```
 
 Signing and notarization are opt-in through `local.properties` or the environment (`MACOS_SIGN_IDENTITY`, `APPLE_ID`, `APPLE_APP_SPECIFIC_PASSWORD`, `APPLE_TEAM_ID`); without them the disk image still builds, unsigned. Details in [desktopApp/BUILDING-MACOS.md](desktopApp/BUILDING-MACOS.md) and [desktopApp/BUILDING-LINUX.md](desktopApp/BUILDING-LINUX.md).
 
-`BitChord-<version>-macos-arm64.dmg` and `-macos-x64.dmg` come from the **macOS** workflow (Apple Silicon and Intel runners); `BitChord-<version>-linux-x64.deb`, `-linux-x64.AppImage`, `-linux-arm64.deb` and `-linux-arm64.AppImage` come from the **Linux** workflow (`ubuntu-latest` and `ubuntu-24.04-arm`).
+`BitChord-<version>-macos-arm64.pkg` and `-macos-arm64.dmg` (likewise `-macos-x64`) come from the **macOS** workflow (Apple Silicon and Intel runners); `BitChord-<version>-linux-x64.run`, `-linux-x64.deb`, `-linux-x64.AppImage` and their `-linux-arm64` counterparts come from the **Linux** workflow (`ubuntu-latest` and `ubuntu-24.04-arm`), which also installs the `.run` into a temporary prefix and uninstalls it as a smoke test.
 
 
 </div>

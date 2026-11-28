@@ -174,6 +174,17 @@ jobs:
             "-Pbitchord.version=${{ steps.version.outputs.value }}" \
             --no-daemon --stacktrace
 
+      # The .pkg wraps the same bundle with BitChord's own wizard pages. It is a
+      # separate task rather than a target format because productbuild, not
+      # jpackage, is what can put the welcome/conclusion pages and the macOS 12
+      # floor into the archive.
+      - name: Build the installer package
+        run: |
+          ./gradlew :desktopApp:packageMacInstaller \
+            "-Pbitchord.skipAndroid=true" "-Pbitchord.arch=${{ matrix.arch }}" \
+            "-Pbitchord.version=${{ steps.version.outputs.value }}" \
+            --no-daemon --stacktrace
+
       # A DMG that exists but has no microphone description, no analyser and
       # no models is worse than none: sound search would be refused by macOS
       # and Automix would silently be missing from the shipped app.
@@ -185,6 +196,9 @@ jobs:
           [ -d "$APP" ] || { echo "::error::packageDmg produced no BitChord.app"; exit 1; }
           /usr/libexec/PlistBuddy -c "Print :NSMicrophoneUsageDescription" "$APP/Contents/Info.plist"
           /usr/libexec/PlistBuddy -c "Print :CFBundleIdentifier" "$APP/Contents/Info.plist"
+          # The installer's own minimum, and the one the .app advertises, agree.
+          /usr/libexec/PlistBuddy -c "Print :LSMinimumSystemVersion" "$APP/Contents/Info.plist" \
+            | grep -q '^12\.' || { echo "::error::LSMinimumSystemVersion is not 12.x"; exit 1; }
 
           JAR=$(find "$APP/Contents/app" -maxdepth 1 -name 'desktopApp*.jar' -print -quit)
           [ -n "$JAR" ] || { echo "::error::no desktopApp jar in the bundle"; exit 1; }
@@ -221,6 +235,56 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           path: ${{ steps.stage.outputs.file }}
+          if-no-files-found: error
+          archive: false
+          retention-days: 14
+
+      # A package that opens and installs nothing is the failure worth catching
+      # here, so the payload is listed out of the archive and the launcher it
+      # contains is read for its architecture.
+      - name: Verify the installer package
+        shell: bash
+        run: |
+          set -euo pipefail
+          pkg=$(find desktopApp/build/distributions -name '*.pkg' -print -quit)
+          [ -n "$pkg" ] || { echo "::error::packageMacInstaller wrote no .pkg"; exit 1; }
+          pkgutil --payload-files "$pkg" > pkg-payload.txt
+          for entry in \
+            "Applications/BitChord.app/Contents/MacOS/BitChord" \
+            "Applications/BitChord.app/Contents/Info.plist"; do
+            grep -q "$entry" pkg-payload.txt \
+              || { echo "::error::the .pkg payload is missing $entry"; sed -n '1,40p' pkg-payload.txt; exit 1; }
+          done
+
+          rm -rf pkg-verify && mkdir -p pkg-verify
+          pkgutil --expand-full "$pkg" pkg-verify/expanded
+          launcher="pkg-verify/expanded/Applications/BitChord.app/Contents/MacOS/BitChord"
+          [ -x "$launcher" ] || launcher=$(find pkg-verify -path '*Contents/MacOS/BitChord' -type f -print -quit)
+          /usr/bin/file "$launcher"
+          case "${{ matrix.arch }}" in
+            arm64) /usr/bin/file "$launcher" | grep -q 'arm64' ;;
+            x64)   /usr/bin/file "$launcher" | grep -q 'x86_64' ;;
+          esac
+          # The distribution refuses an older macOS, not just the app.
+          grep -q '12\.0' pkg-verify/expanded/Distribution
+
+      - name: Stage the installer package
+        id: stage_pkg
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p out
+          pkg=$(find desktopApp/build/distributions -name '*.pkg' -print -quit)
+          [ -n "$pkg" ] || { echo "::error::packageMacInstaller wrote no .pkg"; exit 1; }
+          target="out/BitChord-${{ steps.version.outputs.value }}-macos-${{ matrix.arch }}.pkg"
+          cp "$pkg" "$target"
+          ls -l "$target"
+          echo "file=$target" >> "$GITHUB_OUTPUT"
+
+      - name: Upload the installer package
+        uses: actions/upload-artifact@v7
+        with:
+          path: ${{ steps.stage_pkg.outputs.file }}
           if-no-files-found: error
           archive: false
           retention-days: 14
