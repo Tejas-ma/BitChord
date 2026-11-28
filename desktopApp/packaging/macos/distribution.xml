@@ -1,0 +1,61 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  The product archive BitChord's .pkg is built from.
+
+  build-pkg.sh substitutes __VERSION__, __ARCH__ and __KB__ and hands this to
+  productbuild, which wraps the component package into one installer with the
+  wizard pages beside this file.
+
+  __ARCH__ is this runner's own architecture, never a list: jpackage can only
+  assemble a bundle for the machine it runs on, and an installer that claimed
+  both would let an Intel Mac try to install an arm64 app.
+-->
+<installer-gui-script minSpecVersion="2">
+    <title>BitChord</title>
+    <organization>com.bitchord</organization>
+
+    <!-- A normal, system-wide install into /Applications. -->
+    <domains enable_localSystem="true" enable_currentUserHome="false" enable_anywhere="false"/>
+    <options customize="never" require-scripts="false" rootVolumeOnly="true" hostArchitectures="__ARCH__"/>
+
+    <!-- Custom wizard pages, styled to follow the installer's own appearance. -->
+    <welcome file="welcome.html" mime-type="text/html"/>
+    <conclusion file="conclusion.html" mime-type="text/html"/>
+
+    <!-- BitChord needs macOS 12 or later (see LSMinimumSystemVersion in build.gradle.kts). -->
+    <volume-check>
+        <allowed-os-versions>
+            <os-version min="12.0"/>
+        </allowed-os-versions>
+    </volume-check>
+
+    <installation-check script="bitchord_install_check();"/>
+    <script><![CDATA[
+        function bitchord_install_check() {
+            if (system.compareVersions(system.version.ProductVersion, '12.0') < 0) {
+                my.result.title = 'macOS 12 or later is required';
+                my.result.message = 'This Mac runs macOS ' + system.version.ProductVersion +
+                    '. Update macOS, then run the BitChord installer again.';
+                return false;
+            }
+            return true;
+        }
+    ]]></script>
+
+    <choices-outline>
+        <line choice="default">
+            <line choice="com.bitchord.desktop"/>
+        </line>
+    </choices-outline>
+
+    <!-- Only one thing to install, so the choice tree stays invisible. -->
+    <choice id="default"/>
+    <choice id="com.bitchord.desktop" visible="false" title="BitChord">
+        <pkg-ref id="com.bitchord.desktop"/>
+    </choice>
+
+    <pkg-ref id="com.bitchord.desktop"
+             version="__VERSION__"
+             installKBytes="__KB__"
+             auth="root">#BitChord-component.pkg</pkg-ref>
+</installer-gui-script>

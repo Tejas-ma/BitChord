@@ -188,6 +188,7 @@ jobs:
           APPIMAGE_TOOL: ${{ github.workspace }}/appimagetool
         run: |
           ./gradlew :desktopApp:packageAppImage :desktopApp:packageDeb \
+            :desktopApp:packageLinuxRunInstaller \
             "-Pbitchord.skipAndroid=true" "-Pbitchord.arch=${{ matrix.arch }}" \
             "-Pbitchord.version=${{ steps.version.outputs.value }}" \
             --no-daemon --stacktrace
@@ -221,11 +222,48 @@ jobs:
           [ -n "$appimage" ] || { echo "::error::packageAppImage wrote no .AppImage"; exit 1; }
           deb=$(find desktopApp/build/compose/binaries/main/deb -name '*.deb' -print -quit)
           [ -n "$deb" ] || { echo "::error::packageDeb wrote no .deb"; exit 1; }
+          run_installer=$(find desktopApp/build/distributions -name '*.run' -print -quit)
+          [ -n "$run_installer" ] || { echo "::error::packageLinuxRunInstaller wrote no .run"; exit 1; }
           cp "$appimage" "out/BitChord-$ver-linux-$arch.AppImage"
           cp "$deb" "out/BitChord-$ver-linux-$arch.deb"
+          cp "$run_installer" "out/BitChord-$ver-linux-$arch.run"
+          chmod 755 "out/BitChord-$ver-linux-$arch.run"
           ls -l out
           echo "appimage=out/BitChord-$ver-linux-$arch.AppImage" >> "$GITHUB_OUTPUT"
           echo "deb=out/BitChord-$ver-linux-$arch.deb" >> "$GITHUB_OUTPUT"
+          echo "run=out/BitChord-$ver-linux-$arch.run" >> "$GITHUB_OUTPUT"
+
+      # The .run is the only artifact that installs itself, so it is installed
+      # here instead of only being checked for existence: extraction, launcher,
+      # menu entry, checksum verification and the generated uninstaller all run.
+      - name: Smoke-test the .run installer
+        shell: bash
+        run: |
+          set -euo pipefail
+          run_file="${{ steps.stage.outputs.run }}"
+          [ -x "$run_file" ] || { echo "::error::$run_file is not executable"; exit 1; }
+
+          prefix="$RUNNER_TEMP/bitchord-run-test"
+          xdg="$RUNNER_TEMP/bitchord-run-xdg"
+          rm -rf "$prefix" "$xdg"
+
+          XDG_DATA_HOME="$xdg" "$run_file" --unattended --prefix "$prefix"
+          [ -x "$prefix/bin/BitChord" ] || { echo "::error::the .run installed no launcher"; exit 1; }
+          [ -x "$prefix/uninstall.sh" ] || { echo "::error::the .run wrote no uninstall.sh"; exit 1; }
+          [ -f "$xdg/applications/bitchord.desktop" ] \
+            || { echo "::error::the .run created no desktop entry"; exit 1; }
+          grep -q '^Categories=AudioVideo;Music;' "$xdg/applications/bitchord.desktop"
+          [ -L "$HOME/.local/bin/bitchord" ] || { echo "::error::the .run created no launcher symlink"; exit 1; }
+
+          # --list re-reads the payload and verifies its digest without installing.
+          "$run_file" --list > "$RUNNER_TEMP/bitchord-run-list.txt"
+          [ -s "$RUNNER_TEMP/bitchord-run-list.txt" ] || { echo "::error::the payload listed nothing"; exit 1; }
+
+          "$run_file" --unattended --uninstall --prefix "$prefix"
+          [ ! -d "$prefix" ] || { echo "::error::--uninstall left $prefix behind"; exit 1; }
+          [ ! -f "$xdg/applications/bitchord.desktop" ] \
+            || { echo "::error::--uninstall left the desktop entry behind"; exit 1; }
+          rm -f "$HOME/.local/bin/bitchord"
 
       # One step per file: archive: false takes exactly one path and names the
       # artifact after the file, so both arrive as the package, not a zip of it.
@@ -241,6 +279,14 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           path: ${{ steps.stage.outputs.deb }}
+          if-no-files-found: error
+          archive: false
+          retention-days: 14
+
+      - name: Upload the .run installer
+        uses: actions/upload-artifact@v7
+        with:
+          path: ${{ steps.stage.outputs.run }}
           if-no-files-found: error
           archive: false
           retention-days: 14
