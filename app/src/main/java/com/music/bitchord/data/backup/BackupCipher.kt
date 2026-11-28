@@ -41,6 +41,8 @@ object BackupCipher {
     private const val KEY_PASSPHRASE = "passphrase"
     private const val KEY_SALT = "salt"
     private const val KEY_ITERATIONS = "iterations"
+    private const val KEY_ACCOUNT_ID = "account_key_id"
+    private const val KEY_ACCOUNT_WRAPPED = "account_wrapped_key"
 
     /** Shortest passphrase accepted: long enough to be worth a KDF at all. */
     const val MIN_PASSPHRASE_LENGTH = 8
@@ -68,6 +70,19 @@ object BackupCipher {
     class UnreadableBackup :
         Exception("The backup file could not be read")
 
+    /**
+     * A file sealed with an account key, and no Drive account connected yet.
+     *
+     * The key is derived from the account, so connecting the account that made
+     * the file is the whole answer — there is nothing to type.
+     */
+    class AccountKeyRequired :
+        Exception("This backup is encrypted with its Google account. Connect that account to restore it.")
+
+    /** The account key opened nothing: another account, or a file that was altered. */
+    class DecryptionFailed :
+        Exception("This backup could not be decrypted. It may belong to another Google account, or the file was altered.")
+
     private var prefs: SharedPreferences? = null
 
     /**
@@ -87,8 +102,61 @@ object BackupCipher {
     private val store: SharedPreferences
         get() = checkNotNull(prefs) { "BackupCipher.install was not called" }
 
-    /** Whether this account's backups are sealed rather than written as they used to be. */
+    /** Whether a passphrase is set — the optional layer older backups may carry. */
     fun isEnabled(): Boolean = !store.getString(KEY_PASSPHRASE, null).isNullOrBlank()
+
+    /** Whether the connected Drive account's key seals new uploads. */
+    fun hasAccountKey(): Boolean = !store.getString(KEY_ACCOUNT_ID, null).isNullOrBlank()
+
+    /** Whether anything at all is encrypting uploads right now. */
+    fun encryptionActive(): Boolean = hasAccountKey() || isEnabled()
+
+    /**
+     * Binds this install to [accountKeyId] — the Drive account's stable id — so
+     * uploads are sealed with the key derived from it.
+     *
+     * Called when an account is connected and again on every start, because the
+     * wrapped copy may have been dropped with the app's data while the account
+     * grant was restored. Passing null forgets the key entirely; the files it
+     * sealed still open for whichever account is connected next.
+     */
+    fun setAccountKeyId(accountKeyId: String?) {
+        val id = accountKeyId?.trim()?.takeIf { it.isNotEmpty() }
+        val current = store.getString(KEY_ACCOUNT_ID, null)
+        if (id == current) return
+        store.edit {
+            if (id == null) {
+                remove(KEY_ACCOUNT_ID)
+                remove(KEY_ACCOUNT_WRAPPED)
+            } else {
+                putString(KEY_ACCOUNT_ID, id)
+                // A different account's blob is useless, and leaving it would
+                // mean unwrapping it against the wrong key on every read.
+                remove(KEY_ACCOUNT_WRAPPED)
+            }
+        }
+    }
+
+    /** Forgets the account key: a disconnect, or an account that changed hands. */
+    fun clearAccountKey() = setAccountKeyId(null)
+
+    /**
+     * The account's 256-bit master key, rebuilt when the wrapped copy is gone.
+     *
+     * Null when no account is bound. The derivation is deterministic, so a lost
+     * or unreadable Keystore entry costs one HKDF rather than a lost backup.
+     */
+    private fun accountMasterKey(): ByteArray? {
+        val id = store.getString(KEY_ACCOUNT_ID, null)?.takeIf { it.isNotBlank() } ?: return null
+        store.getString(KEY_ACCOUNT_WRAPPED, null)?.fromHex()?.let { blob ->
+            AccountKeyVault.unwrap(blob)?.let { return it }
+        }
+        val derived = BackupAccountKey.derive(id)
+        AccountKeyVault.wrap(derived)?.let { blob ->
+            store.edit { putString(KEY_ACCOUNT_WRAPPED, blob.toHex()) }
+        }
+        return derived
+    }
 
     /**
      * Turns encryption on with [passphrase], or off when it is blank.
@@ -125,9 +193,13 @@ object BackupCipher {
         pending = null
     }
 
-    /** Whether [stored] carries this object's header rather than the older plain gzip. */
+    /** Whether [stored] carries the passphrase header rather than the older plain gzip. */
     fun isEncrypted(stored: ByteArray): Boolean =
         stored.size > MAGIC.size && MAGIC.indices.all { stored[it] == MAGIC[it] }
+
+    /** Whether [stored] is sealed at all — account envelope or passphrase header. */
+    fun isSealed(stored: ByteArray): Boolean =
+        BackupEnvelope.isEnvelope(stored) || isEncrypted(stored)
 
     /**
      * Seals [plain] with the account's passphrase, or returns it unchanged when
@@ -139,6 +211,17 @@ object BackupCipher {
      * rebuilt from the passphrase alone, on any device.
      */
     fun seal(plain: ByteArray): ByteArray {
+        // The connected account's key is what a backup is sealed with, so the
+        // listener never types anything and another device signed into the same
+        // account opens it. A passphrase is the fallback for installs that have
+        // not connected Drive yet, and it still opens the files it produced.
+        accountMasterKey()?.let { key ->
+            return try {
+                BackupEnvelope.seal(plain, key)
+            } finally {
+                key.fill(0)
+            }
+        }
         val passphrase = store.getString(KEY_PASSPHRASE, null)?.takeIf { it.isNotBlank() }
             ?: return plain
         val iterations = store.getInt(KEY_ITERATIONS, DEFAULT_ITERATIONS).coerceAtLeast(1)
@@ -174,6 +257,16 @@ object BackupCipher {
      * the key that this account's other devices already read.
      */
     fun open(stored: ByteArray): ByteArray {
+        if (BackupEnvelope.isEnvelope(stored)) {
+            val key = accountMasterKey() ?: throw AccountKeyRequired()
+            return try {
+                BackupEnvelope.open(stored, key)
+            } catch (tampered: BackupEnvelope.Tampered) {
+                throw DecryptionFailed()
+            } finally {
+                key.fill(0)
+            }
+        }
         if (!isEncrypted(stored)) return stored
         val header = parseHeader(stored)
         val candidates = listOfNotNull(

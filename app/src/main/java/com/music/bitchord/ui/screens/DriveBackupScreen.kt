@@ -97,7 +97,7 @@ fun DriveBackupScreen(
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val settings by DriveBackup.settings.collectAsStateWithLifecycle()
-    val encrypted by DriveBackup.encryptionEnabled.collectAsStateWithLifecycle()
+    val passphraseSet by DriveBackup.passphraseEnabled.collectAsStateWithLifecycle()
     val progress by DriveBackup.progress.collectAsStateWithLifecycle()
     val devices by DriveBackup.devices.collectAsStateWithLifecycle()
     val result by DriveBackup.result.collectAsStateWithLifecycle()
@@ -327,13 +327,19 @@ fun DriveBackupScreen(
         // whether a restore on another phone needs something typed into it.
         SettingsGroup(
             header = stringResource(R.string.backup_encryption_header),
-            footer = stringResource(R.string.backup_passphrase_subtitle),
+            footer = stringResource(R.string.backup_account_encryption_subtitle),
         ) {
             SettingsRow(
                 icon = SfIcons.Lock,
+                title = stringResource(R.string.backup_account_encryption),
+                subtitle = stringResource(R.string.backup_account_encryption_subtitle),
+            )
+            RowDivider()
+            SettingsRow(
+                icon = SfIcons.Key,
                 title = stringResource(R.string.backup_passphrase),
                 subtitle = stringResource(
-                    if (encrypted) R.string.backup_passphrase_on else R.string.backup_passphrase_off,
+                    if (passphraseSet) R.string.backup_passphrase_on else R.string.backup_passphrase_off,
                 ),
                 value = stringResource(R.string.backup_passphrase_change),
                 enabled = !running,

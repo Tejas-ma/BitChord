@@ -90,6 +90,12 @@ data class RemoteDevice(
     val months: Int,
     val sizeBytes: Long,
     val manifest: DeviceManifest,
+    /**
+     * Whether its manifest arrived sealed — an account envelope or the older
+     * passphrase header. Auto-restore counts only these, since a snapshot in
+     * the clear is one any install of the app could have written.
+     */
+    val encrypted: Boolean = false,
 )
 
 /**
@@ -207,17 +213,25 @@ object ReplaySync {
             .mapValues { (_, list) -> list.mapNotNull { f -> f.properties[TARGET]?.let { it to f } }.toMap() }
     }
 
+    /** A manifest, and whether the bytes it came from were sealed. */
+    private class ManifestRead(val manifest: DeviceManifest, val sealed: Boolean)
+
     /**
      * One device's manifest, decrypted when it carries a header and read as it
      * is when it is one of the older unencrypted files. A manifest sealed with a
      * passphrase this device has not been given throws
      * [BackupCipher.PassphraseRequired], which the screen turns into a prompt.
      */
-    private suspend fun readManifest(token: String, file: DriveApi.DriveFile): DeviceManifest =
-        json.decodeFromString(
-            DeviceManifest.serializer(),
-            gunzip(BackupCipher.open(DriveApi.download(token, file.id))).decodeToString(),
+    private suspend fun readManifest(token: String, file: DriveApi.DriveFile): ManifestRead {
+        val raw = DriveApi.download(token, file.id)
+        return ManifestRead(
+            manifest = json.decodeFromString(
+                DeviceManifest.serializer(),
+                gunzip(BackupCipher.open(raw)).decodeToString(),
+            ),
+            sealed = BackupCipher.isSealed(raw),
         )
+    }
 
     /** Every device in Drive, this one included, newest sync first. */
     suspend fun devices(token: String): List<RemoteDevice> {
@@ -227,7 +241,8 @@ object ReplaySync {
 
     private suspend fun devicesOf(token: String, listing: Listing): List<RemoteDevice> =
         listing.manifests.mapNotNull { (id, file) ->
-            val manifest = runCatching { readManifest(token, file) }.getOrNull() ?: return@mapNotNull null
+            val read = runCatching { readManifest(token, file) }.getOrNull() ?: return@mapNotNull null
+            val manifest = read.manifest
             val files = listing.months[id].orEmpty()
             RemoteDevice(
                 deviceId = id,
@@ -238,6 +253,7 @@ object ReplaySync {
                     listing.covers[id].orEmpty().values.sumOf { it.sizeBytes } +
                     file.sizeBytes,
                 manifest = manifest,
+                encrypted = read.sealed,
             )
         }.sortedByDescending { it.updatedAt }
 
@@ -265,7 +281,7 @@ object ReplaySync {
         // phone's alone, so it carries on as a device of its own with exactly
         // that — not the whole history, which is now the other phone's.
         val ownManifestFile = listing.manifests[deviceId]
-        val ownManifest = ownManifestFile?.let { runCatching { readManifest(token, it) }.getOrNull() }
+        val ownManifest = ownManifestFile?.let { runCatching { readManifest(token, it) }.getOrNull() }?.manifest
         if (SyncPlanner.supersededBy(me, ownManifest, ownManifestFile?.modifiedAt)) {
             val unsynced = ListeningStats.exportAll().mapNotNull { month ->
                 val before = synced(context, month.month)
@@ -451,7 +467,7 @@ object ReplaySync {
     ): Pair<DeviceIdentity, Backup.Summary> = withContext(Dispatchers.IO) {
         val listing = Listing(DriveApi.listAll(token))
         val manifestFile = listing.manifests[device.deviceId] ?: error("That device is no longer in Google Drive")
-        val manifest = readManifest(token, manifestFile)
+        val manifest = readManifest(token, manifestFile).manifest
         val files = listing.months[device.deviceId].orEmpty()
         val months = manifest.months.keys.filter { it in files }.sorted()
 
