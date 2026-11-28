@@ -4,11 +4,15 @@
 # Gradle cannot make itself.
 #
 # Usage: desktopApp/packaging/appimage.sh <app-image-dir> <out.AppImage> [appimagetool]
+#
+# APPIMAGE_ARCH selects the AppImage architecture (x86_64 or aarch64); appimagetool
+# refuses to wrap an arm64 image under the x86_64 name and vice versa.
 set -euo pipefail
 
 APP_DIR_SRC=${1:?usage: appimage.sh <app-image-dir> <out.AppImage> [appimagetool]}
 OUT=${2:?usage: appimage.sh <app-image-dir> <out.AppImage> [appimagetool]}
 TOOL=${3:-appimagetool}
+ARCH=${APPIMAGE_ARCH:-x86_64}
 
 [ -x "$APP_DIR_SRC/bin/BitChord" ] || { echo "no launcher in $APP_DIR_SRC" >&2; exit 1; }
 
@@ -49,5 +53,5 @@ mkdir -p "$(dirname "$OUT")"
 # APPIMAGE_EXTRACT_AND_RUN rather than the flag of the same name: it is read by the AppImage
 # runtime, so it covers a CI runner with no FUSE, and a natively built appimagetool — which has
 # no such flag and would refuse to start — simply ignores it.
-ARCH=x86_64 APPIMAGE_EXTRACT_AND_RUN=1 "$TOOL" "$APPDIR" "$OUT"
+ARCH="$ARCH" APPIMAGE_EXTRACT_AND_RUN=1 "$TOOL" "$APPDIR" "$OUT"
 echo "appimage: $OUT"
