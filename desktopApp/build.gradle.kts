@@ -87,10 +87,10 @@ val lastfmSecret = localProperty("LASTFM_SECRET")
 // request and any machine without an Apple developer identity should get: a
 // missing certificate must not turn a packaging run into a failure. See
 // desktopApp/BUILDING-MACOS.md for what each value is.
-val macSigningIdentity = localProperty("MACOS_SIGNING_IDENTITY")
-val macNotaryAppleId = localProperty("MACOS_NOTARY_APPLE_ID")
-val macNotaryPassword = localProperty("MACOS_NOTARY_PASSWORD")
-val macNotaryTeamId = localProperty("MACOS_NOTARY_TEAM_ID")
+val macSigningIdentity = localProperty("MACOS_SIGN_IDENTITY")
+val macNotaryAppleId = localProperty("APPLE_ID")
+val macNotaryPassword = localProperty("APPLE_APP_SPECIFIC_PASSWORD")
+val macNotaryTeamId = localProperty("APPLE_TEAM_ID")
 
 plugins {
     id("org.jetbrains.kotlin.jvm")
@@ -679,6 +679,44 @@ val windowsPortable by tasks.registering(Zip::class) {
     doLast { logger.lifecycle("windowsPortable: ${archiveFile.get().asFile.absolutePath}") }
 }
 
+/**
+ * A real single-file AppImage for this architecture.
+ *
+ * Compose's `TargetFormat.AppImage` produces an app-image *directory* — what
+ * `createDistributable` already writes — not the squashfs bundle the format
+ * means, so the last step is appimagetool over that directory. Named so it sits
+ * beside `packageDeb` and `packageRpm`.
+ */
+val packageAppImage by tasks.registering(Exec::class) {
+    group = "distribution"
+    description = "Bundles the Linux app image into BitChord-<version>-linux-<arch>.AppImage."
+    dependsOn("createDistributable")
+
+    val archLabel = if (isArm64) "arm64" else "x64"
+    val appImageArch = if (isArm64) "aarch64" else "x86_64"
+    val appDir = layout.buildDirectory.dir("compose/binaries/main/app/BitChord")
+    val output = layout.buildDirectory.file("distributions/BitChord-$appVersion-linux-$archLabel.AppImage")
+    val tool = providers.gradleProperty("bitchord.appimageTool")
+        .orElse(providers.environmentVariable("APPIMAGE_TOOL"))
+        .getOrElse("appimagetool")
+
+    doFirst {
+        check(targetOs == "linux") {
+            "packageAppImage needs a Linux host: appimagetool bundles a Linux app image " +
+                "and cannot wrap another OS's from here."
+        }
+    }
+    commandLine(
+        "bash",
+        project.file("packaging/appimage.sh").absolutePath,
+        appDir.get().asFile.absolutePath,
+        output.get().asFile.absolutePath,
+        tool,
+    )
+    // Read by appimage.sh: appimagetool refuses to label an arm64 tree x86_64.
+    environment("APPIMAGE_ARCH", appImageArch)
+}
+
 compose.desktop {
     application {
         javaHome = javaToolchains.launcherFor(java.toolchain).map {
@@ -746,13 +784,13 @@ compose.desktop {
 
             macOS {
                 iconFile.set(project.file("packaging/icons/AppIcon.icns"))
-                bundleID = "com.music.bitchord"
+                bundleID = "com.bitchord.desktop"
                 appCategory = "public.app-category.music"
                 dockName = "BitChord"
                 // The hardened runtime the signature implies needs these for
                 // Skiko/JavaFX's JIT and for the microphone the sound search
                 // records from. The file also covers a notarized build.
-                entitlementsFile.set(project.file("packaging/macos/Entitlements.plist"))
+                entitlementsFile.set(project.file("packaging/macos/entitlements.plist"))
                 infoPlist {
                     extraKeysRawXml = """
                         <key>NSRequiresAquaSystemAppearance</key>
@@ -783,8 +821,11 @@ compose.desktop {
 
             linux {
                 iconFile.set(project.file("packaging/icons/AppIcon.png"))
-                menuGroup = "Audio"
-                appCategory = "AudioVideo;Audio;Player"
+                // The package id, separate from the display name: Debian and RPM
+                // both require it to be lowercase.
+                packageName = "bitchord"
+                menuGroup = "AudioVideo"
+                appCategory = "AudioVideo;Music;Player"
                 debMaintainer = "85984486+AbhiTheModder@users.noreply.github.com"
                 rpmLicenseType = "GPL-3.0"
             }

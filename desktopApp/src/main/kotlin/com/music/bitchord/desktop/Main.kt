@@ -27,6 +27,13 @@ import kotlin.math.roundToInt
 import org.jetbrains.compose.resources.painterResource
 
 fun main() {
+    // AppKit reads these once, when the toolkit starts, so they have to be set
+    // before the first AWT call: the dark title bar and the menu bar in the
+    // system bar instead of inside the window.
+    if (DesktopPlatform.isMac) {
+        System.setProperty("apple.awt.application.appearance", "NSAppearanceNameDarkAqua")
+        System.setProperty("apple.laf.useScreenMenuBar", "true")
+    }
     // Before any WebView exists, so the sign-in window can start over with an empty jar.
     DesktopWebCookies.install()
     // The device's PIN and its locked playlists and albums, read before the

@@ -122,6 +122,20 @@ A JDK 21 is the only requirement for the desktop app; the Android build also nee
 
 Windows installers are produced with `:desktopApp:packageExe`, `:desktopApp:packageMsi` and `:desktopApp:windowsPortable` (see [desktopApp/BUILDING-WINDOWS.md](desktopApp/BUILDING-WINDOWS.md)); `.github/workflows/windows-exe.yml` does the same on a Windows runner and uploads the results.
 
+macOS and Linux are built the same way, on a runner of the target architecture (neither can be cross-packaged):
+
+```bash
+# macOS: BitChord.app and BitChord-<version>-macos-<arch>.dmg for the host
+./gradlew :desktopApp:packageDmg -Pbitchord.skipAndroid=true
+
+# Linux: BitChord-<version>-linux-<arch>.deb, .rpm and a single-file .AppImage
+./gradlew :desktopApp:packageDeb :desktopApp:packageRpm :desktopApp:packageAppImage -Pbitchord.skipAndroid=true
+```
+
+Signing and notarization are opt-in through `local.properties` or the environment (`MACOS_SIGN_IDENTITY`, `APPLE_ID`, `APPLE_APP_SPECIFIC_PASSWORD`, `APPLE_TEAM_ID`); without them the disk image still builds, unsigned. Details in [desktopApp/BUILDING-MACOS.md](desktopApp/BUILDING-MACOS.md) and [desktopApp/BUILDING-LINUX.md](desktopApp/BUILDING-LINUX.md).
+
+`BitChord-<version>-macos-arm64.dmg` and `-macos-x64.dmg` come from the **macOS** workflow (Apple Silicon and Intel runners); `BitChord-<version>-linux-x64.deb`, `-linux-x64.AppImage`, `-linux-arm64.deb` and `-linux-arm64.AppImage` come from the **Linux** workflow (`ubuntu-latest` and `ubuntu-24.04-arm`).
+
 
 </div>
 
