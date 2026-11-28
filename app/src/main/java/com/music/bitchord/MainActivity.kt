@@ -847,6 +847,23 @@ private fun BitChordApp(
     // The lock gate: one instance for the whole app, so the PIN prompt a card
     // raises is the same one its page and the Settings rows raise.
     val lockFlow = remember { LockFlow() }
+    // Every way into a release page ends in the ViewModel's openDetail, so a
+    // locked one arrives here as a request rather than as a loaded page. The
+    // prompt it raises is the same one a card's Open uses.
+    val lockedOpen by viewModel.lockedOpen.collectAsStateWithLifecycle()
+    LaunchedEffect(lockedOpen) {
+        val request = lockedOpen ?: return@LaunchedEffect
+        viewModel.clearLockedOpen()
+        lockFlow.guard(request.browseId, request.title) {
+            viewModel.openDetail(
+                browseId = request.browseId,
+                title = request.title,
+                subtitle = request.subtitle,
+                thumbnailUrl = request.thumbnailUrl,
+                type = request.type,
+            )
+        }
+    }
     val microphonePermission = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission(),
     ) { granted -> if (granted) voiceOpen = true }

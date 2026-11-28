@@ -7,8 +7,15 @@ import io.ktor.client.request.header
 import io.ktor.client.request.post
 import io.ktor.client.request.setBody
 import io.ktor.client.statement.bodyAsText
+import java.util.concurrent.atomic.AtomicBoolean
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.contentOrNull
@@ -193,6 +200,21 @@ class SongRecognition(
     private val recorder: PcmRecorder = PcmRecorder(),
 ) {
 
+    /**
+     * Listens progressively and recognizes what is playing.
+     *
+     * One capture, two chances: at [EARLY_CHECK_MS] the samples so far are
+     * fingerprinted while the microphone keeps recording, so a track that
+     * answers straight away ends the listen there — and one that does not keeps
+     * its whole window up to [CAPTURE_MS] instead of being cut off at the point
+     * the early check failed. The windows share one recording rather than
+     * reopening the microphone, so the intro the early check heard is still in
+     * the buffer the full check scores.
+     *
+     * The early check runs on its own coroutine: the recorder's checkpoint call
+     * comes from the thread reading the line, and computing an FFT there would
+     * stall the reads and drop audio.
+     */
     suspend fun listen(
         durationMs: Int = CAPTURE_MS,
         onAmplitude: (Float) -> Unit = {},
@@ -200,23 +222,83 @@ class SongRecognition(
         onCaptureComplete: () -> Unit = {},
     ): RecognitionResult {
         if (!recorder.isAvailable) return RecognitionResult.Unsupported
-        val captured = recorder.record(durationMs, onAmplitude) ?: return RecognitionResult.Failed(
-            "The microphone could not be opened",
-        )
-        // Conversion and the silence scan both walk every sample; keeping them
-        // off the caller's dispatcher is what stops a five-second capture from
-        // stalling a frame before the request even starts.
-        val (recording, audible) = withContext(Dispatchers.Default) {
-            val normalized = captured.resampledTo(SAMPLE_RATE)
-            normalized to normalized.hasSignal()
+        val scoring = CoroutineScope(Dispatchers.Default + SupervisorJob())
+        val announced = AtomicBoolean(false)
+        val announce = { if (announced.compareAndSet(false, true)) onCaptureComplete() }
+        val early = CompletableDeferred<RecognizedSong?>()
+        val checkpointMs = minOf(EARLY_CHECK_MS, durationMs / 2).coerceAtLeast(1)
+        try {
+            val captured = recorder.record(
+                durationMs = durationMs,
+                onAmplitude = onAmplitude,
+                checkpointMs = checkpointMs,
+                onCheckpoint = { snapshot ->
+                    announce()
+                    scoring.launch {
+                        val song = resolve(snapshot).getOrNull()
+                        if (early.complete(song) && song != null) {
+                            // Answered on the early window: the rest of it is no
+                            // longer worth recording, and releasing the line now
+                            // is what makes the answer feel immediate.
+                            recorder.stop()
+                        }
+                    }
+                },
+            ) ?: return RecognitionResult.Failed("The microphone could not be opened")
+            // Conversion, gain and the silence scan all walk every sample;
+            // keeping them off the caller's dispatcher is what stops a
+            // ten-second capture from stalling a frame before the request even
+            // starts.
+            val recording = withContext(Dispatchers.Default) {
+                captured.resampledTo(SAMPLE_RATE).gainNormalized()
+            }
+            if (recording.samples.isEmpty()) return RecognitionResult.Failed("Nothing was recorded")
+            if (!recording.hasSignal()) return RecognitionResult.Silent
+            announce()
+            val earlySong = if (announced.get()) {
+                withTimeoutOrNull(EARLY_RESULT_WAIT_MS) { early.await() }
+            } else {
+                null
+            }
+            if (earlySong != null) return RecognitionResult.Match(earlySong)
+            // Only score the full window when it holds more than the window the
+            // early check already answered for.
+            val holdsMore = captured.durationMs > checkpointMs + 750L
+            val outcome = if (!announced.get() || holdsMore) {
+                resolve(recording)
+            } else {
+                Result.success(null)
+            }
+            return outcome.fold(
+                onSuccess = { song ->
+                    if (song == null) RecognitionResult.NoMatch else RecognitionResult.Match(song)
+                },
+                onFailure = { RecognitionResult.Failed(it.message ?: "Could not reach Shazam") },
+            )
+        } finally {
+            scoring.cancel()
         }
-        if (recording.samples.isEmpty()) return RecognitionResult.Failed("Nothing was recorded")
-        if (!audible) return RecognitionResult.Silent
-        onCaptureComplete()
-        return ShazamClient.identify(recording).fold(
-            onSuccess = { song -> if (song == null) RecognitionResult.NoMatch else RecognitionResult.Match(song) },
-            onFailure = { RecognitionResult.Failed(it.message ?: "Could not reach Shazam") },
-        )
+    }
+
+    /**
+     * [recording] as Shazam wants it — 16 kHz, gently brought up to a usable
+     * level — through the client. A failure is the caller's to report: the early
+     * window ignores it and lets the full one try again.
+     */
+    private suspend fun resolve(recording: PcmRecording): Result<RecognizedSong?> = runCatching {
+        val prepared = withContext(Dispatchers.Default) {
+            recording.resampledTo(SAMPLE_RATE).gainNormalized()
+        }
+        if (prepared.samples.isEmpty()) error("Nothing was recorded")
+        ShazamClient.identify(prepared).getOrThrow()
+    }
+
+    private companion object {
+        /**
+         * How long the full window waits on the early check before deciding for
+         * itself. A fingerprint plus one request, with room for a slow uplink.
+         */
+        const val EARLY_RESULT_WAIT_MS = 30_000L
     }
 
     /**

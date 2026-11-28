@@ -19,6 +19,7 @@ import com.music.bitchord.data.TopPicks
 import com.music.bitchord.data.AppleArtistPhotos
 import com.music.bitchord.data.model.ArtistRef
 import com.music.bitchord.data.model.TopPick
+import com.music.bitchord.data.security.CollectionLocks
 import com.music.bitchord.data.stats.ListeningStats
 import com.music.bitchord.data.stats.ReplayPeriod
 import android.util.Log
@@ -2962,12 +2963,60 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    /**
+     * A locked playlist or album something asked to open, waiting on the PIN.
+     *
+     * Published rather than fetched: the page request is what would reveal the
+     * tracks, so it must not start until the prompt has passed. The UI hosts the
+     * prompt and re-opens with [openDetail] once it has.
+     */
+    data class LockedOpen(
+        val browseId: String,
+        val title: String,
+        val subtitle: String,
+        val thumbnailUrl: String?,
+        val type: BrowseType,
+    )
+
+    private val _lockedOpen = MutableStateFlow<LockedOpen?>(null)
+
+    /** The collection whose PIN is owed, or null when none is. */
+    val lockedOpen: StateFlow<LockedOpen?> = _lockedOpen.asStateFlow()
+
+    /** Called once the prompt has taken the request, so it is not offered twice. */
+    fun clearLockedOpen() {
+        _lockedOpen.value = null
+    }
+
+    /**
+     * Opens a release page, or asks for its PIN first when it is locked.
+     *
+     * The gate is here, not only at each card, because every way in — a shelf
+     * card, a search hit, a link from outside, the menu's Open, a restore — ends
+     * in this one function. A caller that has already collected the PIN in this
+     * run passes straight through (see [CollectionLocks.isGated]).
+     */
     fun openDetail(
         browseId: String,
         title: String,
         subtitle: String = "",
         thumbnailUrl: String? = null,
         type: BrowseType = BrowseType.OTHER,
+    ) {
+        if (CollectionLocks.isGated(browseId)) {
+            _lockedOpen.value = LockedOpen(browseId, title, subtitle, thumbnailUrl, browseTypeOf(browseId, type))
+            return
+        }
+        openDetailNow(browseId, title, subtitle, thumbnailUrl, type)
+    }
+
+    /** [openDetail] once the lock gate is satisfied. */
+    private fun openDetailNow(
+        browseId: String,
+        title: String,
+        subtitle: String,
+        thumbnailUrl: String?,
+        type: BrowseType,
     ) {
         // A fast double tap used to push two identical loading pages and launch
         // two identical browse requests. Besides wasting the connection, both

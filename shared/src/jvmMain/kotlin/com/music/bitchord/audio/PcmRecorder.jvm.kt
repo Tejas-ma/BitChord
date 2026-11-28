@@ -51,7 +51,12 @@ actual class PcmRecorder actual constructor() {
         runCatching { line.close() }
     }
 
-    actual suspend fun record(durationMs: Int, onAmplitude: (Float) -> Unit): PcmRecording? =
+    actual suspend fun record(
+        durationMs: Int,
+        onAmplitude: (Float) -> Unit,
+        checkpointMs: Int,
+        onCheckpoint: ((PcmRecording) -> Unit)?,
+    ): PcmRecording? =
         withContext(Dispatchers.IO) {
             if (durationMs <= 0) return@withContext null
             // A device that has no usable line at one rate may still have one
@@ -59,7 +64,7 @@ actual class PcmRecorder actual constructor() {
             // instead of ending the capture.
             for ((rate, channels) in CANDIDATES) {
                 val line = openLine(rate, channels) ?: continue
-                val recording = readLine(line, durationMs, onAmplitude)
+                val recording = readLine(line, durationMs, onAmplitude, checkpointMs, onCheckpoint)
                 if (recording != null) return@withContext recording
             }
             null
@@ -70,6 +75,8 @@ actual class PcmRecorder actual constructor() {
         line: TargetDataLine,
         durationMs: Int,
         onAmplitude: (Float) -> Unit,
+        checkpointMs: Int,
+        onCheckpoint: ((PcmRecording) -> Unit)?,
     ): PcmRecording? {
         active = line
         val format = line.format
@@ -90,6 +97,16 @@ actual class PcmRecorder actual constructor() {
             return null
         }
         val samples = ShortArray(framesWanted)
+        // The line's wake-up transient is read and dropped, as on the phone:
+        // the mixer has to be drained while it settles, but the ramp in from
+        // silence only dilutes the fingerprint.
+        var leadRemaining = (rate.toLong() * LEAD_IN_TRIM_MS / 1_000L).toInt()
+        val checkpointFrames = if (onCheckpoint != null && checkpointMs > 0) {
+            (rate.toLong() * checkpointMs / 1_000L).toInt()
+        } else {
+            0
+        }
+        var checkpointFired = false
         // Multiple of the frame size so read() never splits a frame.
         val bytes = ByteArray(maxOf(4_096, frameSize * 512).let { it - it % frameSize })
         var written = 0
@@ -117,10 +134,20 @@ actual class PcmRecorder actual constructor() {
                         }
                         sum += value.toInt()
                     }
+                    if (leadRemaining > 0) {
+                        leadRemaining--
+                        continue
+                    }
                     samples[written++] = (sum / channels).toShort()
                     if (written >= framesWanted) break
                 }
                 if (written > chunkStart) onAmplitude(amplitudeOf(samples, chunkStart, written))
+                if (!checkpointFired && onCheckpoint != null && checkpointFrames > 0 && written >= checkpointFrames) {
+                    checkpointFired = true
+                    // The caller must hand this to another coroutine and return:
+                    // fingerprinting here would stall the reads.
+                    onCheckpoint(PcmRecording(samples.copyOf(written), rate))
+                }
             }
         } catch (unavailable: Exception) {
             return null

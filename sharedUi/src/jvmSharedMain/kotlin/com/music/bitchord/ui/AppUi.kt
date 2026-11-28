@@ -4,6 +4,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.staticCompositionLocalOf
 import com.music.bitchord.data.canvas.CanvasArtwork
 import com.music.bitchord.data.settings.LibrarySort
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 
 /**
@@ -28,6 +29,18 @@ interface AppUiHost {
     fun downloadedIds(): Set<String>
 
     /**
+     * The custom cover chosen for a playlist or album, as an image URL keyed by
+     * its browse id — the URL carries the cover's hash, so a replaced file is
+     * decoded afresh rather than served from an image cache.
+     *
+     * Read by the shared cards, which have no cover registry of their own; a
+     * platform that keeps none answers with an empty map and its cards draw the
+     * fetched artwork.
+     */
+    val collectionCoverUrls: StateFlow<Map<String, String>>
+        get() = NoCollectionCovers
+
+    /**
      * A release's motion cover, for Home's Top Picks — the same lookup the
      * album page makes. Null is the normal answer, and the only one where the
      * user has animated artwork off or the platform has no lookup.
@@ -40,6 +53,9 @@ interface AppUiHost {
      */
     suspend fun artistMotion(browseId: String, artistName: String): CanvasArtwork? = null
 }
+
+/** What a host with no cover registry answers with: every card draws its fetched artwork. */
+private val NoCollectionCovers = MutableStateFlow<Map<String, String>>(emptyMap())
 
 object AppUi {
     @Volatile

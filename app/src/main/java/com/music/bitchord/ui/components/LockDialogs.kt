@@ -377,7 +377,7 @@ class LockFlow {
      * successful unlock when it is.
      */
     fun guard(collectionId: String?, title: String, action: () -> Unit) {
-        if (CollectionLocks.isLocked(collectionId)) {
+        if (CollectionLocks.isGated(collectionId)) {
             unlock = LockRequest(collectionId.orEmpty(), title) { action() }
         } else {
             action()
@@ -430,6 +430,9 @@ fun LockFlowHost(flow: LockFlow) {
             onDismiss = { flow.unlock = null },
             onUnlocked = {
                 flow.unlock = null
+                // The PIN was given, so this run opens it without asking
+                // again — the lock, and its badge, stay on.
+                CollectionLocks.grant(request.id)
                 request.onAllowed()
             },
         )

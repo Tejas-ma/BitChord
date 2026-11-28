@@ -1142,8 +1142,9 @@ fun BitChordDesktopApp() {
     fun openCollection(browseId: String, fallback: BrowseItem? = null) {
         // A locked collection asks for the PIN before its page is requested —
         // that request is what would reveal the tracks. The retry runs this
-        // same function again, which by then finds the collection unlocked.
-        if (CollectionLocks.isLocked(browseId)) {
+        // same function again, which by then finds the collection's PIN already
+        // given this run. The lock itself stays on, so the badge remains.
+        if (CollectionLocks.isGated(browseId)) {
             DesktopLocks.unlock = DesktopLockRequest(browseId, fallback?.title.orEmpty()) {
                 openCollection(browseId, fallback)
             }

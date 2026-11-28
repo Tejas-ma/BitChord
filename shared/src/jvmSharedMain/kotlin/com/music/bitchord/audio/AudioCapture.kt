@@ -8,6 +8,7 @@ import kotlin.math.floor
 import kotlin.math.roundToInt
 import kotlin.math.sin
 import kotlin.math.sqrt
+import kotlin.math.tanh
 
 /**
  * Microphone capture, returned at the rate the device actually opened rather
@@ -51,6 +52,19 @@ expect class PcmRecorder() {
     suspend fun record(
         durationMs: Int = CAPTURE_MS,
         onAmplitude: (Float) -> Unit = {},
+        /**
+         * How far into the capture [onCheckpoint] is handed the samples so far,
+         * or 0 for no checkpoint. Placed inside the early window a recogniser
+         * tries first, so a match can end the capture before its full length.
+         */
+        checkpointMs: Int = 0,
+        /**
+         * Called once, on the recording thread, with the capture so far at
+         * [checkpointMs]. It must not block — the read loop is waiting on it —
+         * so a caller that fingerprints the snapshot hands it to another
+         * coroutine and returns; calling [stop] from there ends the capture.
+         */
+        onCheckpoint: ((PcmRecording) -> Unit)? = null,
     ): PcmRecording?
 
     /**
@@ -64,8 +78,37 @@ expect class PcmRecorder() {
     fun stop()
 }
 
-/** How long one capture lasts — the window Shazam's own clients send. */
-const val CAPTURE_MS: Int = 5_000
+/**
+ * How long one recognition capture may run for.
+ *
+ * Progressive rather than all-or-nothing: the recogniser is handed a window at
+ * [EARLY_CHECK_MS] and the capture only runs on to this length when that window
+ * did not match. A track that answers at five seconds is answered at five
+ * seconds, while a quiet intro gets the full ten instead of being cut off.
+ */
+const val CAPTURE_MS: Int = 10_000
+
+/** The early window a recogniser checks before letting the capture run on. */
+const val EARLY_CHECK_MS: Int = 5_000
+
+/**
+ * What is discarded at the start of every capture.
+ *
+ * `startRecording()` returns before the hardware is feeding the line, and the
+ * platform's automatic gain control needs a moment to settle: the first few
+ * hundred milliseconds are usually a ramp in from silence. Keeping them only
+ * dilutes the fingerprint, so the lead-in is read and dropped.
+ */
+const val LEAD_IN_TRIM_MS: Int = 300
+
+/** The level a quiet capture is brought up to before it is fingerprinted. */
+const val TARGET_RMS: Double = 0.12
+
+/** The most a capture is amplified; beyond this the noise floor is raised too far. */
+const val MAX_CAPTURE_GAIN: Double = 4.0
+
+/** Where the limiter starts rounding off, as a fraction of full scale. */
+private const val SOFT_KNEE: Double = 0.9
 
 /** The target processing rate: 16 kHz mono 16-bit, what Shazam and ACRCloud expect. */
 const val SAMPLE_RATE: Int = 16_000
@@ -99,6 +142,47 @@ fun amplitudeOf(samples: ShortArray, from: Int = 0, to: Int = samples.size): Flo
     }
     val rms = sqrt(sum / (to - from)).toFloat()
     return (rms * 4.2f).coerceIn(0f, 1f)
+}
+
+/**
+ * This capture brought gently up toward [TARGET_RMS] before it is fingerprinted.
+ *
+ * A phone lying on a table next to a speaker hears the track well below full
+ * scale, and Shazam's peaks are found on a level-relative scale, so a quiet
+ * capture loses the peaks that would have matched. Amplification is capped at
+ * [MAX_CAPTURE_GAIN] — any more lifts the room's noise floor into the same
+ * band as the music — and never attenuates: a loud capture is already the best
+ * input the fingerprinter can get. The top of the range is rounded off rather
+ * than left to wrap or clip hard, so no sample ever leaves ±1.0.
+ */
+fun PcmRecording.gainNormalized(
+    targetRms: Double = TARGET_RMS,
+    maxGain: Double = MAX_CAPTURE_GAIN,
+): PcmRecording {
+    if (samples.isEmpty()) return this
+    var sum = 0.0
+    for (sample in samples) {
+        val value = sample / 32_768.0
+        sum += value * value
+    }
+    val rms = sqrt(sum / samples.size)
+    // A dead microphone stays dead: amplifying exact zeros only amplifies noise.
+    if (rms <= 1e-9) return this
+    val gain = (targetRms / rms).coerceIn(1.0, maxGain)
+    if (gain <= 1.001) return this
+    val out = ShortArray(samples.size)
+    for (index in samples.indices) {
+        var value = samples[index] / 32_768.0 * gain
+        val magnitude = abs(value)
+        if (magnitude > SOFT_KNEE) {
+            val sign = if (value < 0) -1.0 else 1.0
+            // tanh from the knee to the ceiling: continuous at the knee, and
+            // asymptotic to 1.0, so nothing reaches the wrap point.
+            value = sign * (SOFT_KNEE + (1.0 - SOFT_KNEE) * tanh((magnitude - SOFT_KNEE) / (1.0 - SOFT_KNEE)))
+        }
+        out[index] = (value.coerceIn(-1.0, 1.0) * 32_767.0).roundToInt().toShort()
+    }
+    return PcmRecording(out, sampleRate)
 }
 
 /** One microphone capture, with the rate its [samples] are actually at. */

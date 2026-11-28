@@ -109,7 +109,7 @@ object DesktopLocks {
     var toggleBiometric by mutableStateOf(false)
 
     fun guard(collectionId: String?, title: String, action: () -> Unit) {
-        if (CollectionLocks.isLocked(collectionId)) {
+        if (CollectionLocks.isGated(collectionId)) {
             unlock = DesktopLockRequest(collectionId.orEmpty(), title) { action() }
         } else {
             action()
@@ -310,6 +310,8 @@ fun DesktopLockDialogs() {
             onDismiss = { DesktopLocks.unlock = null },
             onVerified = {
                 DesktopLocks.unlock = null
+                // Accepted once this run: the page opens, the lock stays.
+                CollectionLocks.grant(request.id)
                 request.onAllowed()
             },
         )

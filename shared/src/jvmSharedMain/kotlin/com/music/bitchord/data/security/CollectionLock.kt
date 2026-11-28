@@ -131,6 +131,17 @@ object CollectionLocks {
     val biometricEnabled: StateFlow<Boolean> = _biometricEnabled.asStateFlow()
 
     /**
+     * Collections whose PIN has been given since this process started.
+     *
+     * Deliberately memory only: the lock itself stays on in [locked], so the
+     * badge never disappears, but a page opened once with the PIN does not ask
+     * again every time it re-renders or its card is tapped a second time.
+     * Restarting the app clears it, and so does locking or restoring.
+     */
+    private val _granted = MutableStateFlow<Set<String>>(emptySet())
+    val granted: StateFlow<Set<String>> = _granted.asStateFlow()
+
+    /**
      * Binds this device's storage and reads it once.
      *
      * Idempotent: both applications install it from their startup path, and a
@@ -176,6 +187,7 @@ object CollectionLocks {
         _pin.value = null
         persistence?.savePin(null)
         _locked.value = emptySet()
+        _granted.value = emptySet()
         persistence?.saveLocked(emptySet())
     }
 
@@ -189,12 +201,33 @@ object CollectionLocks {
         return key.isNotEmpty() && key in _locked.value
     }
 
+    /**
+     * Whether opening [collectionId] has to ask for the PIN first: locked, and
+     * not already opened with it this run. This is what every entry point
+     * gates on — a page, a card, a search hit, a menu's Open — so they cannot
+     * disagree about whether the prompt is still owed.
+     */
+    fun isGated(collectionId: String?): Boolean {
+        val key = normalize(collectionId)
+        return key.isNotEmpty() && key in _locked.value && key !in _granted.value
+    }
+
+    /** Records that [collectionId]'s PIN was accepted this run. */
+    fun grant(collectionId: String?) {
+        val key = normalize(collectionId)
+        if (key.isEmpty() || key !in _locked.value) return
+        if (key in _granted.value) return
+        _granted.value = _granted.value + key
+    }
+
     fun setLocked(collectionId: String?, locked: Boolean) {
         val key = normalize(collectionId)
         if (key.isEmpty()) return
         val next = if (locked) _locked.value + key else _locked.value - key
         if (next == _locked.value) return
         _locked.value = next
+        // Locking starts the gate over; unlocking is the answer to it.
+        _granted.value = if (locked) _granted.value - key else _granted.value + key
         persistence?.saveLocked(next)
     }
 
@@ -218,6 +251,9 @@ object CollectionLocks {
      */
     fun restoreLocked(ids: Collection<String>) {
         val next = ids.mapTo(LinkedHashSet(), ::normalize).filterTo(LinkedHashSet()) { it.isNotEmpty() }
+        // Restored locks guard this device straight away, whatever was
+        // opened with the PIN before the restore.
+        _granted.value = _granted.value intersect next
         if (next == _locked.value) return
         _locked.value = next
         persistence?.saveLocked(next)

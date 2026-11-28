@@ -48,7 +48,12 @@ actual class PcmRecorder actual constructor() {
     }
 
     @SuppressLint("MissingPermission")
-    actual suspend fun record(durationMs: Int, onAmplitude: (Float) -> Unit): PcmRecording? =
+    actual suspend fun record(
+        durationMs: Int,
+        onAmplitude: (Float) -> Unit,
+        checkpointMs: Int,
+        onCheckpoint: ((PcmRecording) -> Unit)?,
+    ): PcmRecording? =
         withContext(Dispatchers.IO) {
             if (durationMs <= 0) return@withContext null
             // Source and rate are tried in order: a device may refuse the raw
@@ -58,7 +63,7 @@ actual class PcmRecorder actual constructor() {
             for (source in SOURCES) {
                 for (rate in RATES) {
                     val capture = open(source, rate) ?: continue
-                    val recording = readCapture(capture, durationMs, onAmplitude)
+                    val recording = readCapture(capture, durationMs, onAmplitude, checkpointMs, onCheckpoint)
                     if (recording != null) return@withContext recording
                 }
             }
@@ -77,6 +82,8 @@ actual class PcmRecorder actual constructor() {
         capture: Capture,
         durationMs: Int,
         onAmplitude: (Float) -> Unit,
+        checkpointMs: Int,
+        onCheckpoint: ((PcmRecording) -> Unit)?,
     ): PcmRecording? {
         val record = capture.record
         active = record
@@ -87,6 +94,17 @@ actual class PcmRecorder actual constructor() {
             return null
         }
         val mono = ShortArray(framesWanted)
+        // The wake-up transient is read and thrown away rather than stored: the
+        // line has to keep draining while it settles, but the ramp into silence
+        // is not what Shazam should fingerprint.
+        val leadFrames = (capture.sampleRate.toLong() * LEAD_IN_TRIM_MS / 1_000L).toInt()
+        var leadRemaining = leadFrames
+        val checkpointFrames = if (onCheckpoint != null && checkpointMs > 0) {
+            (capture.sampleRate.toLong() * checkpointMs / 1_000L).toInt()
+        } else {
+            0
+        }
+        var checkpointFired = false
         // AudioRecord's read() takes sample counts, not bytes. The buffer size
         // it was opened with is bytes, so halve it for 16-bit samples.
         val readBuffer = ShortArray(maxOf(1, capture.bufferSize / 2))
@@ -113,10 +131,21 @@ actual class PcmRecorder actual constructor() {
                     var sum = 0
                     val at = frame * capture.channels
                     for (channel in 0 until capture.channels) sum += readBuffer[at + channel]
+                    if (leadRemaining > 0) {
+                        leadRemaining--
+                        continue
+                    }
                     mono[written++] = (sum / capture.channels).toShort()
                     if (written >= framesWanted) break
                 }
                 if (written > chunkStart) onAmplitude(amplitudeOf(mono, chunkStart, written))
+                if (!checkpointFired && onCheckpoint != null && checkpointFrames > 0 && written >= checkpointFrames) {
+                    checkpointFired = true
+                    // Handed over on this thread, which is why the caller must
+                    // return at once: a fingerprint computed here would stall
+                    // the reads and drop audio out of the line's buffer.
+                    onCheckpoint(PcmRecording(mono.copyOf(written), capture.sampleRate))
+                }
             }
         } catch (denied: SecurityException) {
             return null
