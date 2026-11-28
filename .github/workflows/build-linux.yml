@@ -243,8 +243,8 @@ jobs:
           run_file="${{ steps.stage.outputs.run }}"
           [ -x "$run_file" ] || { echo "::error::$run_file is not executable"; exit 1; }
 
-          prefix="$RUNNER_TEMP/bitchord-run-test"
-          xdg="$RUNNER_TEMP/bitchord-run-xdg"
+          prefix="$RUNNER_TEMP/bitchord-install"
+          xdg="$RUNNER_TEMP/bitchord-xdg"
           rm -rf "$prefix" "$xdg"
 
           XDG_DATA_HOME="$xdg" "$run_file" --unattended --prefix "$prefix"

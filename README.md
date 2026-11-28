@@ -111,11 +111,27 @@ Desktop builds for Windows, macOS and Linux are on the same page — `.exe`, `.m
 | Windows | `BitChord-<version>-windows-x64-portable.zip` | Unzip anywhere and run `BitChord.bat`; needs a Java 21 runtime. |
 | macOS | `BitChord-<version>-macos-<arch>.pkg` | Double-click: welcome page, macOS 12 check, installs to `/Applications`. |
 | macOS | `BitChord-<version>-macos-<arch>.dmg` | Drag BitChord onto Applications. |
-| Linux | `BitChord-<version>-linux-<arch>.run` | `chmod +x` and run it — wizard, or `--unattended --prefix <dir>`; `--uninstall` removes it. |
+| Linux | `BitChord-<version>-linux-<arch>.run` | `chmod +x` and run it — GUI wizard, or `--cli` / `--unattended --prefix <dir>`; `--uninstall` removes it. |
 | Linux | `BitChord-<version>-linux-<arch>.deb` | `sudo apt install ./BitChord-<version>-linux-<arch>.deb` |
 | Linux | `BitChord-<version>-linux-<arch>.AppImage` | `chmod +x` and run it; nothing to install. |
 
-`<arch>` is `arm64` or `x64`, and each desktop artifact is built on a runner of that architecture. The `.run` installer needs no package manager: without sudo it installs into `~/.local/opt/bitchord` with a launcher in `~/.local/bin` and a menu entry in `~/.local/share/applications`; as root it uses `/opt/bitchord`, `/usr/local/bin` and `/usr/share/applications`.
+`<arch>` is `arm64` or `x64`, and each desktop artifact is built on a runner of that architecture.
+
+#### The Linux `.run` installer
+
+It needs no package manager and no root: it carries the whole app, verifies the payload's length and SHA-256 before extracting anything, and writes an `uninstall.sh` beside the app.
+
+```bash
+chmod +x BitChord-<version>-linux-<arch>.run
+./BitChord-<version>-linux-<arch>.run                       # wizard
+./BitChord-<version>-linux-<arch>.run --prefix ~/apps/bitchord
+./BitChord-<version>-linux-<arch>.run --unattended --prefix "$HOME/.local/opt/bitchord"
+./BitChord-<version>-linux-<arch>.run --uninstall
+```
+
+- **Graphical wizard** (default when `$DISPLAY` or `$WAYLAND_DISPLAY` is set): welcome, install scope and path, menu/shortcut options, a progress window during checksum verification and extraction, and a completion page that can launch BitChord. It uses `zenity`, `yad` or `kdialog`, whichever is installed; with none of them, or with `--cli`, the same steps run as terminal prompts.
+- **Scope:** user install goes to `~/.local/opt/bitchord`, with the launcher at `~/.local/bin/bitchord`, the menu entry under `$XDG_DATA_HOME/applications`, the icon under `$XDG_DATA_HOME/icons/hicolor`, and config/data in `$XDG_CONFIG_HOME/bitchord` and `$XDG_DATA_HOME/bitchord`. Choosing the system-wide scope, or running as root, installs to `/opt/bitchord` with `/usr/local/bin` and `/usr/share/applications`, asking for admin rights through `pkexec` (or `sudo`) when the session is not already root.
+- **Flags:** `--unattended` (also `-y`) for CI and scripts, `--cli` for the terminal wizard, `--prefix <dir>`, `--skip-integration`, `--desktop-shortcut`, `--quiet`, `--list`, `--uninstall`, `--help`.
 
 The Windows installers are built by the **Windows EXE** workflow and uploaded as the files themselves, not inside another archive: `BitChord-<version>-windows-x64-setup.exe`, `BitChord-<version>-windows-x64.msi` and the portable `BitChord-<version>-windows-x64-portable.zip`. When the repository has been accepted by the [SignPath Foundation](https://signpath.org/), the setup is submitted for signing during the build and the signed copy is the one published; without that approval the same build ships unsigned rather than failing.
 
