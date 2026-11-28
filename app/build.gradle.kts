@@ -331,6 +331,9 @@ dependencies {
     implementation("androidx.work:work-runtime-ktx:2.10.1")
     implementation("androidx.core:core-ktx:1.15.0")
     implementation("androidx.appcompat:appcompat:1.7.0")
+    // The system biometric sheet with the device-credential fallback: the
+    // framework prompt this replaced could not combine the two.
+    implementation("androidx.biometric:biometric:1.1.0")
     debugImplementation("androidx.compose.ui:ui-tooling")
 
     // ---- Media playback: Media3 / ExoPlayer ----

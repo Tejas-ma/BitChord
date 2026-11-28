@@ -17,6 +17,7 @@ object LockPrefs : LockPersistence {
     private const val KEY_ITERATIONS = "pin_iterations"
     private const val KEY_LOCKED = "locked_ids"
     private const val KEY_BIOMETRIC = "biometric_enabled"
+    private const val KEY_TIMEOUT = "lock_timeout"
 
     private lateinit var prefs: SharedPreferences
 
@@ -71,5 +72,15 @@ object LockPrefs : LockPersistence {
     override fun saveBiometricEnabled(enabled: Boolean) {
         if (!this::prefs.isInitialized) return
         prefs.edit().putBoolean(KEY_BIOMETRIC, enabled).apply()
+    }
+
+    override fun loadLockTimeout(): LockTimeout {
+        if (!this::prefs.isInitialized) return LockTimeout.IMMEDIATE
+        return LockTimeout.fromName(prefs.getString(KEY_TIMEOUT, null))
+    }
+
+    override fun saveLockTimeout(timeout: LockTimeout) {
+        if (!this::prefs.isInitialized) return
+        prefs.edit().putString(KEY_TIMEOUT, timeout.name).apply()
     }
 }

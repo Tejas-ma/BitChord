@@ -1674,4 +1674,12 @@
     <string name="backup_passphrase_required">This backup is encrypted. Enter its passphrase to continue.</string>
     <string name="backup_passphrase_wrong">That passphrase did not unlock the backup, or the file is damaged. Try again.</string>
     <string name="backup_passphrase_hint">Passphrase</string>
+    <string name="locked_timer">Locked Timer</string>
+    <string name="locked_timer_subtitle">How long an unlocked playlist or album stays open after you leave it.</string>
+    <string name="locked_timer_immediately">Immediately</string>
+    <string name="locked_timer_5s">5 seconds</string>
+    <string name="locked_timer_10s">10 seconds</string>
+    <string name="locked_timer_30s">30 seconds</string>
+    <string name="backup_account_encryption">Encrypted with your Google account</string>
+    <string name="backup_account_encryption_subtitle">Backups are sealed in the hidden app folder of the connected account. Restoring on another device needs the same Google account.</string>
 </resources>

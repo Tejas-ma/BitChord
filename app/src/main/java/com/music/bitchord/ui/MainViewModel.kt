@@ -92,8 +92,10 @@ import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.debounce
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.flowOn
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
@@ -724,6 +726,19 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
      */
     private val _detailStack = MutableStateFlow<List<DetailPage>>(emptyList())
     val detailStack: StateFlow<List<DetailPage>> = _detailStack.asStateFlow()
+
+    init {
+        // An unlock granted while Locked Timer is "Immediately" ends when the
+        // page it was granted for leaves this stack. Every way a playlist or
+        // album closes — Back, a tab, the playlist being deleted — shrinks the
+        // stack, so the relock lives here once rather than at each caller.
+        viewModelScope.launch {
+            detailStack
+                .map { pages -> pages.map(DetailPage::browseId) }
+                .distinctUntilChanged()
+                .collect { open -> CollectionLocks.retainExitGrants(open) }
+        }
+    }
 
     /**
      * The app's back stack: the routes pushed over the tabs, interleaved with

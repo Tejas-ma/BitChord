@@ -25,6 +25,7 @@ import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.material3.pulltorefresh.rememberPullToRefreshState
 import com.music.bitchord.data.TopPicks
 import com.music.bitchord.data.security.CollectionLocks
+import com.music.bitchord.data.security.LockTimeout
 import com.music.bitchord.data.YtMusicRepository
 import com.music.bitchord.data.model.TopPick
 import com.music.bitchord.data.model.TopPickMood
@@ -2203,6 +2204,11 @@ fun BitChordDesktopApp() {
     }
     LaunchedEffect(statsRevision) {
         replaySummary = withContext(Dispatchers.IO) { DesktopListeningStats.summary(replayPeriod) }
+    }
+    // Locked Timer "Immediately": the page being closed is the relock. Timed
+    // windows are left to their own clock, and the badge never moves.
+    LaunchedEffect(openedCollection?.browseId) {
+        CollectionLocks.retainExitGrants(listOfNotNull(openedCollection?.browseId))
     }
     DisposableEffect(playbackEngine) {
         onDispose { playbackEngine.release() }
@@ -6837,6 +6843,30 @@ private fun DesktopSettingsScreen(
                         },
                         onClick = { DesktopLocks.startChangePin() },
                     )
+                    // The Locked Timer presets, as a dropdown on the row itself.
+                    val lockTimeout by CollectionLocks.lockTimeout.collectAsState()
+                    var timerMenuOpen by remember { mutableStateOf(false) }
+                    Box {
+                        SettingsNavigationRow(
+                            DesktopStrings["locked_timer", "Locked Timer"],
+                            lockTimeout.desktopLabel(),
+                            onClick = { timerMenuOpen = true },
+                        )
+                        DropdownMenu(
+                            expanded = timerMenuOpen,
+                            onDismissRequest = { timerMenuOpen = false },
+                        ) {
+                            LockTimeout.entries.forEach { option ->
+                                DropdownMenuItem(
+                                    text = { Text(option.desktopLabel()) },
+                                    onClick = {
+                                        CollectionLocks.setLockTimeout(option)
+                                        timerMenuOpen = false
+                                    },
+                                )
+                            }
+                        }
+                    }
                 }
             }
 
@@ -8571,6 +8601,19 @@ private fun settingsRowVisible(title: String, subtitle: String = ""): Boolean {
         onDispose { if (hit) matches?.remove(title) }
     }
     return hit
+}
+
+/**
+ * The Locked Timer presets in the app's own copy.
+ *
+ * Plain rather than @Composable because DesktopStrings reads the active
+ * catalogue directly, as every other desktop row does.
+ */
+private fun LockTimeout.desktopLabel(): String = when (this) {
+    LockTimeout.IMMEDIATE -> DesktopStrings["locked_timer_immediately", "Immediately"]
+    LockTimeout.FIVE_SECONDS -> DesktopStrings["locked_timer_5s", "5 seconds"]
+    LockTimeout.TEN_SECONDS -> DesktopStrings["locked_timer_10s", "10 seconds"]
+    LockTimeout.THIRTY_SECONDS -> DesktopStrings["locked_timer_30s", "30 seconds"]
 }
 
 /** A settings row that opens something rather than toggling it. */

@@ -3,12 +3,8 @@ package com.music.bitchord.ui.components
 import android.app.Activity
 import android.content.Context
 import android.content.ContextWrapper
-import android.hardware.biometrics.BiometricPrompt
-import android.os.Build
-import android.os.CancellationSignal
-import android.app.KeyguardManager
-import android.content.pm.PackageManager
-import androidx.annotation.RequiresApi
+import androidx.biometric.BiometricManager
+import androidx.biometric.BiometricPrompt
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -33,66 +29,113 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
+import androidx.core.content.ContextCompat
+import androidx.fragment.app.FragmentActivity
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.music.bitchord.R
 import com.music.bitchord.data.security.CollectionLocks
 import com.music.bitchord.data.security.LockSecurity
 
 /**
- * The device's biometric hardware, asked about without pulling in a dependency.
+ * The device's system authentication sheet, asked about before it is raised.
  *
- * Android's own [BiometricPrompt] arrived in API 28; below that, and on a
- * device with no fingerprint/face/iris sensor or no secure lock screen, the
- * flow falls back to the PIN immediately rather than promising something the
- * device cannot do.
+ * The framework prompt this used to call could only show biometrics and needed
+ * a negative button to get back to the PIN, which is why the button inside the
+ * PIN dialog appeared to do nothing: the sheet either could not be built on the
+ * device or was cancelled into a handler that had no PIN to fall back to. The
+ * AndroidX prompt asks the system for biometrics *and* the device credential in
+ * one sheet — the one Chrome shows for a passkey — and `DEVICE_CREDENTIAL`
+ * carries the system PIN/pattern fallback itself, so no negative button may be
+ * set beside it.
  */
 object BiometricGate {
 
-    fun isAvailable(context: Context): Boolean {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.P) return false
-        val manager = context.getSystemService(Context.KEYGUARD_SERVICE) as? KeyguardManager ?: return false
-        if (manager.isDeviceSecure.not()) return false
-        val packages = context.packageManager
-        return packages.hasSystemFeature(PackageManager.FEATURE_FINGERPRINT) ||
-            packages.hasSystemFeature(PackageManager.FEATURE_FACE) ||
-            packages.hasSystemFeature(PackageManager.FEATURE_IRIS)
-    }
+    /** Fingerprint, face or iris, at whichever strength the device enrols. */
+    private const val BIOMETRICS =
+        BiometricManager.Authenticators.BIOMETRIC_STRONG or BiometricManager.Authenticators.BIOMETRIC_WEAK
 
     /**
-     * Shows the system biometric sheet. Returns false when it could not be
-     * raised, so the caller can put the PIN field in front of the user instead
-     * of leaving them staring at a dialog that does nothing.
+     * The authenticators this device can really show, or 0 for none.
+     *
+     * Asked of [BiometricManager] rather than guessed from package features, so
+     * a phone with a sensor but no enrolment, or no secure lock screen, says so
+     * before a prompt is attempted instead of failing silently.
      */
-    @RequiresApi(Build.VERSION_CODES.P)
+    fun authenticators(context: Context): Int {
+        val manager = BiometricManager.from(context)
+        val withCredential = BIOMETRICS or BiometricManager.Authenticators.DEVICE_CREDENTIAL
+        if (manager.canAuthenticate(withCredential) == BiometricManager.BIOMETRIC_SUCCESS) {
+            return withCredential
+        }
+        if (manager.canAuthenticate(BIOMETRICS) == BiometricManager.BIOMETRIC_SUCCESS) return BIOMETRICS
+        return 0
+    }
+
+    fun isAvailable(context: Context): Boolean = authenticators(context) != 0
+
+    /**
+     * Shows the system sheet. Returns false when it could not be raised at all,
+     * so the caller can put its own PIN field up instead of leaving the tap with
+     * nothing on screen.
+     *
+     * [onUsePin] is called when the sheet is dismissed by the user or by its
+     * negative button — never for a hard error, which is reported as such.
+     */
     fun authenticate(
-        activity: Activity,
+        activity: FragmentActivity,
         title: String,
         subtitle: String,
+        authenticators: Int,
         onSuccess: () -> Unit,
         onUsePin: () -> Unit,
         onFailure: (String) -> Unit,
     ): Boolean {
-        val executor = activity.mainExecutor
-        val prompt = runCatching {
-            BiometricPrompt.Builder(activity)
+        val executor = ContextCompat.getMainExecutor(activity)
+        val info = runCatching {
+            BiometricPrompt.PromptInfo.Builder()
                 .setTitle(title)
-                .setSubtitle(subtitle)
-                .setNegativeButton(
-                    activity.getString(R.string.use_pin),
-                    executor,
-                ) { _, _ -> onUsePin() }
+                .apply { if (subtitle.isNotBlank()) setSubtitle(subtitle) }
+                .setAllowedAuthenticators(authenticators)
+                .apply {
+                    // Android throws IllegalArgumentException for a negative
+                    // button combined with DEVICE_CREDENTIAL; the sheet already
+                    // offers the system credential as its own fallback. Without
+                    // it, the button says where to go and arrives back here as
+                    // ERROR_NEGATIVE_BUTTON, which switches to the PIN field.
+                    if (authenticators and BiometricManager.Authenticators.DEVICE_CREDENTIAL == 0) {
+                        setNegativeButtonText(activity.getString(R.string.use_pin))
+                    }
+                }
                 .build()
         }.getOrNull() ?: return false
-        return runCatching {
-            prompt.authenticate(CancellationSignal(), executor, object : BiometricPrompt.AuthenticationCallback() {
+
+        val prompt = BiometricPrompt(
+            activity,
+            executor,
+            object : BiometricPrompt.AuthenticationCallback() {
                 override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {
                     onSuccess()
                 }
 
-                override fun onAuthenticationError(errorCode: Int, errString: CharSequence) {
-                    onFailure(errString.toString())
+                override fun onAuthenticationFailed() {
+                    // One finger that did not match: the system sheet stays up
+                    // and reports its own retry, so nothing changes here.
                 }
-            })
+
+                override fun onAuthenticationError(errorCode: Int, errString: CharSequence) {
+                    when (errorCode) {
+                        BiometricPrompt.ERROR_NEGATIVE_BUTTON,
+                        BiometricPrompt.ERROR_USER_CANCELED,
+                        BiometricPrompt.ERROR_CANCELED,
+                        -> onUsePin()
+
+                        else -> onFailure(errString.toString())
+                    }
+                }
+            },
+        )
+        return runCatching {
+            prompt.authenticate(info)
             true
         }.getOrDefault(false)
     }
@@ -209,22 +252,26 @@ fun SetLockPinDialog(
  * Verifies the PIN before something is changed — a new PIN, the biometric
  * switch, or removing a lock.
  *
- * Biometrics are offered first when they are enabled and the hardware is
- * there, with the PIN field visible underneath as the immediate fallback: a
- * fingerprint that fails three times must not close the only way in.
+ * Biometrics are offered first when they are enabled and the device can show
+ * the system sheet, with the PIN field visible underneath as the immediate
+ * fallback: a fingerprint that fails three times must not close the only way
+ * in. [autoPromptBiometric] is false where the caller has already raised the
+ * system sheet once and this dialog is the answer to cancelling it.
  */
 @Composable
 fun VerifyLockPinDialog(
     title: String,
     subtitle: String? = null,
+    autoPromptBiometric: Boolean = true,
+    showBiometricAction: Boolean = true,
     onDismiss: () -> Unit,
     onVerified: () -> Unit,
 ) {
     val context = LocalContext.current
-    val activity = remember(context) { context.findActivity() }
+    val activity = remember(context) { context.findActivity() as? FragmentActivity }
     val biometricEnabled by CollectionLocks.biometricEnabled.collectAsStateWithLifecycle()
-    val hardware = remember(context) { BiometricGate.isAvailable(context) }
-    val canUseBiometric = biometricEnabled && hardware && activity != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.P
+    val authenticators = remember(context) { BiometricGate.authenticators(context) }
+    val canUseBiometric = showBiometricAction && biometricEnabled && authenticators != 0 && activity != null
 
     var pin by remember { mutableStateOf("") }
     var error by remember { mutableStateOf<String?>(null) }
@@ -232,12 +279,16 @@ fun VerifyLockPinDialog(
     val failedText = stringResource(R.string.lock_pin_incorrect)
 
     fun prompt() {
-        if (!canUseBiometric || activity == null) return
+        val host = activity ?: return
+        if (!canUseBiometric) return
         val raised = BiometricGate.authenticate(
-            activity = activity,
+            activity = host,
             title = title,
             subtitle = subtitle.orEmpty(),
+            authenticators = authenticators,
             onSuccess = { onVerified() },
+            // The sheet already carries the system credential, so dismissing
+            // it simply leaves this PIN field in front of the user.
             onUsePin = { },
             onFailure = { message -> if (message.isNotBlank()) error = message },
         )
@@ -245,7 +296,7 @@ fun VerifyLockPinDialog(
     }
 
     LaunchedEffect(Unit) {
-        if (canUseBiometric && !prompted) {
+        if (canUseBiometric && autoPromptBiometric && !prompted) {
             prompted = true
             prompt()
         }
@@ -298,19 +349,60 @@ fun VerifyLockPinDialog(
     )
 }
 
-/** The PIN/biometric gate shown before a locked playlist or album is opened. */
+/**
+ * The gate shown before a locked playlist or album is opened.
+ *
+ * With biometric unlock on, the system sheet is raised straight away: no custom
+ * dialog is drawn first, because a button inside one was the thing that did
+ * nothing. Android's own sheet offers fingerprint/face and, when the device has
+ * a secure lock screen, its PIN/pattern/password as the same sheet's fallback.
+ * Dismissing it, or a device that cannot show it, puts this app's PIN field up
+ * instead, with a way back to the system sheet while it is still available.
+ */
 @Composable
 fun UnlockCollectionDialog(
     title: String,
     onDismiss: () -> Unit,
     onUnlocked: () -> Unit,
 ) {
-    VerifyLockPinDialog(
-        title = stringResource(R.string.unlock_collection_title, title),
-        subtitle = stringResource(R.string.unlock_collection_subtitle),
-        onDismiss = onDismiss,
-        onVerified = onUnlocked,
-    )
+    val context = LocalContext.current
+    val activity = remember(context) { context.findActivity() as? FragmentActivity }
+    val biometricEnabled by CollectionLocks.biometricEnabled.collectAsStateWithLifecycle()
+    val authenticators = remember(context) { BiometricGate.authenticators(context) }
+    val canUseSystemSheet = biometricEnabled && authenticators != 0 && activity != null
+    val unlockTitle = stringResource(R.string.unlock_collection_title, title)
+    val unlockSubtitle = stringResource(R.string.unlock_collection_subtitle)
+
+    // True once the sheet has been shown and answered away: the PIN is then the
+    // fallback rather than a second automatic prompt.
+    var pinFallback by remember { mutableStateOf(!canUseSystemSheet) }
+    var raised by remember { mutableStateOf(false) }
+
+    if (!pinFallback && activity != null) {
+        LaunchedEffect(Unit) {
+            if (raised) return@LaunchedEffect
+            raised = true
+            val shown = BiometricGate.authenticate(
+                activity = activity,
+                title = unlockTitle,
+                subtitle = unlockSubtitle,
+                authenticators = authenticators,
+                onSuccess = onUnlocked,
+                onUsePin = { pinFallback = true },
+                onFailure = { pinFallback = true },
+            )
+            if (!shown) pinFallback = true
+        }
+    } else {
+        VerifyLockPinDialog(
+            title = unlockTitle,
+            subtitle = unlockSubtitle,
+            autoPromptBiometric = false,
+            showBiometricAction = canUseSystemSheet,
+            onDismiss = onDismiss,
+            onVerified = onUnlocked,
+        )
+    }
 }
 
 /**

@@ -33,6 +33,7 @@ import com.music.bitchord.data.security.CollectionLocks
 import com.music.bitchord.data.security.LockPersistence
 import com.music.bitchord.data.security.LockPinRecord
 import com.music.bitchord.data.security.LockSecurity
+import com.music.bitchord.data.security.LockTimeout
 import java.util.prefs.Preferences
 
 /**
@@ -49,6 +50,7 @@ object DesktopLockPrefs : LockPersistence {
     private const val KEY_ITERATIONS = "pin_iterations"
     private const val KEY_LOCKED = "locked_ids"
     private const val KEY_BIOMETRIC = "biometric_enabled"
+    private const val KEY_TIMEOUT = "lock_timeout"
     private const val SEPARATOR = "\u001F"
 
     private val prefs: Preferences by lazy { Preferences.userRoot().node(NODE) }
@@ -88,6 +90,13 @@ object DesktopLockPrefs : LockPersistence {
 
     override fun saveBiometricEnabled(enabled: Boolean) {
         if (enabled) prefs.putBoolean(KEY_BIOMETRIC, true) else prefs.remove(KEY_BIOMETRIC)
+    }
+
+    override fun loadLockTimeout(): LockTimeout =
+        LockTimeout.fromName(prefs.get(KEY_TIMEOUT, null))
+
+    override fun saveLockTimeout(timeout: LockTimeout) {
+        if (timeout == LockTimeout.IMMEDIATE) prefs.remove(KEY_TIMEOUT) else prefs.put(KEY_TIMEOUT, timeout.name)
     }
 }
 

@@ -7,6 +7,7 @@ import javax.crypto.spec.PBEKeySpec
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
 
 /**
  * A PIN as it is stored: a random salt, the PBKDF2 hash and the work factor
@@ -93,8 +94,33 @@ object LockSecurity {
 }
 
 /**
+ * How long a collection stays open after its PIN has been given.
+ *
+ * The setting is persisted; the unlock it grants is not. [IMMEDIATE] ends the
+ * grant the moment the page is left, the rest keep it for their window so
+ * stepping out to a queue and back does not ask again. Either way the lock
+ * itself, and the badge on its cover, never move.
+ */
+enum class LockTimeout(val millis: Long) {
+    IMMEDIATE(0L),
+    FIVE_SECONDS(5_000L),
+    TEN_SECONDS(10_000L),
+    THIRTY_SECONDS(30_000L),
+    ;
+
+    /** True when leaving the page relocks, rather than a countdown doing it. */
+    val untilExit: Boolean get() = millis == 0L
+
+    companion object {
+        /** The stored value, or [IMMEDIATE] for one a build never wrote. */
+        fun fromName(name: String?): LockTimeout =
+            entries.firstOrNull { it.name == name } ?: IMMEDIATE
+    }
+}
+
+/**
  * Where a platform keeps the lock: the PIN record, the set of locked
- * collections and the biometric toggle.
+ * collections, the biometric toggle and the relock timer.
  *
  * The phone implements this over `SharedPreferences`, the desktop over its own
  * preference node; everything above this line is identical on both.
@@ -106,6 +132,11 @@ interface LockPersistence {
     fun saveLocked(ids: Set<String>)
     fun loadBiometricEnabled(): Boolean
     fun saveBiometricEnabled(enabled: Boolean)
+
+    /** The chosen relock timer; [LockTimeout.IMMEDIATE] when none was stored. */
+    fun loadLockTimeout(): LockTimeout = LockTimeout.IMMEDIATE
+
+    fun saveLockTimeout(timeout: LockTimeout) {}
 }
 
 /**
@@ -130,16 +161,30 @@ object CollectionLocks {
     private val _biometricEnabled = MutableStateFlow(false)
     val biometricEnabled: StateFlow<Boolean> = _biometricEnabled.asStateFlow()
 
+    private val _lockTimeout = MutableStateFlow(LockTimeout.IMMEDIATE)
+
+    /** How long an unlocked page stays open after its PIN is given. */
+    val lockTimeout: StateFlow<LockTimeout> = _lockTimeout.asStateFlow()
+
     /**
-     * Collections whose PIN has been given since this process started.
+     * One temporary unlock: until the page is left, or until a moment in time.
      *
-     * Deliberately memory only: the lock itself stays on in [locked], so the
-     * badge never disappears, but a page opened once with the PIN does not ask
-     * again every time it re-renders or its card is tapped a second time.
-     * Restarting the app clears it, and so does locking or restoring.
+     * [untilExit] is [LockTimeout.IMMEDIATE]'s grant — it has no clock, because
+     * what ends it is the page closing (see [retainExitGrants]). The others
+     * expire on their own, which is what a 10 s window means.
      */
-    private val _granted = MutableStateFlow<Set<String>>(emptySet())
-    val granted: StateFlow<Set<String>> = _granted.asStateFlow()
+    private data class Grant(val untilMillis: Long, val untilExit: Boolean)
+
+    /**
+     * Collections whose PIN has been given for now, and when that ends.
+     *
+     * Deliberately memory only, never written: the lock itself stays on in
+     * [locked], so the badge never disappears, but a page opened once with the
+     * PIN does not ask again every time it re-renders or its card is tapped
+     * again. Restarting the app clears it, and so does locking, restoring, or
+     * the chosen timer running out.
+     */
+    private val _sessions = MutableStateFlow<Map<String, Grant>>(emptyMap())
 
     /**
      * Binds this device's storage and reads it once.
@@ -153,6 +198,7 @@ object CollectionLocks {
         _pin.value = storage.loadPin()
         _locked.value = storage.loadLocked().mapTo(LinkedHashSet(), ::normalize)
         _biometricEnabled.value = storage.loadBiometricEnabled()
+        _lockTimeout.value = storage.loadLockTimeout()
     }
 
     /** A playlist's page id (`VLPL…`), a model's id (`PL…`, `sp_local_…`) or an album's (`MPRE…`) all key the same slot. */
@@ -187,13 +233,29 @@ object CollectionLocks {
         _pin.value = null
         persistence?.savePin(null)
         _locked.value = emptySet()
-        _granted.value = emptySet()
+        _sessions.value = emptyMap()
         persistence?.saveLocked(emptySet())
     }
 
     fun setBiometricEnabled(enabled: Boolean) {
         _biometricEnabled.value = enabled
         persistence?.saveBiometricEnabled(enabled)
+    }
+
+    /**
+     * Changes how long a new unlock lasts. Grants already given keep the window
+     * they were made under, so switching to [LockTimeout.IMMEDIATE] cannot
+     * strand a page that is open right now.
+     */
+    fun setLockTimeout(timeout: LockTimeout) {
+        if (_lockTimeout.value == timeout) return
+        _lockTimeout.value = timeout
+        persistence?.saveLockTimeout(timeout)
+    }
+
+    /** Ends every temporary unlock without touching the locks themselves. */
+    fun clearGrants() {
+        _sessions.value = emptyMap()
     }
 
     fun isLocked(collectionId: String?): Boolean {
@@ -209,15 +271,47 @@ object CollectionLocks {
      */
     fun isGated(collectionId: String?): Boolean {
         val key = normalize(collectionId)
-        return key.isNotEmpty() && key in _locked.value && key !in _granted.value
+        if (key.isEmpty() || key !in _locked.value) return false
+        val grant = _sessions.value[key] ?: return true
+        if (grant.untilExit) return false
+        return System.currentTimeMillis() >= grant.untilMillis
     }
 
-    /** Records that [collectionId]'s PIN was accepted this run. */
+    /**
+     * Records that [collectionId]'s PIN was accepted, for the window the
+     * Locked Timer setting names.
+     */
     fun grant(collectionId: String?) {
         val key = normalize(collectionId)
         if (key.isEmpty() || key !in _locked.value) return
-        if (key in _granted.value) return
-        _granted.value = _granted.value + key
+        val timeout = _lockTimeout.value
+        val now = System.currentTimeMillis()
+        val grant = Grant(
+            untilMillis = if (timeout.untilExit) Long.MAX_VALUE else now + timeout.millis,
+            untilExit = timeout.untilExit,
+        )
+        _sessions.update { sessions ->
+            val live = sessions.filter { (_, existing) -> existing.untilExit || now < existing.untilMillis }
+            live + (key to grant)
+        }
+    }
+
+    /**
+     * Ends the exit-scoped grants for pages that are no longer open.
+     *
+     * Called with whatever playlist/album pages are on screen now: with
+     * [LockTimeout.IMMEDIATE] the page that was left relocks here, and the next
+     * tap on it asks again. Timed grants are left alone until their own clock
+     * runs out, and expired ones are dropped on the way through.
+     */
+    fun retainExitGrants(open: Collection<String>) {
+        val keep = open.mapTo(HashSet(), ::normalize)
+        val now = System.currentTimeMillis()
+        _sessions.update { sessions ->
+            sessions.filter { (id, grant) ->
+                if (grant.untilExit) id in keep else now < grant.untilMillis
+            }
+        }
     }
 
     fun setLocked(collectionId: String?, locked: Boolean) {
@@ -226,8 +320,8 @@ object CollectionLocks {
         val next = if (locked) _locked.value + key else _locked.value - key
         if (next == _locked.value) return
         _locked.value = next
-        // Locking starts the gate over; unlocking is the answer to it.
-        _granted.value = if (locked) _granted.value - key else _granted.value + key
+        // Locking starts the gate over; unlocking needs no grant at all.
+        if (locked) _sessions.update { it - key }
         persistence?.saveLocked(next)
     }
 
@@ -253,7 +347,7 @@ object CollectionLocks {
         val next = ids.mapTo(LinkedHashSet(), ::normalize).filterTo(LinkedHashSet()) { it.isNotEmpty() }
         // Restored locks guard this device straight away, whatever was
         // opened with the PIN before the restore.
-        _granted.value = _granted.value intersect next
+        _sessions.update { sessions -> sessions.filterKeys { it in next } }
         if (next == _locked.value) return
         _locked.value = next
         persistence?.saveLocked(next)

@@ -85,6 +85,8 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatDelegate
 import com.music.bitchord.data.lyrics.translationLanguageName
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -95,6 +97,7 @@ import androidx.compose.material3.SliderDefaults
 import com.music.bitchord.ui.components.BiometricGate
 import com.music.bitchord.ui.components.IosSwitch
 import com.music.bitchord.data.security.CollectionLocks
+import com.music.bitchord.data.security.LockTimeout
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -1759,6 +1762,43 @@ fun SettingsScreen(
                     onClick = onChangeLockPin,
                 )
             }
+            // How long an unlock lasts. A dropdown rather than a page of its
+            // own: four presets are one glance, and the row already names the
+            // choice it is on.
+            RowDivider()
+            val lockTimeout by CollectionLocks.lockTimeout.collectAsStateWithLifecycle()
+            val lockTimerTitle = stringResource(R.string.locked_timer)
+            var timerMenuOpen by remember { mutableStateOf(false) }
+            row(lockTimerTitle, "timer", "relock", "auto", "security", "privacy") {
+                Box {
+                    SettingsRow(
+                        icon = SfIcons.Clock,
+                        title = lockTimerTitle,
+                        subtitle = stringResource(R.string.locked_timer_subtitle),
+                        value = lockTimeout.label(),
+                        onClick = { timerMenuOpen = true },
+                    )
+                    DropdownMenu(
+                        expanded = timerMenuOpen,
+                        onDismissRequest = { timerMenuOpen = false },
+                    ) {
+                        LockTimeout.entries.forEach { option ->
+                            DropdownMenuItem(
+                                text = { Text(option.label()) },
+                                trailingIcon = if (option == lockTimeout) {
+                                    { Icon(SfIcons.Check, contentDescription = null) }
+                                } else {
+                                    null
+                                },
+                                onClick = {
+                                    CollectionLocks.setLockTimeout(option)
+                                    timerMenuOpen = false
+                                },
+                            )
+                        }
+                    }
+                }
+            }
         }
 
         if (shows(SettingsCategory.MISCELLANEOUS)) SearchableSettingsGroup(search, header = stringResource(R.string.miscellaneous)) {
@@ -3155,6 +3195,17 @@ enum class SettingsCategory(@param:StringRes val title: Int) {
 }
 
 /** The settings whose options are a page of their own — see [SettingsChoicePage]. */
+/** The Locked Timer's presets, as its row and its dropdown read them. */
+@Composable
+private fun LockTimeout.label(): String = stringResource(
+    when (this) {
+        LockTimeout.IMMEDIATE -> R.string.locked_timer_immediately
+        LockTimeout.FIVE_SECONDS -> R.string.locked_timer_5s
+        LockTimeout.TEN_SECONDS -> R.string.locked_timer_10s
+        LockTimeout.THIRTY_SECONDS -> R.string.locked_timer_30s
+    },
+)
+
 enum class SettingsChoiceKind(@param:StringRes val title: Int) {
     AUDIO_QUALITY_WIFI(R.string.on_wifi),
     AUDIO_QUALITY_CELLULAR(R.string.on_mobile_data),
