@@ -17,6 +17,7 @@ import coil3.svg.SvgDecoder
 import coil3.network.okhttp.OkHttpNetworkFetcherFactory
 import okhttp3.OkHttpClient
 import com.music.bitchord.auth.AuthStore
+import com.music.bitchord.lansync.LanSyncAndroid
 import com.music.bitchord.data.DebugLog
 import com.music.bitchord.data.YouTubeThumbnailFallback
 import com.music.bitchord.data.lyrics.LyricsTranslation
@@ -150,6 +151,16 @@ class BitChordApplication : Application(), SingletonImageLoader.Factory, Configu
             CoroutineScope(Dispatchers.IO).launch { Innertube.ensureSessionScope() }
         }
         AppSettings.init(this, authStore)
+        // LAN Playback & Queue Sync: on by default and gated on being signed in. It
+        // watches the setting and the account itself, so nothing else has to start it.
+        LanSyncAndroid.install(this)
+        // Voice search's platform recogniser needs a context to be constructed from,
+        // and the shared module cannot reach one from common code.
+        com.music.bitchord.audio.AndroidVoiceInput.install(this)
+        // The device's PIN, its locked playlists and albums, and the biometric
+        // switch: read before any menu or card asks whether a collection is
+        // locked.
+        com.music.bitchord.data.security.LockPrefs.install(this)
         // After AppSettings: fetches Automix's models as soon as Automix is on,
         // rather than waiting for the first song it would mix.
         com.music.bitchord.playback.smart.AutomixModels.install(this)

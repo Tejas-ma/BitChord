@@ -2,6 +2,8 @@ package com.music.bitchord.data.spotify
 
 import android.content.Context
 import android.content.SharedPreferences
+import com.music.bitchord.data.PlaylistCover
+import com.music.bitchord.data.PlaylistCoverStore
 import com.music.bitchord.data.model.Song
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -12,6 +14,10 @@ data class LocalPlaylist(
     val id: String,
     val title: String,
     val songs: List<Song>,
+    /** The 512px WebP written by [PlaylistCoverStore], or null for the normal artwork. */
+    val customCoverPath: String? = null,
+    /** SHA-256 of [customCoverPath], used to bypass a stale image-cache entry. */
+    val coverHash: String? = null,
 ) {
     val browseId: String get() = "local:playlist:$id"
 }
@@ -40,6 +46,10 @@ object LocalPlaylistStore {
                 val obj = jsonArray.getJSONObject(i)
                 val id = obj.getString("id")
                 val title = obj.getString("title")
+                val customCoverPath = obj.optString("customCoverPath", "")
+                    .takeIf { it.isNotBlank() && it != "null" }
+                val coverHash = obj.optString("coverHash", "")
+                    .takeIf { it.isNotBlank() && it != "null" }
                 val songsArray = obj.getJSONArray("songs")
                 val songs = mutableListOf<Song>()
                 for (j in 0 until songsArray.length()) {
@@ -57,14 +67,29 @@ object LocalPlaylistStore {
                     )
                     songs.add(song)
                 }
-                list.add(LocalPlaylist(id, title, songs))
+                list.add(LocalPlaylist(id, title, songs, customCoverPath, coverHash))
             }
             _playlists.value = list
         }
     }
 
+    /**
+     * Creates a playlist holding [songs], newest first.
+     *
+     * The id is a timestamp, plus a suffix when that millisecond already names
+     * a playlist. Two playlists created in the same frame used to share an id,
+     * which made the second replace the first instead of appearing beside it —
+     * and, because the cover file is named from the id, could overwrite the
+     * first one's artwork too.
+     */
     fun savePlaylist(title: String, songs: List<Song>): LocalPlaylist {
-        val id = "sp_local_" + System.currentTimeMillis()
+        val stamp = System.currentTimeMillis()
+        var id = "sp_local_$stamp"
+        var suffix = 0
+        while (_playlists.value.any { it.id == id }) {
+            suffix += 1
+            id = "sp_local_${stamp}_$suffix"
+        }
         val playlist = LocalPlaylist(id = id, title = title, songs = songs)
         val updated = listOf(playlist) + _playlists.value.filterNot { it.id == id }
         _playlists.value = updated
@@ -109,6 +134,60 @@ object LocalPlaylistStore {
         return _playlists.value.firstOrNull { it.id == cleanId || it.id == id || it.browseId == id }
     }
 
+    /**
+     * Saves a custom cover for this local playlist.
+     *
+     * The image is normalized and written by [PlaylistCoverStore]; the model's
+     * fields are the local entity's copy of that cover, so a later load can
+     * draw it without first reading the cover registry.
+     */
+    suspend fun setCustomPlaylistCover(
+        playlistId: String,
+        sourceUriOrPath: String,
+    ): Result<LocalPlaylist> = runCatching {
+        val playlist = getPlaylist(playlistId) ?: error("Playlist not found")
+        val cover = PlaylistCoverStore.setCover(playlist.browseId, sourceUriOrPath).getOrThrow()
+        val updated = playlist.copy(customCoverPath = cover.path, coverHash = cover.hash)
+        replacePlaylist(updated)
+        updated
+    }
+
+    /** Deletes the WebP and clears both model fields. */
+    suspend fun removeCustomPlaylistCover(playlistId: String): Result<Unit> = runCatching {
+        val playlist = getPlaylist(playlistId) ?: error("Playlist not found")
+        PlaylistCoverStore.removeCover(playlist.browseId).getOrThrow()
+        replacePlaylist(playlist.copy(customCoverPath = null, coverHash = null))
+    }
+
+    /**
+     * Points every playlist whose cover key is [key] at a cover that has just
+     * been restored.
+     *
+     * A restored cover is written to this device's own directory, so the path
+     * the backup came from no longer exists; without this the playlist model
+     * would keep naming the old device's file and the list would draw the
+     * normal artwork until the playlist was next touched.
+     */
+    fun applyRestoredCover(key: String, cover: PlaylistCover) {
+        val target = PlaylistCoverStore.keyFor(key)
+        val updated = _playlists.value.map { playlist ->
+            if (PlaylistCoverStore.keyFor(playlist.browseId) == target) {
+                playlist.copy(customCoverPath = cover.path, coverHash = cover.hash)
+            } else {
+                playlist
+            }
+        }
+        if (updated == _playlists.value) return
+        _playlists.value = updated
+        persist(updated)
+    }
+
+    private fun replacePlaylist(updated: LocalPlaylist) {
+        val next = _playlists.value.map { if (it.id == updated.id) updated else it }
+        _playlists.value = next
+        persist(next)
+    }
+
     private fun persist(list: List<LocalPlaylist>) {
         if (!this::prefs.isInitialized) return
         runCatching {
@@ -117,6 +196,8 @@ object LocalPlaylistStore {
                 val pObj = JSONObject()
                 pObj.put("id", playlist.id)
                 pObj.put("title", playlist.title)
+                pObj.put("customCoverPath", playlist.customCoverPath)
+                pObj.put("coverHash", playlist.coverHash)
                 val songsArray = JSONArray()
                 for (song in playlist.songs) {
                     val sObj = JSONObject()

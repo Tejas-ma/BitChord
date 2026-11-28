@@ -128,6 +128,24 @@ fun BrowseActionsMenu(
      */
     isPinned: Boolean = false,
     onTogglePin: (() -> Unit)? = null,
+    /**
+     * Whether this playlist already has a local custom cover. Only meaningful
+     * when [onRemoveCustomCover] is also supplied, which the caller does only
+     * for a playlist the account owns or keeps on this device.
+     */
+    hasCustomCover: Boolean = false,
+    /** Null on albums, artists, and every playlist that cannot be edited here. */
+    onSetCustomCover: (() -> Unit)? = null,
+    /** Null unless [hasCustomCover] and the playlist is editable. */
+    onRemoveCustomCover: (() -> Unit)? = null,
+    /**
+     * Whether this playlist or album is currently locked behind the device PIN.
+     * Only meaningful when [onToggleLock] is supplied, which the caller does
+     * for a playlist or an album — the two things a lock can protect.
+     */
+    isLocked: Boolean = false,
+    /** The Lock/Unlock row; null where a lock has nothing to protect (artists, folders). */
+    onToggleLock: (() -> Unit)? = null,
     onRename: ((String) -> Unit)? = null,
     /**
      * Opens the reorder page for one of the account's own playlists — set
@@ -260,6 +278,21 @@ fun BrowseActionsMenu(
                     stringResource(if (isPinned) R.string.unpin else R.string.pin),
                     onClick = it,
                 )
+            }
+            onToggleLock?.let {
+                ActionRow(
+                    SfIcons.Lock,
+                    stringResource(if (isLocked) R.string.unlock else R.string.lock),
+                    onClick = it,
+                )
+            }
+            onSetCustomCover?.let {
+                ActionRow(SfIcons.Pencil, stringResource(R.string.set_custom_cover), onClick = it)
+            }
+            if (hasCustomCover) {
+                onRemoveCustomCover?.let {
+                    ActionRow(SfIcons.Trash, stringResource(R.string.remove_custom_cover), onClick = it)
+                }
             }
             if (onRename != null) {
                 ActionRow(SfIcons.Pencil, stringResource(R.string.rename)) {

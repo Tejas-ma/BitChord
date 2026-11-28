@@ -1,0 +1,473 @@
+name: Release
+
+# Every v* tag builds the desktop installers for all three platforms plus the
+# Android release APK and attaches them to a GitHub release. The desktop commands
+# are the ones documented in DESKTOP.md and desktopApp/BUILDING-WINDOWS.md —
+# jpackage through Compose Desktop, plus the AppImage wrapper and the portable zip
+# the build defines itself. The APK is the same assembleProdRelease that
+# android.yml publishes, signed with the same keystore.
+#
+# Each platform job stands on its own: skipAndroid/skipDesktop keep the other
+# half of the build out of it, and the publish job attaches whatever succeeded
+# instead of being a single all-or-nothing gate.
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  JAVA_VERSION: "21"
+
+jobs:
+  # Fail on a broken tag before spending three runners on packaging.
+  test:
+    name: Test
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up JDK ${{ env.JAVA_VERSION }}
+        uses: actions/setup-java@v5
+        with:
+          java-version: ${{ env.JAVA_VERSION }}
+          distribution: temurin
+
+      - uses: gradle/actions/setup-gradle@v5
+
+      - run: chmod +x gradlew
+
+      - name: Desktop tests
+        run: ./gradlew :desktopApp:test -Pbitchord.skipAndroid=true --console=plain
+
+  windows:
+    name: Windows · exe, msi, portable zip
+    needs: test
+    runs-on: windows-2025
+    timeout-minutes: 45
+    # `secrets` cannot be referenced from an `if:` (job or step level), so the
+    # "is SignPath configured?" check is resolved into a flag here, where `env`
+    # does accept `secrets`. Only the flag is exposed, not the token.
+    env:
+      SIGNPATH_ENABLED: ${{ secrets.SIGNPATH_API_TOKEN != '' && vars.SIGNPATH_ORGANIZATION_ID != '' }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up JDK ${{ env.JAVA_VERSION }}
+        uses: actions/setup-java@v5
+        with:
+          java-version: ${{ env.JAVA_VERSION }}
+          distribution: temurin
+
+      - uses: gradle/actions/setup-gradle@v5
+
+      - name: Read the version from the tag
+        id: version
+        shell: bash
+        run: echo "value=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+
+      # Same optional keys the Android job writes; the desktop build folds them into
+      # the launcher's JVM args, and builds without them when they are absent.
+      - name: Write local.properties
+        shell: bash
+        env:
+          LASTFM_API_KEY: ${{ secrets.LASTFM_API_KEY }}
+          LASTFM_SECRET: ${{ secrets.LASTFM_SECRET }}
+          LISTEN_TOGETHER_SERVER: ${{ secrets.LISTEN_TOGETHER_SERVER }}
+        run: |
+          : > local.properties
+          [ -n "$LASTFM_API_KEY" ] && echo "LASTFM_API_KEY=$LASTFM_API_KEY" >> local.properties
+          [ -n "$LASTFM_SECRET" ] && echo "LASTFM_SECRET=$LASTFM_SECRET" >> local.properties
+          [ -n "$LISTEN_TOGETHER_SERVER" ] && echo "LISTEN_TOGETHER_SERVER=$LISTEN_TOGETHER_SERVER" >> local.properties
+          exit 0
+
+      # jpackage's msi drives WiX 3's candle/light, which the runner does not
+      # guarantee on PATH; fetch the release zip into RUNNER_TEMP when missing.
+      - name: Ensure WiX Toolset 3 is on PATH
+        shell: pwsh
+        run: |
+          if (Get-Command candle.exe -ErrorAction SilentlyContinue) {
+            Write-Host 'WiX already on PATH'
+            exit 0
+          }
+          $zip = Join-Path $env:RUNNER_TEMP 'wix314-binaries.zip'
+          if (-not (Test-Path $zip)) {
+            Invoke-WebRequest -UseBasicParsing `
+              -Uri 'https://github.com/wixtoolset/wix3/releases/download/wix3141rtm/wix314-binaries.zip' `
+              -OutFile $zip
+          }
+          $dir = Join-Path $env:RUNNER_TEMP 'wix314'
+          Expand-Archive -Path $zip -DestinationPath $dir -Force
+          $dir | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          if (-not (Get-ChildItem $dir -Filter 'candle.exe' -Recurse)) {
+            throw 'candle.exe was not found in wix314-binaries.zip'
+          }
+
+      # packageExe and packageMsi build the natives (Automix analyser, SMTC) first and
+      # log which features the installer will be missing; windowsPortable zips the
+      # same app folder with a launcher batch file.
+      - name: Build the installers
+        shell: pwsh
+        run: |
+          Remove-Item Env:ANDROID_HOME -ErrorAction SilentlyContinue
+          Remove-Item Env:ANDROID_SDK_ROOT -ErrorAction SilentlyContinue
+          .\gradlew.bat :desktopApp:packageExe :desktopApp:packageMsi :desktopApp:windowsPortable `
+            "-Pbitchord.skipAndroid=true" "-Pbitchord.version=${{ steps.version.outputs.value }}" --console=plain
+
+      # The names BUILDING-WINDOWS.md documents for the release assets. jpackage
+      # emits BitChord-<version>.exe / .msi, and the MSI carries the four-part
+      # version, so both are renamed rather than published as they come out; the
+      # portable zip is already named BitChord-<version>-windows-portable.zip.
+      - name: Collect
+        shell: bash
+        run: |
+          v=${{ steps.version.outputs.value }}
+          mkdir -p out
+          for f in desktopApp/build/compose/binaries/main/exe/*.exe; do
+            [ -e "$f" ] || continue
+            cp "$f" "out/BitChord-$v-windows-x64-setup.exe"
+          done
+          for f in desktopApp/build/compose/binaries/main/msi/*.msi; do
+            [ -e "$f" ] || continue
+            cp "$f" "out/BitChord-$v-windows-x64.msi"
+          done
+          cp desktopApp/build/distributions/*portable.zip "out/BitChord-$v-windows-x64-portable.zip" 2>/dev/null || true
+          ls -l out
+
+      # One direct artifact per installer (`archive: false`): the release
+      # attaches the .exe, .msi and .zip themselves rather than a zip of a zip.
+      # Each step is separate because an un-archived upload takes one file, and
+      # a folder or a multi-file glob would be uploaded as an archive anyway.
+      - name: Upload the setup
+        id: upload-setup
+        uses: actions/upload-artifact@v7
+        with:
+          name: BitChord-${{ steps.version.outputs.value }}-windows-x64-setup
+          path: out/BitChord-${{ steps.version.outputs.value }}-windows-x64-setup.exe
+          if-no-files-found: error
+          archive: false
+          compression-level: 0
+
+      - name: Upload the MSI
+        id: upload-msi
+        uses: actions/upload-artifact@v7
+        with:
+          name: BitChord-${{ steps.version.outputs.value }}-windows-x64-msi
+          path: out/BitChord-${{ steps.version.outputs.value }}-windows-x64.msi
+          if-no-files-found: error
+          archive: false
+          compression-level: 0
+
+      - name: Upload the portable build
+        id: upload-portable
+        uses: actions/upload-artifact@v7
+        with:
+          name: BitChord-${{ steps.version.outputs.value }}-windows-x64-portable
+          path: out/BitChord-${{ steps.version.outputs.value }}-windows-x64-portable.zip
+          if-no-files-found: error
+          archive: false
+          compression-level: 0
+
+      # SignPath Foundation, guarded the same way as in windows-exe.yml: a
+      # repository without the token and organization id publishes the setup
+      # unsigned instead of failing the release. The step tests the job-level
+      # flag because `secrets` is not readable inside an `if:`.
+      - name: Submit the setup for signing
+        id: signpath
+        if: env.SIGNPATH_ENABLED == 'true'
+        uses: SignPath/github-action-submit-signing-request@v2
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: ${{ vars.SIGNPATH_PROJECT_SLUG || 'bitchord' }}
+          signing-policy-slug: ${{ vars.SIGNPATH_SIGNING_POLICY_SLUG || 'release-signing' }}
+          artifact-configuration-slug: ${{ vars.SIGNPATH_ARTIFACT_CONFIGURATION_SLUG || 'windows-installer' }}
+          github-artifact-id: ${{ steps.upload-setup.outputs.artifact-id }}
+          wait-for-completion: true
+          output-artifact-directory: signed
+          skip-decompress: true
+
+      # Copied, never rewritten: anything that touches the file after signing
+      # would invalidate the signature.
+      - name: Take the signed setup
+        if: ${{ steps.signpath.outcome == 'success' }}
+        shell: pwsh
+        run: |
+          $name = "BitChord-${{ steps.version.outputs.value }}-windows-x64-setup.exe"
+          $signed = Get-ChildItem 'signed' -Recurse -Filter $name -File -ErrorAction SilentlyContinue |
+            Select-Object -First 1
+          if (-not $signed) { throw "SignPath returned no $name" }
+          Copy-Item $signed.FullName "out/$name" -Force
+          Write-Host "Signed setup: $($signed.FullName) ($($signed.Length) bytes)"
+
+      - name: Upload the signed setup
+        if: ${{ steps.signpath.outcome == 'success' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: BitChord-${{ steps.version.outputs.value }}-windows-x64-setup
+          path: out/BitChord-${{ steps.version.outputs.value }}-windows-x64-setup.exe
+          if-no-files-found: error
+          archive: false
+          overwrite: true
+          compression-level: 0
+
+  macos:
+    name: macOS · ${{ matrix.arch }} dmg
+    needs: test
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15
+            arch: arm64
+          - runner: macos-15-intel
+            arch: x64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up JDK ${{ env.JAVA_VERSION }}
+        uses: actions/setup-java@v5
+        with:
+          java-version: ${{ env.JAVA_VERSION }}
+          distribution: temurin
+
+      - uses: gradle/actions/setup-gradle@v5
+
+      - name: Read the version from the tag
+        id: version
+        run: echo "value=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Write local.properties
+        env:
+          LASTFM_API_KEY: ${{ secrets.LASTFM_API_KEY }}
+          LASTFM_SECRET: ${{ secrets.LASTFM_SECRET }}
+          LISTEN_TOGETHER_SERVER: ${{ secrets.LISTEN_TOGETHER_SERVER }}
+        run: |
+          : > local.properties
+          [ -n "$LASTFM_API_KEY" ] && echo "LASTFM_API_KEY=$LASTFM_API_KEY" >> local.properties
+          [ -n "$LASTFM_SECRET" ] && echo "LASTFM_SECRET=$LASTFM_SECRET" >> local.properties
+          [ -n "$LISTEN_TOGETHER_SERVER" ] && echo "LISTEN_TOGETHER_SERVER=$LISTEN_TOGETHER_SERVER" >> local.properties
+          exit 0
+
+      - run: chmod +x gradlew
+
+      - name: Build the disk image
+        run: >-
+          ./gradlew :desktopApp:packageDmg
+          -Pbitchord.skipAndroid=true
+          -Pbitchord.version=${{ steps.version.outputs.value }} --console=plain
+
+      - name: Collect
+        run: |
+          mkdir -p out
+          for dmg in desktopApp/build/compose/binaries/main/dmg/*.dmg; do
+            [ -e "$dmg" ] || continue
+            cp "$dmg" "out/BitChord-${{ steps.version.outputs.value }}-macos-${{ matrix.arch }}.dmg"
+          done
+          ls -l out
+
+      - uses: actions/upload-artifact@v6
+        with:
+          name: macos-${{ matrix.arch }}
+          path: out/*
+          if-no-files-found: error
+
+  linux:
+    name: Linux · deb, rpm, AppImage
+    needs: test
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up JDK ${{ env.JAVA_VERSION }}
+        uses: actions/setup-java@v5
+        with:
+          java-version: ${{ env.JAVA_VERSION }}
+          distribution: temurin
+
+      - uses: gradle/actions/setup-gradle@v5
+
+      - name: Read the version from the tag
+        id: version
+        run: echo "value=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Write local.properties
+        env:
+          LASTFM_API_KEY: ${{ secrets.LASTFM_API_KEY }}
+          LASTFM_SECRET: ${{ secrets.LASTFM_SECRET }}
+          LISTEN_TOGETHER_SERVER: ${{ secrets.LISTEN_TOGETHER_SERVER }}
+        run: |
+          : > local.properties
+          [ -n "$LASTFM_API_KEY" ] && echo "LASTFM_API_KEY=$LASTFM_API_KEY" >> local.properties
+          [ -n "$LASTFM_SECRET" ] && echo "LASTFM_SECRET=$LASTFM_SECRET" >> local.properties
+          [ -n "$LISTEN_TOGETHER_SERVER" ] && echo "LISTEN_TOGETHER_SERVER=$LISTEN_TOGETHER_SERVER" >> local.properties
+          exit 0
+
+      - run: chmod +x gradlew
+
+      # rpm and fakeroot for the packages, file for the AppImage, and the tool that
+      # wraps jpackage's app folder — the one format Gradle cannot make itself.
+      - name: Install packaging tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends rpm fakeroot binutils file
+          curl -fsSL -o appimagetool \
+            https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage
+          chmod +x appimagetool
+
+      - name: Build the packages
+        run: >-
+          ./gradlew :desktopApp:packageDeb :desktopApp:packageRpm :desktopApp:createDistributable
+          -Pbitchord.skipAndroid=true
+          -Pbitchord.version=${{ steps.version.outputs.value }} --console=plain
+
+      - name: Wrap the AppImage
+        run: |
+          ./desktopApp/packaging/appimage.sh \
+            desktopApp/build/compose/binaries/main/app/BitChord \
+            "desktopApp/build/distributions/BitChord-${{ steps.version.outputs.value }}-linux-x86_64.AppImage" \
+            ./appimagetool
+
+      - name: Collect
+        run: |
+          mkdir -p out
+          cp desktopApp/build/compose/binaries/main/deb/*.deb out/ 2>/dev/null || true
+          cp desktopApp/build/compose/binaries/main/rpm/*.rpm out/ 2>/dev/null || true
+          cp desktopApp/build/distributions/*.AppImage out/ 2>/dev/null || true
+          ls -l out
+
+      - uses: actions/upload-artifact@v6
+        with:
+          name: linux
+          path: out/*
+          if-no-files-found: error
+
+  android:
+    name: Android · release APK
+    needs: test
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up JDK ${{ env.JAVA_VERSION }}
+        uses: actions/setup-java@v5
+        with:
+          java-version: ${{ env.JAVA_VERSION }}
+          distribution: temurin
+
+      - uses: gradle/actions/setup-gradle@v5
+
+      # Same optional keys the desktop jobs write, plus the keystore android.yml
+      # signs with. Without the keystore secrets the build still runs and produces
+      # an unsigned APK; it is never a broken tag.
+      - name: Write local.properties and the keystore
+        env:
+          LASTFM_API_KEY: ${{ secrets.LASTFM_API_KEY }}
+          LASTFM_SECRET: ${{ secrets.LASTFM_SECRET }}
+          LISTEN_TOGETHER_SERVER: ${{ secrets.LISTEN_TOGETHER_SERVER }}
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: |
+          : > local.properties
+          echo "sdk.dir=${ANDROID_HOME:-$ANDROID_SDK_ROOT}" >> local.properties
+          [ -n "$LASTFM_API_KEY" ] && echo "LASTFM_API_KEY=$LASTFM_API_KEY" >> local.properties
+          [ -n "$LASTFM_SECRET" ] && echo "LASTFM_SECRET=$LASTFM_SECRET" >> local.properties
+          [ -n "$LISTEN_TOGETHER_SERVER" ] && echo "LISTEN_TOGETHER_SERVER=$LISTEN_TOGETHER_SERVER" >> local.properties
+          signable=true
+          for value in "$KEYSTORE_BASE64" "$KEYSTORE_PASSWORD" "$KEY_ALIAS" "$KEY_PASSWORD"; do
+            [ -n "$value" ] || signable=false
+          done
+          if [ "$signable" = "true" ]; then
+            echo "$KEYSTORE_BASE64" | base64 -d > bitchord-release.jks
+            {
+              echo "storeFile=bitchord-release.jks"
+              echo "storePassword=$KEYSTORE_PASSWORD"
+              echo "keyAlias=$KEY_ALIAS"
+              echo "keyPassword=$KEY_PASSWORD"
+            } > keystore.properties
+          else
+            echo "::warning::the four keystore secrets are not all set; the APK will be signed with AGP's debug key"
+          fi
+          exit 0
+
+      - name: Read the version from the tag
+        id: version
+        run: echo "value=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+
+      - run: chmod +x gradlew
+
+      - name: Build the release APK
+        run: ./gradlew :app:assembleProdRelease -Pbitchord.skipDesktop=true --console=plain
+
+      # Gradle emits a universal APK plus one per ABI. Both the signed and the
+      # unsigned names end in -release.apk / -release-unsigned.apk, so the ABI is
+      # whatever sits between the "app-prod-" prefix and that suffix.
+      - name: Collect
+        run: |
+          mkdir -p out
+          for apk in app/build/outputs/apk/prod/release/*.apk; do
+            [ -e "$apk" ] || continue
+            abi=$(basename "$apk" | sed -E 's/^app-prod-(.*)-release(-unsigned)?\.apk$/\1/')
+            cp "$apk" "out/BitChord-${{ steps.version.outputs.value }}-android-${abi}.apk"
+          done
+          ls -l out
+
+      - uses: actions/upload-artifact@v6
+        with:
+          name: android
+          path: out/*.apk
+          if-no-files-found: error
+          compression-level: 0
+
+      - name: Remove the signing material
+        if: always()
+        run: rm -f bitchord-release.jks keystore.properties
+
+  # Attaches whatever was built. `if: always()` means a broken macOS or Linux job
+  # cannot stop a finished Windows installer or Android APK from being published;
+  # only a failed test job (no platform build ran at all) skips it.
+  publish:
+    name: Attach to the release
+    needs: [test, windows, macos, linux, android]
+    if: always() && needs.test.result == 'success'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/download-artifact@v7
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: List what will be published
+        run: ls -lR artifacts
+
+      - name: Fail unless at least one artifact was built
+        run: test -n "$(find artifacts -type f -print -quit)"
+
+      - uses: softprops/action-gh-release@v3
+        with:
+          files: artifacts/*
+          fail_on_unmatched_files: false
+          # A tag with a suffix (v1.9.1-beta.1) is a pre-release.
+          prerelease: ${{ contains(github.ref_name, '-') }}
+          body: |
+            BitChord ${{ github.ref_name }} — desktop builds.
+
+            | Platform | File |
+            | --- | --- |
+            | Windows | `.exe` installer, `.msi`, portable `.zip` |
+            | macOS | `.dmg` (Apple Silicon and Intel) |
+            | Linux | `.deb`, `.rpm`, `.AppImage` |
+            | Android | release `.apk` (signed with the release key) |

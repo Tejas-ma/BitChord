@@ -68,6 +68,8 @@ object DriveBackup {
         /** The Google account syncing to, or null before one is connected. */
         val account: String? = null,
         val accountName: String? = null,
+        /** Drive's own stable id for the account: what the backup key is derived from. */
+        val accountKeyId: String? = null,
         val frequency: BackupFrequency = BackupFrequency.DAILY,
         /** Also over mobile data; off, the schedule waits for Wi-Fi. */
         val overCellular: Boolean = false,
@@ -108,6 +110,22 @@ object DriveBackup {
     /** The grant has gone; the run stops and the screen asks again. */
     class NeedsSignIn : Exception("Sign in to Google Drive again to continue")
 
+    /**
+     * A backup that will not open until its passphrase is given.
+     *
+     * Raised as state rather than as a failed run: the passphrase is a
+     * question for the listener, not an error to report and forget.
+     * [rejected] marks a guess that did not verify, so the prompt can say so.
+     */
+    data class PassphrasePrompt(
+        val context: Context,
+        /** The device being restored as, or null when a sync met an encrypted peer. */
+        val device: RemoteDevice?,
+        val rejected: Boolean,
+    ) {
+        val restoring: Boolean get() = device != null
+    }
+
     private const val PREFS = "bitchord_drive_backup"
     private const val KEY_ACCOUNT = "account"
     private const val KEY_ACCOUNT_NAME = "account_name"
@@ -122,6 +140,10 @@ object DriveBackup {
     private const val KEY_DEVICE_NAME = "device_name"
     private const val KEY_ADOPTED_AT = "adopted_manifest_at"
     private const val KEY_FORKED_TO = "forked_to"
+    private const val KEY_ACCOUNT_KEY_ID = "account_key_id"
+    private const val KEY_RESTORED_ACCOUNT = "restored_account"
+    private const val KEY_RESTORED_SNAPSHOT = "restored_snapshot"
+    private const val KEY_RESTORED_AT = "restored_at"
 
     private const val PERIODIC_WORK = "drive_sync"
     private const val CATCH_UP_WORK = "drive_sync_catch_up"
@@ -146,6 +168,25 @@ object DriveBackup {
     private val _result = MutableStateFlow<Result?>(null)
     val result: StateFlow<Result?> = _result.asStateFlow()
 
+    private val _passphrasePrompt = MutableStateFlow<PassphrasePrompt?>(null)
+    val passphrasePrompt: StateFlow<PassphrasePrompt?> = _passphrasePrompt.asStateFlow()
+
+    private val _encryption = MutableStateFlow(false)
+
+    /** Whether uploads are sealed at all — the account key, or a passphrase. */
+    val encryptionEnabled: StateFlow<Boolean> = _encryption.asStateFlow()
+
+    private val _passphrase = MutableStateFlow(false)
+
+    /**
+     * Whether a passphrase is set.
+     *
+     * Apart from [encryptionEnabled] because the account key now encrypts
+     * every upload: the passphrase row must say what the passphrase does, not
+     * repeat that the backup is encrypted.
+     */
+    val passphraseEnabled: StateFlow<Boolean> = _passphrase.asStateFlow()
+
     /**
      * Reads the settings and keeps the schedule in step with them. Off — no
      * account, no device, or no frequency — this never touches WorkManager on
@@ -154,7 +195,15 @@ object DriveBackup {
      */
     fun init(app: Application) {
         prefs = app.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        // Before the first manifest is read: every file may carry a header.
+        BackupCipher.init(app)
         _settings.value = read()
+        // Re-bound every start: the wrapped key is ordinary app data, so a
+        // restore of the account grant without it must still be able to read
+        // the backups that account wrote. The derivation itself is stateless.
+        _settings.value.accountKeyId?.let { BackupCipher.setAccountKeyId(it) }
+        _encryption.value = BackupCipher.encryptionActive()
+        _passphrase.value = BackupCipher.isEnabled()
         if (_settings.value.identity.installId.isEmpty()) {
             save { it.copy(identity = it.identity.copy(installId = UUID.randomUUID().toString())) }
         }
@@ -184,6 +233,25 @@ object DriveBackup {
                 WorkManager.getInstance(app).enqueueUniqueWork(CATCH_UP_WORK, ExistingWorkPolicy.KEEP, request)
             }
         })
+        // A phone already connected to Drive picks up the newest encrypted
+        // snapshot without a visit to Settings. The per-account guard is what
+        // stops it looping on one snapshot, and a phone that has synced is left
+        // alone — see [autoRestore].
+        scope.launch {
+            val s = _settings.value
+            if (s.account == null || s.needsSignIn) return@launch
+            try {
+                autoRestore(app)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: BackupCipher.PassphraseRequired) {
+                _passphrasePrompt.value = PassphrasePrompt(app, null, rejected = false)
+            } catch (e: BackupCipher.PassphraseRejected) {
+                _passphrasePrompt.value = PassphrasePrompt(app, null, rejected = true)
+            } catch (e: Exception) {
+                // Startup is not the place to report a Drive hiccup nobody asked about.
+            }
+        }
     }
 
     // ---- Settings -----------------------------------------------------------
@@ -201,6 +269,45 @@ object DriveBackup {
 
     fun clearResult() {
         _result.value = null
+    }
+
+    // ---- Encryption ---------------------------------------------------------
+
+    /** Whether a passphrase is also set — the optional layer for older backups. */
+    fun hasPassphrase(): Boolean = runCatching { BackupCipher.isEnabled() }.getOrDefault(false)
+
+    /** Whether uploads are sealed with the connected Drive account's key. */
+    fun usesAccountKey(): Boolean = runCatching { BackupCipher.hasAccountKey() }.getOrDefault(false)
+
+    /** Sets (or clears, with a blank) the passphrase future backups are sealed with. */
+    fun setBackupPassphrase(passphrase: String?): Boolean {
+        val accepted = BackupCipher.setPassphrase(passphrase)
+        if (accepted) {
+            _encryption.value = BackupCipher.encryptionActive()
+            _passphrase.value = BackupCipher.isEnabled()
+        }
+        return accepted
+    }
+
+    /** Gives up on the prompt: nothing is retried and no guess is kept. */
+    fun dismissPassphrasePrompt() {
+        BackupCipher.clearPending()
+        _passphrasePrompt.value = null
+    }
+
+    /**
+     * Tries [passphrase] against the file that asked for it and carries on with
+     * what was waiting — the restore, or the sync.
+     *
+     * A guess only becomes this phone's passphrase once a file actually opened
+     * with it, so a wrong one leaves the account's real key alone.
+     */
+    fun submitPassphrase(passphrase: String) {
+        val prompt = _passphrasePrompt.value ?: return
+        _passphrasePrompt.value = null
+        BackupCipher.tryPassphrase(passphrase)
+        val device = prompt.device
+        if (device != null) restoreAs(prompt.context, device) else syncNow(prompt.context)
     }
 
     fun dismissForkNotice() = save { it.copy(forkedTo = null) }
@@ -230,10 +337,16 @@ object DriveBackup {
     suspend fun signedIn(context: Context, token: String) {
         val profile = DriveApi.profile(token)
         val email = profile.email ?: error("Couldn't tell which Google account that was")
+        // Bound before anything is read or written, so the first manifest of
+        // this run is opened with the key of the account it belongs to.
+        val keyId = profile.permissionId ?: email
+        BackupCipher.setAccountKeyId(keyId)
+        _encryption.value = BackupCipher.encryptionActive()
         save {
             it.copy(
                 account = email,
                 accountName = profile.name,
+                accountKeyId = keyId,
                 needsSignIn = false,
                 // An error that was only the lost grant is answered by this.
                 lastError = if (it.needsSignIn) null else it.lastError,
@@ -241,12 +354,20 @@ object DriveBackup {
         }
         refreshDevices(context)
         val found = (_devices.value as? Devices.Loaded)?.list.orEmpty()
-        if (_settings.value.needsDevice && found.isEmpty()) chooseNewDevice(context)
+        // A Drive that already holds this account's backup comes back down
+        // first. Only an empty Drive needs this phone to become a new device;
+        // a Drive with devices that could not be restored still asks which.
+        val restored = autoRestore(context, found)
+        if (!restored && _settings.value.needsDevice && found.isEmpty()) chooseNewDevice(context)
     }
 
     /** Forgets the account and withdraws the grant. Everything in Drive stays. */
     fun disconnect(context: Context) {
         val account = _settings.value.account ?: return
+        // New uploads stop being sealed with that account's key. The files it
+        // already wrote keep their header and open when it is connected again.
+        BackupCipher.clearAccountKey()
+        _encryption.value = BackupCipher.encryptionActive()
         save {
             Settings(
                 frequency = it.frequency,
@@ -273,6 +394,13 @@ object DriveBackup {
             Devices.Loaded(withToken(context) { ReplaySync.devices(it) })
         } catch (e: CancellationException) {
             throw e
+        } catch (e: BackupCipher.PassphraseRequired) {
+            // The devices are there; none of their manifests can be read yet.
+            _passphrasePrompt.value = PassphrasePrompt(context.applicationContext, null, rejected = false)
+            Devices.Failed(e.message ?: "This backup is encrypted")
+        } catch (e: BackupCipher.PassphraseRejected) {
+            _passphrasePrompt.value = PassphrasePrompt(context.applicationContext, null, rejected = true)
+            Devices.Failed(e.message ?: "This backup is encrypted")
         } catch (e: Exception) {
             Devices.Failed(e.message ?: e.javaClass.simpleName)
         }
@@ -314,17 +442,27 @@ object DriveBackup {
                     }
                 }
                 save { it.copy(identity = identity, forkedTo = null) }
+                recordRestored(device)
                 _result.value = Result.Restored(summary, device.name)
                 restored = true
             } catch (e: CancellationException) {
                 throw e
             } catch (e: NeedsSignIn) {
                 // Already marked on the settings; the screen asks.
+            } catch (e: BackupCipher.PassphraseRequired) {
+                _passphrasePrompt.value = PassphrasePrompt(app, device, rejected = false)
+            } catch (e: BackupCipher.PassphraseRejected) {
+                _passphrasePrompt.value = PassphrasePrompt(app, device, rejected = true)
+            } catch (e: BackupCipher.UnreadableBackup) {
+                _result.value = Result.Failed(e.message ?: "The backup could not be read", restoring = true)
             } catch (e: Exception) {
                 _result.value = Result.Failed(e.message ?: e.javaClass.simpleName, restoring = true)
             } finally {
                 _progress.value = Progress.Idle
                 running.unlock()
+                // A passphrase this run used is adopted only once a file opened
+                // with it, which is inside the run.
+                _passphrase.value = BackupCipher.isEnabled()
             }
             // Then a sync at once: this phone takes ownership of the device in
             // Drive, and every other device's listening comes down. Run
@@ -425,6 +563,14 @@ object DriveBackup {
             throw e
         } catch (e: NeedsSignIn) {
             RunOutcome.NeedsSignIn
+        } catch (e: BackupCipher.PassphraseRequired) {
+            // A peer's files are encrypted and this phone has no passphrase for
+            // them yet. The run stops where it is; the prompt continues it.
+            _passphrasePrompt.value = PassphrasePrompt(context.applicationContext, null, rejected = false)
+            RunOutcome.Failed(e.message ?: "This backup is encrypted", retryable = false)
+        } catch (e: BackupCipher.PassphraseRejected) {
+            _passphrasePrompt.value = PassphrasePrompt(context.applicationContext, null, rejected = true)
+            RunOutcome.Failed(e.message ?: "This backup is encrypted", retryable = false)
         } catch (e: Exception) {
             val message = e.message ?: e.javaClass.simpleName
             save { it.copy(lastError = message) }
@@ -434,6 +580,7 @@ object DriveBackup {
         } finally {
             _progress.value = Progress.Idle
             running.unlock()
+            _passphrase.value = BackupCipher.isEnabled()
         }
     }
 
@@ -448,6 +595,85 @@ object DriveBackup {
         return System.currentTimeMillis() - s.lastSyncAt >= period / 2
     }
 
+    // ---- Automatic restore ---------------------------------------------------
+
+    /**
+     * Restores this install from Drive when the connected account holds a
+     * genuinely newer encrypted snapshot than the one it last restored.
+     *
+     * Only a phone that has never uploaded anything is a candidate: once this
+     * install owns a device its own listening is the truth, and quietly
+     * replacing it with a peer's would lose whatever it played since. The guard
+     * is scoped to the account, so connecting a second account does not skip
+     * its own snapshot, and one snapshot is never restored twice. A backup that
+     * will not open is reported as a message and leaves local data alone.
+     */
+    private suspend fun autoRestore(context: Context, known: List<RemoteDevice>? = null): Boolean {
+        val app = context.applicationContext
+        val s = _settings.value
+        if (s.account == null || s.needsSignIn) return false
+        if (ReplaySync.hasSynced(app)) return false
+        return try {
+            val devices = known ?: withToken(app) { ReplaySync.devices(it) }
+            val guardAccount = prefs.getString(KEY_RESTORED_ACCOUNT, null)
+            val guardId = if (guardAccount == s.account) prefs.getString(KEY_RESTORED_SNAPSHOT, null) else null
+            val guardAt = if (guardAccount == s.account) prefs.getLong(KEY_RESTORED_AT, 0L) else 0L
+            val candidate = devices
+                .filter { it.deviceId != s.identity.deviceId && it.encrypted && it.updatedAt > 0L }
+                .filter { it.updatedAt > guardAt && snapshotId(it) != guardId }
+                .maxByOrNull { it.updatedAt }
+                ?: return false
+            if (!running.tryLock()) return false
+            try {
+                val (identity, summary) = withToken(app) { token ->
+                    ReplaySync.restoreAs(app, token, s.identity, candidate, keepLocal = true) { step ->
+                        _progress.value = Progress.Running(step)
+                    }
+                }
+                save { it.copy(identity = identity, forkedTo = null) }
+                recordRestored(candidate)
+                _result.value = Result.Restored(summary, candidate.name)
+            } finally {
+                _progress.value = Progress.Idle
+                running.unlock()
+            }
+            // Claim ownership of the restored device straight away, so the
+            // next device that syncs sees this install as its writer.
+            runSync(app, push = true)
+            true
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: BackupCipher.PassphraseRequired) {
+            _passphrasePrompt.value = PassphrasePrompt(app, null, rejected = false)
+            false
+        } catch (e: BackupCipher.PassphraseRejected) {
+            _passphrasePrompt.value = PassphrasePrompt(app, null, rejected = true)
+            false
+        } catch (e: BackupCipher.AccountKeyRequired) {
+            _result.value = Result.Failed(e.message ?: "This backup is encrypted", restoring = true)
+            false
+        } catch (e: BackupCipher.DecryptionFailed) {
+            _result.value = Result.Failed(e.message ?: "This backup could not be decrypted", restoring = true)
+            false
+        } catch (e: Exception) {
+            // A connect is not the place to report a Drive hiccup; the screen
+            // still shows the account and the sync button.
+            false
+        }
+    }
+
+    /** What tells two snapshots of one device apart: its id and its stamp. */
+    private fun snapshotId(device: RemoteDevice): String = "${device.deviceId}@${device.updatedAt}"
+
+    /** Remembers the snapshot this account restored, so it is never restored twice. */
+    private fun recordRestored(device: RemoteDevice) {
+        prefs.edit {
+            putString(KEY_RESTORED_ACCOUNT, _settings.value.account)
+            putString(KEY_RESTORED_SNAPSHOT, snapshotId(device))
+            putLong(KEY_RESTORED_AT, device.updatedAt)
+        }
+    }
+
     // ---- Plumbing -----------------------------------------------------------
 
     /**
@@ -457,12 +683,33 @@ object DriveBackup {
      */
     private suspend fun <T> withToken(context: Context, block: suspend (String) -> T): T {
         val first = token(context)
+        bindAccountKey(first)
         return try {
             block(first)
         } catch (e: DriveApi.Unauthorized) {
             DriveAuth.clearToken(context, first)
-            block(token(context))
+            val second = token(context)
+            bindAccountKey(second)
+            block(second)
         }
+    }
+
+    /**
+     * Binds the backup key to the account the first time a token is used.
+     *
+     * An install that connected Drive before account encryption existed has no
+     * key id stored. Resolving it here — from Drive's own permission id, the
+     * same value every other device resolves — is what makes that install start
+     * writing sealed files too, and keeps both phones deriving one key rather
+     * than one using an email and the other an id.
+     */
+    private suspend fun bindAccountKey(token: String) {
+        if (_settings.value.accountKeyId != null) return
+        val profile = runCatching { DriveApi.profile(token) }.getOrNull() ?: return
+        val id = profile.permissionId ?: profile.email ?: _settings.value.account ?: return
+        BackupCipher.setAccountKeyId(id)
+        _encryption.value = BackupCipher.encryptionActive()
+        save { it.copy(accountKeyId = id) }
     }
 
     private suspend fun token(context: Context): String {
@@ -516,6 +763,7 @@ object DriveBackup {
         frequency = prefs.getString(KEY_FREQUENCY, null)
             ?.let { name -> BackupFrequency.entries.firstOrNull { it.name == name } }
             ?: BackupFrequency.DAILY,
+        accountKeyId = prefs.getString(KEY_ACCOUNT_KEY_ID, null),
         overCellular = prefs.getBoolean(KEY_CELLULAR, false),
         lastSyncAt = prefs.getLong(KEY_LAST_SYNC, 0L),
         lastError = prefs.getString(KEY_LAST_ERROR, null),
@@ -536,6 +784,7 @@ object DriveBackup {
         prefs.edit {
             putString(KEY_ACCOUNT, s.account)
             putString(KEY_ACCOUNT_NAME, s.accountName)
+            putString(KEY_ACCOUNT_KEY_ID, s.accountKeyId)
             putString(KEY_FREQUENCY, s.frequency.name)
             putBoolean(KEY_CELLULAR, s.overCellular)
             putLong(KEY_LAST_SYNC, s.lastSyncAt)

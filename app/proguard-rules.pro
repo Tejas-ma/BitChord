@@ -84,6 +84,9 @@
 -dontwarn javax.script.**
 -dontwarn jdk.dynalink.**
 -dontwarn org.ietf.jgss.**
+# Ktor's dev-mode static-file reloader watches its zip through this JDK-only
+# modifier class. The LAN host never serves a directory, so R8 can leave it out.
+-dontwarn com.sun.nio.file.**
 
 # ---- "BitChord for Wear OS": the ADB client that installs the watch app ----
 # libadb-android drives the pairing and transport through Conscrypt and SPAKE2,

@@ -1,0 +1,292 @@
+name: Linux
+
+# The Linux packages, built natively for each architecture: jpackage assembles
+# an image from the running JDK, and the FFmpeg/JavaFX/Skiko natives in it are
+# the host's, so arm64 is built on an arm64 runner rather than cross-packaged.
+# -Pbitchord.arch pins the dependency classifiers to the runner so a mismatch
+# fails loudly here instead of producing a package that cannot start.
+
+on:
+  push:
+    branches: [Devlopment, main]
+    paths: &paths
+      - 'desktopApp/**'
+      - 'desktopUi/**'
+      - 'shared/**'
+      - 'native/**'
+      - 'build.gradle.kts'
+      - 'settings.gradle.kts'
+      - 'gradle.properties'
+      - 'gradle/**'
+      - 'gradlew'
+      - '.github/workflows/build-linux.yml'
+  pull_request:
+    branches: [Devlopment, main]
+    paths: *paths
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to stamp (defaults to the tag or bitchordVersionName)'
+        required: false
+        type: string
+      run_tests:
+        description: 'Run the JVM tests before packaging'
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: linux-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  ANDROID_HOME: /__disabled_android_sdk__
+  ANDROID_SDK_ROOT: /__disabled_android_sdk__
+  CMAKE_POLICY_VERSION_MINIMUM: '3.5'
+  GRADLE_OPTS: -Dorg.gradle.jvmargs=-Xmx4096m -Djava.awt.headless=true
+
+jobs:
+  linux:
+    name: Linux · ${{ matrix.arch }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-latest
+            arch: x64
+            appimage_arch: x86_64
+            appimagetool: appimagetool-x86_64.AppImage
+          - runner: ubuntu-24.04-arm
+            arch: arm64
+            appimage_arch: aarch64
+            appimagetool: appimagetool-aarch64.AppImage
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v5
+        with:
+          java-version: '21'
+          distribution: temurin
+
+      - uses: gradle/actions/setup-gradle@v5
+
+      - name: Resolve the version
+        id: version
+        shell: bash
+        env:
+          REQUESTED: ${{ inputs.version }}
+        run: |
+          raw="${REQUESTED:-}"
+          if [ -z "$raw" ] && [ "${GITHUB_REF_TYPE}" = "tag" ]; then raw="${GITHUB_REF_NAME}"; fi
+          if [ -z "$raw" ]; then
+            raw=$(sed -n 's/.*bitchordVersionName"\]\s*=\s*"\([^"]*\)".*/\1/p' build.gradle.kts | head -1)
+          fi
+          [ -z "$raw" ] && raw="1.10"
+          raw="${raw#v}"
+          echo "raw='$raw'"
+          echo "value=$raw" >> "$GITHUB_OUTPUT"
+
+      - name: Write local.properties
+        shell: bash
+        env:
+          LASTFM_API_KEY: ${{ secrets.LASTFM_API_KEY }}
+          LASTFM_SECRET: ${{ secrets.LASTFM_SECRET }}
+          LISTEN_TOGETHER_SERVER: ${{ secrets.LISTEN_TOGETHER_SERVER }}
+        run: |
+          : > local.properties
+          for name in LASTFM_API_KEY LASTFM_SECRET LISTEN_TOGETHER_SERVER; do
+            eval "value=\$$name"
+            [ -n "$value" ] && printf '%s=%s\n' "$name" "$value" >> local.properties
+          done
+          exit 0
+
+      - name: Make the wrapper executable
+        run: chmod +x gradlew
+
+      # fakeroot/dpkg-dev for the .deb, rpm for an .rpm, and appimagetool for the
+      # single-file AppImage. libfuse2 is the runtime a mounted AppImage needs;
+      # the build itself extracts rather than mounts, so a missing package here
+      # never breaks the run.
+      #
+      # appimagetool goes into the checkout root, which is the absolute path the
+      # packaging step passes below. It is then started once, so a download that
+      # is not executable on this runner is reported here by name instead of
+      # surfacing later as "line 56: ./appimagetool: No such file or directory".
+      - name: Install the packaging tools
+        env:
+          APPIMAGE_TOOL_URL: https://github.com/AppImage/appimagetool/releases/download/continuous
+          APPIMAGE_TOOL_FILE: ${{ matrix.appimagetool }}
+          # Read by the AppImage runtime: extract and run rather than mount, which
+          # is what works on a runner without FUSE.
+          APPIMAGE_EXTRACT_AND_RUN: '1'
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            fakeroot dpkg-dev binutils file rpm libfuse2t64 || \
+          sudo apt-get install -y --no-install-recommends \
+            fakeroot dpkg-dev binutils file rpm libfuse2
+          curl -fsSL -o "$GITHUB_WORKSPACE/appimagetool" \
+            "$APPIMAGE_TOOL_URL/$APPIMAGE_TOOL_FILE"
+          chmod +x "$GITHUB_WORKSPACE/appimagetool"
+          "$GITHUB_WORKSPACE/appimagetool" --version || {
+            echo "::error::appimagetool did not start on this runner"
+            exit 1
+          }
+
+      - name: Build the native libraries
+        run: |
+          ./gradlew :desktopApp:windowsNatives \
+            "-Pbitchord.skipAndroid=true" "-Pbitchord.arch=${{ matrix.arch }}" \
+            --no-daemon --stacktrace
+
+      - name: Run the JVM tests
+        if: ${{ github.event_name != 'workflow_dispatch' || inputs.run_tests }}
+        run: |
+          ./gradlew :shared:jvmTest :desktopUi:jvmTest :desktopApp:test \
+            "-Pbitchord.skipAndroid=true" "-Pbitchord.arch=${{ matrix.arch }}" \
+            "-Pbitchord.version=${{ steps.version.outputs.value }}" \
+            --no-daemon --stacktrace
+
+      - name: Show failing test reports
+        if: failure()
+        shell: bash
+        run: |
+          find shared desktopUi desktopApp -path '*/build/test-results/*/*.xml' -print 2>/dev/null | sort
+          while IFS= read -r report; do
+            echo "::group::$report"
+            sed -n '1,120p' "$report"
+            echo "::endgroup::"
+          done < <(find shared desktopUi desktopApp -path '*/build/test-results/*/*.xml' -print 2>/dev/null | sort)
+
+      - name: Upload the test reports
+        if: failure()
+        uses: actions/upload-artifact@v6
+        with:
+          name: linux-${{ matrix.arch }}-test-reports
+          path: |
+            shared/build/reports/tests/
+            shared/build/test-results/
+            desktopUi/build/reports/tests/
+            desktopUi/build/test-results/
+            desktopApp/build/reports/tests/
+            desktopApp/build/test-results/
+          if-no-files-found: ignore
+          retention-days: 14
+
+      - name: Build the packages
+        env:
+          # Absolute, so it does not depend on the working directory Gradle's Exec
+          # task happens to use. appimage.sh resolves a relative one too.
+          APPIMAGE_TOOL: ${{ github.workspace }}/appimagetool
+        run: |
+          ./gradlew :desktopApp:packageAppImage :desktopApp:packageDeb \
+            :desktopApp:packageLinuxRunInstaller \
+            "-Pbitchord.skipAndroid=true" "-Pbitchord.arch=${{ matrix.arch }}" \
+            "-Pbitchord.version=${{ steps.version.outputs.value }}" \
+            --no-daemon --stacktrace
+
+      - name: Verify the packages
+        shell: bash
+        run: |
+          set -euo pipefail
+          JAR=$(find desktopApp/build/compose/binaries/main/app -name 'desktopApp*.jar' -print -quit)
+          [ -n "$JAR" ] || { echo "::error::createDistributable produced no app jar"; exit 1; }
+          entries=$(unzip -Z1 "$JAR")
+          echo "$entries" | grep -q '^native/libbitchord_analysis\.so$' \
+            || { echo "::error::the Automix analyser (libbitchord_analysis.so) is missing"; echo "$entries" | grep '^native/' || true; exit 1; }
+          echo "$entries" | grep -q '^models/.*\.onnx$' \
+            || { echo "::error::no .onnx models were bundled"; exit 1; }
+          case "${{ matrix.arch }}" in
+            arm64) file desktopApp/build/compose/binaries/main/app/BitChord/bin/BitChord | grep -q 'aarch64' ;;
+            x64)   file desktopApp/build/compose/binaries/main/app/BitChord/bin/BitChord | grep -q 'x86-64' ;;
+          esac
+          ls -l desktopApp/build/compose/binaries/main/deb desktopApp/build/distributions
+
+      - name: Stage the packages
+        id: stage
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p out
+          ver="${{ steps.version.outputs.value }}"
+          arch="${{ matrix.arch }}"
+          appimage=$(find desktopApp/build/distributions -name '*.AppImage' -print -quit)
+          [ -n "$appimage" ] || { echo "::error::packageAppImage wrote no .AppImage"; exit 1; }
+          deb=$(find desktopApp/build/compose/binaries/main/deb -name '*.deb' -print -quit)
+          [ -n "$deb" ] || { echo "::error::packageDeb wrote no .deb"; exit 1; }
+          run_installer=$(find desktopApp/build/distributions -name '*.run' -print -quit)
+          [ -n "$run_installer" ] || { echo "::error::packageLinuxRunInstaller wrote no .run"; exit 1; }
+          cp "$appimage" "out/BitChord-$ver-linux-$arch.AppImage"
+          cp "$deb" "out/BitChord-$ver-linux-$arch.deb"
+          cp "$run_installer" "out/BitChord-$ver-linux-$arch.run"
+          chmod 755 "out/BitChord-$ver-linux-$arch.run"
+          ls -l out
+          echo "appimage=out/BitChord-$ver-linux-$arch.AppImage" >> "$GITHUB_OUTPUT"
+          echo "deb=out/BitChord-$ver-linux-$arch.deb" >> "$GITHUB_OUTPUT"
+          echo "run=out/BitChord-$ver-linux-$arch.run" >> "$GITHUB_OUTPUT"
+
+      # The .run is the only artifact that installs itself, so it is installed
+      # here instead of only being checked for existence: extraction, launcher,
+      # menu entry, checksum verification and the generated uninstaller all run.
+      - name: Smoke-test the .run installer
+        shell: bash
+        run: |
+          set -euo pipefail
+          run_file="${{ steps.stage.outputs.run }}"
+          [ -x "$run_file" ] || { echo "::error::$run_file is not executable"; exit 1; }
+
+          prefix="$RUNNER_TEMP/bitchord-install"
+          xdg="$RUNNER_TEMP/bitchord-xdg"
+          rm -rf "$prefix" "$xdg"
+
+          XDG_DATA_HOME="$xdg" "$run_file" --unattended --prefix "$prefix"
+          [ -x "$prefix/bin/BitChord" ] || { echo "::error::the .run installed no launcher"; exit 1; }
+          [ -x "$prefix/uninstall.sh" ] || { echo "::error::the .run wrote no uninstall.sh"; exit 1; }
+          [ -f "$xdg/applications/bitchord.desktop" ] \
+            || { echo "::error::the .run created no desktop entry"; exit 1; }
+          grep -q '^Categories=AudioVideo;Music;' "$xdg/applications/bitchord.desktop"
+          [ -L "$HOME/.local/bin/bitchord" ] || { echo "::error::the .run created no launcher symlink"; exit 1; }
+
+          # --list re-reads the payload and verifies its digest without installing.
+          "$run_file" --list > "$RUNNER_TEMP/bitchord-run-list.txt"
+          [ -s "$RUNNER_TEMP/bitchord-run-list.txt" ] || { echo "::error::the payload listed nothing"; exit 1; }
+
+          "$run_file" --unattended --uninstall --prefix "$prefix"
+          [ ! -d "$prefix" ] || { echo "::error::--uninstall left $prefix behind"; exit 1; }
+          [ ! -f "$xdg/applications/bitchord.desktop" ] \
+            || { echo "::error::--uninstall left the desktop entry behind"; exit 1; }
+          rm -f "$HOME/.local/bin/bitchord"
+
+      # One step per file: archive: false takes exactly one path and names the
+      # artifact after the file, so both arrive as the package, not a zip of it.
+      - name: Upload the AppImage
+        uses: actions/upload-artifact@v7
+        with:
+          path: ${{ steps.stage.outputs.appimage }}
+          if-no-files-found: error
+          archive: false
+          retention-days: 14
+
+      - name: Upload the deb
+        uses: actions/upload-artifact@v7
+        with:
+          path: ${{ steps.stage.outputs.deb }}
+          if-no-files-found: error
+          archive: false
+          retention-days: 14
+
+      - name: Upload the .run installer
+        uses: actions/upload-artifact@v7
+        with:
+          path: ${{ steps.stage.outputs.run }}
+          if-no-files-found: error
+          archive: false
+          retention-days: 14

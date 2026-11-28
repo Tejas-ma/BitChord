@@ -235,6 +235,18 @@ object SourceRegistry {
     }
 
     /**
+     * Every enabled, complete source, for search — the same set [active] holds
+     * before the connection's quality ceiling and the lossless gating are
+     * applied. A catalogue whose rows are not playable on this connection is
+     * still a catalogue: search shows its rows and says why a tap cannot play
+     * one, rather than pretending the track does not exist.
+     */
+    fun searchable(): List<MusicSource> =
+        enabledConfigs(configs.value)
+            .sortedBy { it.kind.rank }
+            .mapNotNull { instances[it.id] }
+
+    /**
      * [active], minus the addons whose manifest said `allowDownloads: 0`. A
      * download walks this instead, so the next source in line serves it.
      */
@@ -342,10 +354,32 @@ object SourceRegistry {
      * file is worth is [DownloadQuality][com.music.bitchord.data.settings.DownloadQuality]'s
      * question, and when it may be fetched is
      * [AppSettings.wifiOnlyDownloads][com.music.bitchord.data.settings.AppSettings.wifiOnlyDownloads]'s.
+     *
+     * [includeAddons] is false while
+     * [automatic addon usage][AppSettings.automaticAddonUsage] is off, which keeps
+     * addons out of every automatic resolve, substitution and upgrade. A
+     * caller acting on an explicit addon pick passes true for that one
+     * lookup — see [SourceResolver.resolve] — and the Sources screen keeps
+     * showing the addons either way.
      */
-    fun activeForPlayback(): List<MusicSource> {
+    fun activeForPlayback(
+        includeAddons: Boolean = AppSettings.automaticAddonUsage.value,
+    ): List<MusicSource> {
         val ceiling = AppSettings.effectiveAudioQuality
-        return active().filter { ceiling.permits(it.kind) }
+        return playbackEligible(active(), ceiling, includeAddons)
+    }
+
+    /**
+     * The ceiling and the automatic-addon switch applied to an enabled source
+     * list. Split from [activeForPlayback] so the gate can be exercised without
+     * a registry, a context or a network.
+     */
+    internal fun playbackEligible(
+        sources: List<MusicSource>,
+        ceiling: AudioQuality,
+        automaticAddons: Boolean,
+    ): List<MusicSource> = sources.filter {
+        ceiling.permits(it.kind) && (automaticAddons || it.kind != SourceKind.ADDON)
     }
 
     /**

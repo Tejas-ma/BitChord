@@ -74,18 +74,26 @@ object DriveApi {
         val properties: Map<String, String>,
     )
 
-    data class Profile(val email: String?, val name: String?)
+    /**
+     * Whose Drive the token is for.
+     *
+     * [permissionId] is Drive's own stable id for the account: unlike the email
+     * it does not change if the address does, which is what the backup key is
+     * derived from. A response without one falls back to the email.
+     */
+    data class Profile(val email: String?, val name: String?, val permissionId: String? = null)
 
     /** Whose Drive the token is for: shown on the screen, and kept to pin the account. */
     suspend fun profile(token: String): Profile = withContext(Dispatchers.IO) {
         val url = "$API/about".toHttpUrl().newBuilder()
-            .addQueryParameter("fields", "user(emailAddress,displayName)")
+            .addQueryParameter("fields", "user(permissionId,emailAddress,displayName)")
             .build()
         val body = execute(Request.Builder().url(url).authorized(token).build()).use { it.bodyJson() }
         val user = body["user"]?.jsonObject
         Profile(
             email = user?.get("emailAddress")?.jsonPrimitive?.contentOrNull,
             name = user?.get("displayName")?.jsonPrimitive?.contentOrNull,
+            permissionId = user?.get("permissionId")?.jsonPrimitive?.contentOrNull,
         )
     }
 

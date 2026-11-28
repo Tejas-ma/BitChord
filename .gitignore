@@ -31,6 +31,7 @@ captures/
 Thumbs.db
 
 # Release signing — never commit the key or its passwords
+bitchord-release.jks
 keystore.properties
 *.jks
 *.keystore

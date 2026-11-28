@@ -29,6 +29,23 @@ class SyncPlannerTest {
     }
 
     @Test
+    fun covers_uploadsNewAndChanged_keepsUnchanged_deletesPruned() {
+        val plan = SyncPlanner.covers(
+            local = mapOf("PLnew" to "c-new", "PLsame" to "c-same", "album:MPREb1" to "a-new"),
+            recorded = mapOf("PLsame" to "c-same", "PLgone" to "c-gone", "album:MPREb1" to "a-old"),
+        )
+        assertEquals(listOf("PLnew", "album:MPREb1"), plan.upload)
+        assertEquals(listOf("PLgone"), plan.delete)
+    }
+
+    @Test
+    fun covers_withNothingRecorded_uploadsAll() {
+        val plan = SyncPlanner.covers(local = mapOf("PL1" to "h1"), recorded = emptyMap())
+        assertEquals(listOf("PL1"), plan.upload)
+        assertTrue(plan.delete.isEmpty())
+    }
+
+    @Test
     fun pull_fetchesOnlyListedChangedMonths_andDropsUnlistedOnes() {
         val plan = SyncPlanner.pull(
             // 2026-12 is in Drive but not yet in the manifest: an upload in progress.

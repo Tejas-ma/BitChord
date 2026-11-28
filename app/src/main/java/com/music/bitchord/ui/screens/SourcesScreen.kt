@@ -18,11 +18,16 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.asPaddingValues
+import androidx.compose.foundation.layout.displayCutout
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -64,6 +69,7 @@ import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.zIndex
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -138,6 +144,7 @@ fun SourcesScreen(
     val smbShare by AppSettings.smbShare.collectAsStateWithLifecycle()
     val smbUsername by AppSettings.smbUsername.collectAsStateWithLifecycle()
     val smbPassword by AppSettings.smbPassword.collectAsStateWithLifecycle()
+    val automaticAddonUsage by AppSettings.automaticAddonUsage.collectAsStateWithLifecycle()
 
     /** Last known reachability per source, filled in as the probes come back. */
     val health = remember { mutableStateMapOf<String, SourceHealth>() }
@@ -200,7 +207,30 @@ fun SourcesScreen(
             .verticalScroll(rememberScrollState())
             .padding(contentPadding),
     ) {
-        SettingsPageTitle(stringResource(R.string.source))
+        // The page padding already starts the content clear of the status bar:
+        // its top is [topBarContentPadding], which itself begins at the
+        // status-bar inset. Adding statusBarsPadding() here as well would double
+        // that clearance, so the header only takes up what the page padding has
+        // not already covered — normally zero, and the cutout's own depth on a
+        // device whose cutout reaches below the status bar. The cutout's side
+        // insets are applied here because the page padding is vertical only.
+        val layoutDirection = LocalLayoutDirection.current
+        val cutout = WindowInsets.displayCutout.asPaddingValues()
+        val headerTop = (
+            maxOf(
+                WindowInsets.statusBars.asPaddingValues().calculateTopPadding(),
+                cutout.calculateTopPadding(),
+            ) - contentPadding.calculateTopPadding()
+            ).coerceAtLeast(0.dp)
+        Column(
+            Modifier.padding(
+                top = headerTop,
+                start = cutout.calculateLeftPadding(layoutDirection),
+                end = cutout.calculateRightPadding(layoutDirection),
+            ),
+        ) {
+            SettingsPageTitle(stringResource(R.string.source))
+        }
 
         SettingsGroup(
             header = stringResource(R.string.sources_order_header),
@@ -215,6 +245,22 @@ fun SourcesScreen(
                 }
             },
         ) {
+            // Above the numbered rows because it governs all of them, and
+            // inside this group because it is the addons it speaks for —
+            // switching it off leaves every row below exactly as configured.
+            SettingsRow(
+                icon = SfIcons.Extension,
+                title = stringResource(R.string.automatic_addon_usage),
+                subtitle = stringResource(R.string.automatic_addon_usage_subtitle),
+                trailing = {
+                    IosSwitch(
+                        checked = automaticAddonUsage,
+                        onCheckedChange = { AppSettings.setAutoAddonUsage(it) },
+                    )
+                },
+            )
+            RowDivider()
+
             // The addons are split out from the rest because they are the only
             // rows whose order is the *user's*. Everything else ranks by kind,
             // which is fixed in [SourceKind] and not something a drag should be
@@ -374,7 +420,10 @@ fun SourcesScreen(
             )
         }
 
-        Spacer(Modifier.height(32.dp))
+        // The last rows — track length tolerance, the addon row — have to scroll
+        // clear of the navigation bar and the floating tab bar/mini player above
+        // it, which the caller's padding budgets for by height alone.
+        Spacer(Modifier.navigationBarsPadding().height(32.dp))
     }
 
 }

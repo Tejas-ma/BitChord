@@ -12,8 +12,8 @@ plugins {
 /**
  * Signing details, kept out of the repository in `keystore.properties`
  * (see keystore.properties.example). Absent on a fresh checkout, in which case
- * the release build still runs and simply comes out unsigned rather than
- * failing — only whoever holds the key can produce a shippable APK.
+ * every build falls back to AGP's debug key rather than failing — only whoever
+ * holds the key can produce a shippable APK.
  */
 val signing = Properties().apply {
     val file = rootProject.file("keystore.properties")
@@ -72,6 +72,10 @@ android {
     namespace = "com.music.bitchord"
     // InnerTubeX's AAR requires compiling against 37; targetSdk (runtime behaviour) stays 36.
     compileSdk = 37
+    // r27 patch 3, the NDK already installed on the ubuntu-24.04 runners. Pinning it
+    // stops AGP downloading its default r27.0 on every fresh CI machine; it is the
+    // same r27 line, so the CMake toolchain and headers are unchanged.
+    ndkVersion = "27.3.13750724"
 
     // Automix's models stay in src/main/assets (the desktop build and the
     // release that hosts them read them from there) but are not packaged: the
@@ -150,16 +154,21 @@ android {
     }
 
     signingConfigs {
+        // One key for every Android module and every build type — the phone, TV
+        // and watch apps have to match each other (the Wearable Data Layer only
+        // talks between apps signed with the same key), and a debug build signed
+        // with the same key installs over a release one without an uninstall.
+        //
         // Both halves have to be there, not just the properties file: it *names*
         // the keystore rather than containing it, and both are gitignored
         // separately, so a checkout can easily end up with the one and not the
         // other. A signing config pointing at a keystore that is not on disk
-        // fails the release build outright at validateSigningRelease — which is
-        // exactly the failure the unsigned fallback above exists to avoid, so
-        // the keystore has to be looked for rather than assumed.
+        // fails the build outright at validateSigning, so the keystore has to be
+        // looked for rather than assumed; without it every build falls back to
+        // AGP's debug key below.
         val store = signing.getProperty("storeFile")?.let { rootProject.file(it) }
         if (store != null && store.exists()) {
-            create("release") {
+            create("shared") {
                 storeFile = store
                 storePassword = signing.getProperty("storePassword")
                 keyAlias = signing.getProperty("keyAlias")
@@ -171,6 +180,7 @@ android {
     buildTypes {
         debug {
             if (betaSuffix.isNotEmpty()) versionNameSuffix = "-$betaSuffix"
+            signingConfig = signingConfigs.findByName("shared") ?: signingConfigs.getByName("debug")
         }
         release {
             // Carried here too — see [betaSuffix]. A sideloaded beta is a
@@ -195,9 +205,9 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
-            // Null without a keystore to sign with: the build then produces
-            // app-release-unsigned.apk instead of failing outright.
-            signingConfig = signingConfigs.findByName("release")
+            // The shared key, or AGP's debug key on a checkout without one, so
+            // the release build is still installable rather than failing.
+            signingConfig = signingConfigs.findByName("shared") ?: signingConfigs.getByName("debug")
         }
         /*
          * The release build, installable next to the dev and prod apps: same R8,
@@ -321,6 +331,9 @@ dependencies {
     implementation("androidx.work:work-runtime-ktx:2.10.1")
     implementation("androidx.core:core-ktx:1.15.0")
     implementation("androidx.appcompat:appcompat:1.7.0")
+    // The system biometric sheet with the device-credential fallback: the
+    // framework prompt this replaced could not combine the two.
+    implementation("androidx.biometric:biometric:1.1.0")
     debugImplementation("androidx.compose.ui:ui-tooling")
 
     // ---- Media playback: Media3 / ExoPlayer ----

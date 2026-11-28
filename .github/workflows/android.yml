@@ -1,56 +1,402 @@
-name: Android Release APK
+name: Android APK
+
+# Builds the phone APK on a machine that is not asked to configure the desktop
+# modules: -Pbitchord.skipDesktop=true leaves :desktopApp and :desktopUi out of
+# the build, so a desktop toolchain that is not installed cannot fail this job.
+#
+# prodRelease is signed only when every keystore secret is present and the run
+# is not a pull request. Anything else falls back to the unsigned devDebug APK
+# instead of failing on a key the fork does not have.
 
 on:
   push:
-    branches: [main]
+    branches: [Devlopment, main]
+    paths:
+      - 'app/**'
+      - 'tv/**'
+      - 'wearos/**'
+      - 'shared/**'
+      - 'sharedUi/**'
+      - 'native/**'
+      - 'build.gradle.kts'
+      - 'settings.gradle.kts'
+      - 'gradle.properties'
+      - 'gradle/**'
+      - 'gradlew'
+      - 'gradlew.bat'
+      - '.github/workflows/android.yml'
+  pull_request:
+    branches: [Devlopment, main]
+    paths:
+      - 'app/**'
+      - 'tv/**'
+      - 'wearos/**'
+      - 'shared/**'
+      - 'sharedUi/**'
+      - 'native/**'
+      - 'build.gradle.kts'
+      - 'settings.gradle.kts'
+      - 'gradle.properties'
+      - 'gradle/**'
+      - 'gradlew'
+      - 'gradlew.bat'
+      - '.github/workflows/android.yml'
   workflow_dispatch:
+    inputs:
+      build_variant:
+        description: 'Build variant'
+        type: choice
+        options: [devDebug, prodRelease]
+        default: devDebug
+      run_tests:
+        description: 'Run the unit tests first'
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-${{ github.workflow }}-${{ github.ref }}
+  # A run reported as "cancelled" is not the timeout: a timeout says "The job
+  # running ... exceeded the maximum execution time". What ends a run as
+  # cancelled is this group, when a newer run of the same workflow on the same
+  # ref starts and this flag lets it kill the one already building — which is
+  # how the prodRelease run above died in the middle of
+  # :shared:lintVitalAnalyzeRelease with :app:assembleProdRelease still to go.
+  # Pull requests still cancel superseded runs, since duplicate feedback is
+  # worthless; pushes to Devlopment/main queue instead of killing each other,
+  # so a release APK that has started always finishes.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  GRADLE_OPTS: -Dorg.gradle.jvmargs=-Xmx4608m -Dkotlin.daemon.jvm.options=-Xmx2048m -Djava.net.preferIPv4Stack=true
 
 jobs:
-  build-prod-release:
-    runs-on: ubuntu-latest
+  apk:
+    name: Android · ${{ inputs.build_variant || 'devDebug' }}
+    runs-on: ubuntu-24.04
+    # A full prodRelease is three native ABI builds, R8, and the lint vital
+    # analysis of :app, :shared, :sharedUi and :wearos. 45 minutes left no room
+    # once the SDK/NDK downloads landed inside the run; this is a ceiling, not a
+    # target.
+    timeout-minutes: 75
 
     steps:
-    - name: Checkout Repository
-      uses: actions/checkout@v4
+      - name: Checkout repository
+        uses: actions/checkout@v6
 
-    - name: Set up JDK 17
-      uses: actions/setup-java@v4
-      with:
-        java-version: '17'
-        distribution: 'temurin'
-        cache: gradle
+      # runner.temp is not available in a workflow-level env block, so TMPDIR
+      # is pointed at it from a step instead.
+      - name: Point TMPDIR at the runner temp dir
+        run: echo "TMPDIR=$RUNNER_TEMP" >> "$GITHUB_ENV"
 
-    - name: Setup Secrets (Keystore & local.properties)
-      run: |
-        echo "LASTFM_API_KEY=${{ secrets.LASTFM_API_KEY }}" > local.properties
-        echo "LASTFM_SECRET=${{ secrets.LASTFM_SECRET }}" >> local.properties
-        echo "LISTEN_TOGETHER_SERVER=${{ secrets.LISTEN_TOGETHER_SERVER }}" >> local.properties
+      - name: Set up JDK 21
+        uses: actions/setup-java@v5
+        with:
+          java-version: '21'
+          distribution: temurin
 
-        echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > bitchord-release.jks
-        {
-          echo "storeFile=bitchord-release.jks"
-          echo "storePassword=${{ secrets.KEYSTORE_PASSWORD }}"
-          echo "keyAlias=${{ secrets.KEY_ALIAS }}"
-          echo "keyPassword=${{ secrets.KEY_PASSWORD }}"
-        } > keystore.properties
+      - uses: gradle/actions/setup-gradle@v5
 
-    - name: Grant execute permission for gradlew
-      run: chmod +x gradlew
+      - name: Grant execute permission for gradlew
+        run: chmod +x gradlew
 
-    - name: Build Signed Prod Release APK
-      run: ./gradlew assembleProdRelease
+      # Anything missing from the SDK is fetched by AGP *inside* the build: the
+      # NDK and CMake used to appear mid-run, between compilation and lint,
+      # where a multi-hundred-megabyte download is invisible until the job is
+      # already tight. Installing the same components up front makes that cost a
+      # named, bounded step. The NDK line covers app/build.gradle.kts's pin and
+      # AGP's own default r27.0, whichever module asks for it.
+      - name: Install the Android SDK components the build needs
+        run: |
+          sdk_root="${ANDROID_HOME:-$ANDROID_SDK_ROOT}"
+          sdkmanager="$sdk_root/cmdline-tools/latest/bin/sdkmanager"
+          if [ ! -x "$sdkmanager" ]; then
+            sdkmanager="$(ls -d "$sdk_root"/cmdline-tools/*/bin/sdkmanager 2>/dev/null | sort -V | tail -n 1 || true)"
+          fi
+          if [ ! -x "$sdkmanager" ]; then
+            echo "::warning::sdkmanager not found; Gradle will fetch the SDK packages itself."
+            exit 0
+          fi
+          yes | "$sdkmanager" --licenses > /dev/null || true
+          "$sdkmanager" --install \
+            "platforms;android-37" \
+            "build-tools;35.0.0" \
+            "cmake;3.22.1" \
+            "ndk;27.3.13750724" \
+            "ndk;27.0.12077973" ||
+            echo "::warning::sdkmanager could not install every package; Gradle will fetch what is missing."
+          exit 0
 
-    - name: Upload APK Artifact
-      uses: actions/upload-artifact@v4
-      with:
-        name: bitchord-prod-release-signed
-        path: app/build/outputs/apk/prod/release/*.apk
+      # sdk.dir is written explicitly: the image sets ANDROID_HOME, but a
+      # local.properties that names it survives any wrapper that scrubs the
+      # environment, and settings.gradle.kts reads it first.
+      - name: Write local.properties
+        env:
+          LASTFM_API_KEY: ${{ secrets.LASTFM_API_KEY }}
+          LASTFM_SECRET: ${{ secrets.LASTFM_SECRET }}
+        run: |
+          : > local.properties
+          echo "sdk.dir=${ANDROID_HOME:-$ANDROID_SDK_ROOT}" >> local.properties
+          [ -n "$LASTFM_API_KEY" ] && echo "LASTFM_API_KEY=$LASTFM_API_KEY" >> local.properties
+          [ -n "$LASTFM_SECRET" ] && echo "LASTFM_SECRET=$LASTFM_SECRET" >> local.properties
+          exit 0
 
-    # Built by the same assembleProdRelease, with the same key. The watch app
-    # only pairs with a phone app signed by the same key, so a prod watch APK
-    # for these phone builds can only come from here, never a local build.
-    - name: Upload Wear OS APK Artifact
-      uses: actions/upload-artifact@v4
-      with:
-        name: bitchord-wear-prod-release-signed
-        path: wearos/build/outputs/apk/prod/release/*.apk
+      # Decide before writing anything: a PR, or a fork without secrets, must
+      # never be pointed at assembleProdRelease with no key to sign it.
+      - name: Decide the variant and whether it can be signed
+        id: variant
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+          REQUESTED: ${{ inputs.build_variant || 'devDebug' }}
+          EVENT: ${{ github.event_name }}
+        run: |
+          signable=true
+          for value in "$KEYSTORE_BASE64" "$KEYSTORE_PASSWORD" "$KEY_ALIAS" "$KEY_PASSWORD"; do
+            [ -n "$value" ] || signable=false
+          done
+          if [ "$REQUESTED" = "prodRelease" ] && [ "$signable" = "true" ] && [ "$EVENT" != "pull_request" ]; then
+            {
+              echo "task=:app:assembleProdRelease"
+              echo "path=app/build/outputs/apk/prod/release"
+              echo "name=bitchord-prod-release-signed"
+              echo "signed=true"
+              echo "flavor=prod"
+              echo "type=release"
+            } >> "$GITHUB_OUTPUT"
+          else
+            if [ "$REQUESTED" = "prodRelease" ]; then
+              echo "::warning::prodRelease needs all four keystore secrets and a non-PR run — building devDebug instead."
+            fi
+            {
+              echo "task=:app:assembleDevDebug"
+              echo "path=app/build/outputs/apk/dev/debug"
+              echo "name=bitchord-dev-debug"
+              echo "signed=false"
+              echo "flavor=dev"
+              echo "type=debug"
+            } >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Write the release keystore
+        if: steps.variant.outputs.signed == 'true'
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: |
+          echo "$KEYSTORE_BASE64" | base64 -d > bitchord-release.jks
+          {
+            echo "storeFile=bitchord-release.jks"
+            echo "storePassword=$KEYSTORE_PASSWORD"
+            echo "keyAlias=$KEY_ALIAS"
+            echo "keyPassword=$KEY_PASSWORD"
+          } > keystore.properties
+
+      # inputs is empty on push and pull_request, where `inputs.run_tests` is
+      # null and `null != false` is false by GitHub's numeric coercion — which
+      # is why this used to be skipped everywhere but a manual dispatch.
+      # No --no-daemon: the daemon keeps the configuration and the Kotlin
+      # compiler warm for the build step below instead of paying for a second
+      # full configuration from scratch in a fresh JVM.
+      - name: Unit tests
+        if: ${{ github.event_name != 'workflow_dispatch' || inputs.run_tests }}
+        run: >
+          ./gradlew :app:testDevDebugUnitTest
+          -Pbitchord.skipDesktop=true --max-workers=2 --build-cache --stacktrace
+
+      # lintVital is AGP's fatal-only lint, and it is the most expensive thing in
+      # a release assembly: it re-analyses :app, :shared, :sharedUi and :wearos
+      # with its own embedded Kotlin (2.1) compiler, which is also where the
+      # "metadata is 2.3.0/2.4.0, expected 2.1.0" warnings come from. The
+      # packaged APK is byte-for-byte the same without it, so a release build in
+      # CI does not pay for it; run ./gradlew :app:lintVitalProdRelease locally
+      # (or add a dedicated lint job) when lint itself needs to gate a change.
+      - name: Build ${{ steps.variant.outputs.name }}
+        env:
+          LINT_EXCLUSIONS: ${{ steps.variant.outputs.signed == 'true' && '-x lintVitalAnalyzeRelease -x lintVitalAnalyzeProdRelease -x lintVitalReportProdRelease -x lintVitalProdRelease' || '' }}
+        run: >
+          ./gradlew ${{ steps.variant.outputs.task }}
+          -Pbitchord.skipDesktop=true --max-workers=2 --build-cache --stacktrace
+          $LINT_EXCLUSIONS
+
+      # ABI splits are on in app/build.gradle.kts, so a build is three per-ABI
+      # APKs plus a universal one. archive: false uploads a single file each and
+      # takes the download's name from the file on disk, so every APK is copied
+      # into dist-apk/ under a name that ends in .apk and says what it is —
+      # what arrives on the phone is then installable as-is, with no unzip.
+      # Nothing found is an error, not an empty artifact.
+      - name: Stage the APKs
+        id: apks
+        env:
+          VARIANT: ${{ steps.variant.outputs.flavor }}-${{ steps.variant.outputs.type }}
+          APK_DIR: ${{ steps.variant.outputs.path }}
+          SIGNED: ${{ steps.variant.outputs.signed }}
+        run: |
+          set -euo pipefail
+
+          version="$(sed -n 's/^extra\["bitchordVersionName"\] = "\(.*\)"/\1/p' build.gradle.kts | head -n 1)"
+          if [ -z "$version" ]; then
+            echo "::error::Could not read bitchordVersionName from build.gradle.kts"
+            exit 1
+          fi
+          suffix="$(sed -n 's/^extra\["bitchordBetaSuffix"\] = "\(.*\)"/\1/p' build.gradle.kts | head -n 1)"
+          if [ -n "$suffix" ]; then
+            version="$version-$suffix"
+          fi
+
+          rm -rf dist-apk
+          mkdir -p dist-apk
+
+          built=()
+          if [ -d "$APK_DIR" ]; then
+            # An unsigned APK sits beside the signed one it is not a substitute
+            # for; only the installable file is wanted here.
+            while IFS= read -r apk; do
+              built+=("$apk")
+            done < <(find "$APK_DIR" -maxdepth 1 -name '*.apk' ! -name '*-unsigned.apk' | sort)
+          fi
+          if [ "${#built[@]}" -eq 0 ]; then
+            echo "::error::No .apk under $APK_DIR — the build produced nothing to upload."
+            exit 1
+          fi
+
+          for apk in "${built[@]}"; do
+            # AGP names a split app-prod-arm64-v8a-release.apk — flavour before
+            # the ABI, build type last. Reading the ABI out of the name instead
+            # of stripping `-prod-release` off its end is what keeps the
+            # universal APK apart from the splits: that strip never matches this
+            # order, so every APK used to collapse to "universal", overwrite the
+            # same file, and leave the last one (x86_64) uploaded under the
+            # universal name — which no arm phone can install.
+            name="${apk##*/}"
+            name="${name%.apk}"
+            abi=""
+            for candidate in armeabi-v7a arm64-v8a x86_64 universal; do
+              case "-$name-" in
+                *-"$candidate"-*) abi="$candidate"; break ;;
+              esac
+            done
+            # A build with no ABI in its name has no splits, and is the only
+            # installable one.
+            if [ -z "$abi" ]; then
+              abi=universal
+            fi
+            key="${abi//-/_}"
+            target="dist-apk/BitChord-$version-$VARIANT-$abi.apk"
+            if [ -e "$target" ]; then
+              echo "::error::Two APKs map to $target — the ABI in the file name could not be told apart."
+              exit 1
+            fi
+            cp "$apk" "$target"
+            echo "$key=$GITHUB_WORKSPACE/$target" >> "$GITHUB_OUTPUT"
+            echo "Staged $target from $apk ($(du -h "$apk" | cut -f1))"
+          done
+
+          # Produced by the same assembleProdRelease, signed with the same key:
+          # the watch app only pairs with a phone app signed by the same key.
+          # No splits there, so there is exactly one to stage.
+          if [ "$SIGNED" = "true" ]; then
+            wear="$(find wearos/build/outputs/apk/prod/release -maxdepth 1 -name '*.apk' ! -name '*-unsigned.apk' 2>/dev/null | sort | head -n 1 || true)"
+            if [ -n "$wear" ]; then
+              target="dist-apk/BitChord-$version-wear-prod-release.apk"
+              cp "$wear" "$target"
+              echo "wear=$GITHUB_WORKSPACE/$target" >> "$GITHUB_OUTPUT"
+              echo "Staged $target from $wear"
+            else
+              echo "::warning::No Wear OS APK found; skipping it."
+            fi
+          fi
+
+      # An artifact named .apk is not an installable APK: one that lost its
+      # signature, or that was signed with a key the installed copy does not
+      # match, is refused by the phone with "There's a problem with the app
+      # file". Both properties are checked here, on the exact file the next
+      # steps upload, so a broken build fails this job instead of a phone.
+      - name: Verify the staged APKs are signed and aligned
+        run: |
+          set -euo pipefail
+
+          build_tools="$(ls -d "${ANDROID_HOME:-$ANDROID_SDK_ROOT}"/build-tools/* | sort -V | tail -n 1)"
+          apksigner="$build_tools/apksigner"
+          zipalign="$build_tools/zipalign"
+
+          shopt -s nullglob
+          apks=(dist-apk/*.apk)
+          if [ "${#apks[@]}" -eq 0 ]; then
+            echo "::error::Nothing was staged under dist-apk to verify."
+            exit 1
+          fi
+
+          # Uncompressed .so files have to be page aligned on Android 15 devices
+          # with 16 KB pages; older build-tools only know the 4-byte check.
+          align=(-c -v 4)
+          if "$zipalign" -h 2>&1 | grep -q -- '-P'; then
+            align=(-c -P 16 -v 4)
+          fi
+
+          for apk in "${apks[@]}"; do
+            echo "=== $apk"
+            "$apksigner" verify --verbose --print-certs "$apk"
+            "$zipalign" "${align[@]}" "$apk" > /dev/null
+            echo "verified: $apk ($(du -h "$apk" | cut -f1))"
+          done
+
+      # One step per APK: archive: false accepts a single file path and names the
+      # artifact after the file itself, so `name:` is left off deliberately.
+      - name: Upload universal APK
+        if: steps.apks.outputs.universal != ''
+        uses: actions/upload-artifact@v7
+        with:
+          path: ${{ steps.apks.outputs.universal }}
+          archive: false
+          if-no-files-found: error
+
+      - name: Upload arm64-v8a APK
+        if: steps.apks.outputs.arm64_v8a != ''
+        uses: actions/upload-artifact@v7
+        with:
+          path: ${{ steps.apks.outputs.arm64_v8a }}
+          archive: false
+          if-no-files-found: error
+
+      - name: Upload armeabi-v7a APK
+        if: steps.apks.outputs.armeabi_v7a != ''
+        uses: actions/upload-artifact@v7
+        with:
+          path: ${{ steps.apks.outputs.armeabi_v7a }}
+          archive: false
+          if-no-files-found: error
+
+      - name: Upload x86_64 APK
+        if: steps.apks.outputs.x86_64 != ''
+        uses: actions/upload-artifact@v7
+        with:
+          path: ${{ steps.apks.outputs.x86_64 }}
+          archive: false
+          if-no-files-found: error
+
+      - name: Upload Wear OS APK
+        if: steps.apks.outputs.wear != ''
+        uses: actions/upload-artifact@v7
+        with:
+          path: ${{ steps.apks.outputs.wear }}
+          archive: false
+          if-no-files-found: error
+
+      - name: Upload test reports
+        if: failure()
+        uses: actions/upload-artifact@v6
+        with:
+          name: android-test-reports
+          path: app/build/reports/tests/
+          if-no-files-found: ignore
+
+      - name: Remove the signing material
+        if: always()
+        run: rm -f bitchord-release.jks keystore.properties

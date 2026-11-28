@@ -15,6 +15,7 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
@@ -201,6 +202,11 @@ import com.music.bitchord.ui.screens.SourcesScreen
 import com.music.bitchord.data.sources.TrackMatcher
 import com.music.bitchord.ui.screens.SpotifyCanvasAuthScreen
 import com.music.bitchord.ui.screens.SpotifyLibraryScreen
+import com.music.bitchord.data.PlaylistCover
+import com.music.bitchord.data.PlaylistCoverStore
+import com.music.bitchord.data.spotify.LocalPlaylist
+import java.io.File
+import com.music.bitchord.data.spotify.LocalPlaylistStore
 import com.music.bitchord.data.spotify.SPOTIFY_PAGE_PREFIX
 import com.music.bitchord.playback.AudioCache
 import com.music.bitchord.playback.LinkRequest
@@ -247,6 +253,9 @@ import com.music.bitchord.download.MediaTagger
 import com.music.bitchord.download.DownloadTarget
 import com.music.bitchord.download.Downloads
 import com.music.bitchord.ui.components.BrowseActionsMenu
+import com.music.bitchord.ui.components.LockFlow
+import com.music.bitchord.ui.components.LockFlowHost
+import com.music.bitchord.data.security.CollectionLocks
 import com.music.bitchord.ui.components.BrowseTarget
 import com.music.bitchord.ui.components.ConfirmationAlert
 import com.music.bitchord.ui.components.InfoAlert
@@ -289,6 +298,7 @@ import com.music.bitchord.ui.components.isGlassSupported
 import com.music.bitchord.data.sources.SourceConfig
 import com.music.bitchord.data.sources.SourceKind
 import com.music.bitchord.data.sources.SourceRegistry
+import com.music.bitchord.ui.components.AcrCloudEditorAlert
 import com.music.bitchord.ui.components.ChoiceAlert
 import com.music.bitchord.ui.components.ListenBrainzTokenAlert
 import com.music.bitchord.ui.components.MiniPlayer
@@ -297,6 +307,7 @@ import com.music.bitchord.ui.components.QueueActionNoticeHost
 import com.music.bitchord.ui.components.TopBarAccountButton
 import com.music.bitchord.ui.screens.SegmentedControl
 import com.music.bitchord.ui.components.SearchField
+import com.music.bitchord.ui.components.VoiceInputDialog
 import com.music.bitchord.sharedui.resources.Res as SharedRes
 import com.music.bitchord.sharedui.resources.search_hint
 import com.music.bitchord.sharedui.resources.search_addons_hint
@@ -706,6 +717,7 @@ private fun BitChordApp(
     var showAccountSelector by remember { mutableStateOf(false) }
     var showListenBrainzLogin by remember { mutableStateOf(false) }
     var showLastfmLogin by remember { mutableStateOf(false) }
+    var showAcrCloudEditor by remember { mutableStateOf(false) }
     var showWebDavEditor by remember { mutableStateOf(false) }
     var showSmbEditor by remember { mutableStateOf(false) }
     // Discord Rich Presence: its own page under Account & integrations (a
@@ -829,6 +841,32 @@ private fun BitChordApp(
     // signal to focus the input field.
     var searchFocusRequested by remember { mutableStateOf(false) }
     val searchFieldFocus = remember { FocusRequester() }
+    // The search field's microphone, and the RECORD_AUDIO ask that must come
+    // before either of its jobs can listen.
+    var voiceOpen by remember { mutableStateOf(false) }
+    // The lock gate: one instance for the whole app, so the PIN prompt a card
+    // raises is the same one its page and the Settings rows raise.
+    val lockFlow = remember { LockFlow() }
+    // Every way into a release page ends in the ViewModel's openDetail, so a
+    // locked one arrives here as a request rather than as a loaded page. The
+    // prompt it raises is the same one a card's Open uses.
+    val lockedOpen by viewModel.lockedOpen.collectAsStateWithLifecycle()
+    LaunchedEffect(lockedOpen) {
+        val request = lockedOpen ?: return@LaunchedEffect
+        viewModel.clearLockedOpen()
+        lockFlow.guard(request.browseId, request.title) {
+            viewModel.openDetail(
+                browseId = request.browseId,
+                title = request.title,
+                subtitle = request.subtitle,
+                thumbnailUrl = request.thumbnailUrl,
+                type = request.type,
+            )
+        }
+    }
+    val microphonePermission = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission(),
+    ) { granted -> if (granted) voiceOpen = true }
     // Invalidates an in-flight radio lookup when a later play request wins.
     var playRequestGeneration by remember { mutableIntStateOf(0) }
     // Starting radio from the item already playing must not replace that media
@@ -932,6 +970,13 @@ private fun BitChordApp(
     val searchSource by viewModel.searchSource.collectAsStateWithLifecycle()
     val libraryResults by viewModel.libraryResults.collectAsStateWithLifecycle()
     val addonResults by viewModel.addonResults.collectAsStateWithLifecycle()
+    // Every configured source's rows for the committed query, with the source
+    // each came from — see UnifiedSourceSearch.
+    val unifiedSources by viewModel.unifiedSources.collectAsStateWithLifecycle()
+    val unifiedHits by viewModel.unifiedHits.collectAsStateWithLifecycle()
+    val unifiedFailures by viewModel.unifiedFailures.collectAsStateWithLifecycle()
+    val unifiedSelected by viewModel.unifiedSelected.collectAsStateWithLifecycle()
+    val unifiedLoading by viewModel.unifiedLoading.collectAsStateWithLifecycle()
     // Collected rather than read once, so addon rows in search re-dim the
     // moment the quality setting, the connection or the watch's cap moves.
     val addonCeiling = AppSettings.ceilingFor(
@@ -1066,12 +1111,21 @@ private fun BitChordApp(
     }
     // Playlists imported without (or instead of) a YouTube Music account live
     // in the app's own store, and sit on the same shelf as the downloaded ones.
-    val localPlaylists by com.music.bitchord.data.spotify.LocalPlaylistStore.playlists.collectAsStateWithLifecycle()
+    val localPlaylists by LocalPlaylistStore.playlists.collectAsStateWithLifecycle()
+    val playlistCovers by PlaylistCoverStore.covers.collectAsStateWithLifecycle()
     val localPlaylistItems = localPlaylists.map { playlist ->
         ShelfItem(
             title = playlist.title,
             subtitle = stringResource(R.string.local_playlist_subtitle, playlist.songs.size),
-            thumbnailUrl = playlist.songs.firstOrNull { !it.thumbnailUrl.isNullOrBlank() }?.thumbnailUrl,
+            thumbnailUrl = playlist.customCoverPath
+                ?.takeIf { File(it).isFile }
+                ?.let { path ->
+                    Uri.fromFile(File(path)).buildUpon()
+                        .appendQueryParameter("v", playlist.coverHash ?: File(path).lastModified().toString())
+                        .build()
+                        .toString()
+                }
+                ?: playlist.songs.firstOrNull { !it.thumbnailUrl.isNullOrBlank() }?.thumbnailUrl,
             videoId = null,
             browseId = playlist.browseId,
         )
@@ -1405,6 +1459,33 @@ private fun BitChordApp(
     }
 
     val scope = rememberCoroutineScope()
+    // The playlist whose overflow launched the photo picker, held across the
+    // activity recreation the system picker can cause.
+    var pendingPlaylistCoverKey by rememberSaveable { mutableStateOf<String?>(null) }
+    val applyPlaylistCover: (String, String) -> Unit = { key, source ->
+        scope.launch {
+            // The write itself lives in a helper: this composable is close to
+            // the JVM's 64 KB method limit, and every branch left inside it is
+            // bytecode spent on something that does not touch composition.
+            if (applyCustomCover(key, source) != null) {
+                Toast.makeText(context, context.getString(R.string.failed), Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+    val playlistCoverPicker = rememberLauncherForActivityResult(
+        ActivityResultContracts.PickVisualMedia(),
+    ) { uri ->
+        val key = pendingPlaylistCoverKey
+        pendingPlaylistCoverKey = null
+        if (uri != null && key != null) applyPlaylistCover(key, uri.toString())
+    }
+    val playlistCoverContentPicker = rememberLauncherForActivityResult(
+        ActivityResultContracts.GetContent(),
+    ) { uri ->
+        val key = pendingPlaylistCoverKey
+        pendingPlaylistCoverKey = null
+        if (uri != null && key != null) applyPlaylistCover(key, uri.toString())
+    }
 
     // Copies tracks to the WebDAV server, leaving the local files alone.
     // A clash suspends the batch on WebDavUploads.conflict until the dialog
@@ -2299,16 +2380,21 @@ private fun BitChordApp(
             if ((id == "local:all" || id == "local:downloads") && !LocalMediaRepository.hasStoragePermission(context)) {
                 mediaPermissionLauncher.launch(mediaPermission)
             }
-            // Opened from a shelf's "Show all" page, it stacks over the grid
-            // exactly as one opened from the Library tab stacks over that, so
-            // back from the release lands on the grid rather than skipping
-            // past it.
-            viewModel.openDetail(
-                browseId = id,
-                title = item.title,
-                subtitle = item.subtitle,
-                thumbnailUrl = item.thumbnailUrl,
-            )
+            // A locked playlist or album asks for the PIN before its contents
+            // are fetched, not after: the page request is what would reveal
+            // them. Everything unlocked falls straight through.
+            lockFlow.guard(id, item.title) {
+                // Opened from a shelf's "Show all" page, it stacks over the grid
+                // exactly as one opened from the Library tab stacks over that, so
+                // back from the release lands on the grid rather than skipping
+                // past it.
+                viewModel.openDetail(
+                    browseId = id,
+                    title = item.title,
+                    subtitle = item.subtitle,
+                    thumbnailUrl = item.thumbnailUrl,
+                )
+            }
         }
     }
     // Takes a list so a single tap on an album/playlist header can queue the
@@ -2985,6 +3071,7 @@ private fun BitChordApp(
         BackHandler(enabled = showUpdateDialog) { showUpdateDialog = false }
         BackHandler(enabled = showListenBrainzLogin) { showListenBrainzLogin = false }
         BackHandler(enabled = showLastfmLogin) { showLastfmLogin = false }
+        BackHandler(enabled = showAcrCloudEditor) { showAcrCloudEditor = false }
         BackHandler(enabled = discordDialog != null) { discordDialog = null }
         BackHandler(enabled = editingSource != null) { editingSource = null }
         BackHandler(enabled = choosingSourceQuality != null) { choosingSourceQuality = null }
@@ -3212,6 +3299,7 @@ private fun BitChordApp(
                                 onOpenLastfmLogin = { showLastfmLogin = true },
                                 onOpenDiscord = { navigator.push(AppRoute.Discord) },
                                 onOpenSpotify = { navigator.push(AppRoute.Spotify) },
+                                onEditAcrCloud = { showAcrCloudEditor = true },
                                 contentPadding = listPadding,
                             )
                         } else if (pageRoute == AppRoute.Sources) {
@@ -3237,6 +3325,7 @@ private fun BitChordApp(
                                 onConfirmDisconnect = { driveAlerts.disconnect = true },
                                 onConfirmRemove = { driveAlerts.remove = it },
                                 onRename = { driveAlerts.renaming = it },
+                                onSetPassphrase = { driveAlerts.settingPassphrase = "" },
                             )
                         } else if (pageRoute == AppRoute.DriveDevices) {
                             DriveDevicesScreen(
@@ -3309,6 +3398,8 @@ private fun BitChordApp(
                                 onEditSignatureApi = { editingSignatureApi = true },
                                 onConfirmBitPerfect = { confirmBitPerfect = it },
                                 onConfirmFixedVolume = { confirmFixedVolume = true },
+                                onChangeLockPin = { lockFlow.startChangePin() },
+                                onToggleBiometricUnlock = { lockFlow.startBiometricToggle() },
                                 contentPadding = listPadding,
                             )
                         } else if (page != null) {
@@ -3442,6 +3533,18 @@ private fun BitChordApp(
                             }
                             // This page's songs being rearranged, drawn in place of its list.
                             val reordering = reorderTarget?.takeIf { it.browseId == page.browseId }
+                            // A local playlist carries its own cover fields; a remote owned
+                            // playlist has no local entity, so its cover lives in the
+                            // registry. The default artwork is used whenever neither has a
+                            // file that is still on disk. An album's own cover is read by
+                            // [DetailScreen] itself, from the same registry.
+                            val localPagePlaylist = localPlaylists.firstOrNull {
+                                it.browseId == page.browseId || it.id == page.browseId
+                            }
+                            val registryCover = playlistCovers[PlaylistCoverStore.keyFor(page.browseId)]
+                            val pageCoverPath = localPagePlaylist?.customCoverPath
+                                ?.takeIf { File(it).isFile }
+                                ?: registryCover?.path?.takeIf { File(it).isFile }
                             DetailScreen(
                                 page = page,
                                 currentSong = player.song,
@@ -3555,6 +3658,8 @@ private fun BitChordApp(
                                 } else {
                                     null
                                 },
+                                customCoverPath = pageCoverPath,
+                                customCoverHash = localPagePlaylist?.coverHash ?: registryCover?.hash,
                             )
                         } else when ((destination as? AppDestination.Tab)?.index ?: selectedTab) {
                             TAB_HOME -> HomeScreen(
@@ -3792,6 +3897,27 @@ private fun BitChordApp(
                                 // suggestions and filters, and a gap reads as a break.
                                 topPadding = topBarHeight() + 4.dp,
                                 showField = false,
+                                unifiedSources = unifiedSources,
+                                unifiedHits = unifiedHits,
+                                unifiedFailures = unifiedFailures,
+                                unifiedSelected = unifiedSelected,
+                                unifiedLoading = unifiedLoading,
+                                onUnifiedToggle = viewModel::toggleUnifiedSource,
+                                onUnifiedClear = viewModel::clearUnifiedSources,
+                                onUnifiedPlay = { hit ->
+                                    viewModel.recordEntity(SearchHistoryEntity(
+                                        id = hit.song.videoId,
+                                        title = hit.song.title,
+                                        subtitle = hit.song.artist.ifEmpty { "" },
+                                        artworkUrl = hit.song.thumbnailUrl,
+                                        entityType = EntityType.TRACK,
+                                    ))
+                                    playRadio(
+                                        hit.song,
+                                        QueueSource(searchLabel, PlaybackSourceType.SEARCH),
+                                    )
+                                },
+                                onUnifiedLongPress = openSongMenu,
                                 // The settings page's own two-state selector, so the
                                 // app has one look for "pick one of these".
                                 sourceSwitcher = {
@@ -3989,35 +4115,18 @@ private fun BitChordApp(
                 }
 
                 FrostedTopBar(
-                    title = when (route) {
-                        AppRoute.Spotify -> stringResource(R.string.spotify)
-                        AppRoute.Downloads -> stringResource(R.string.downloads)
-                        AppRoute.Discord -> "Discord"
-                        AppRoute.History -> stringResource(R.string.history)
-                        is AppRoute.LibraryShowAll -> route.shelf.title
-                        is AppRoute.ArtistShelf -> route.shelf.title
-                        AppRoute.Moods -> stringResource(R.string.find_your_mood)
-                        AppRoute.AccountScrobbling -> stringResource(R.string.account_scrobbling)
-                        AppRoute.Sources -> stringResource(R.string.sources)
-                        AppRoute.ListenTogether -> stringResource(R.string.listen_together)
-                        AppRoute.WearOs -> stringResource(R.string.wear_os_page_title)
-                        AppRoute.DriveBackup -> stringResource(R.string.drive_backup_title)
-                        AppRoute.DriveDevices -> stringResource(R.string.drive_devices_title)
-                        AppRoute.Equalizer -> stringResource(R.string.equalizer)
-                        AppRoute.Settings -> stringResource(R.string.settings)
-                        is AppRoute.SettingsSection -> stringResource(route.category.title)
-                        is AppRoute.SettingsChoice -> stringResource(route.choice.title)
-                        AppRoute.EqualizerPresets -> stringResource(R.string.equalizer_preset)
-                        AppRoute.Replay -> stringResource(R.string.replay)
-                        null -> when {
-                            detail != null && detailActiveShelf != null -> detailActiveShelf?.title.orEmpty()
-                            detail != null -> detail.title
-                            selectedMoodGenre != null -> selectedMoodGenre?.title.orEmpty()
-                            else -> tabs[selectedTab].let {
-                                if (it.label == "Play") stringResource(R.string.listen_now) else it.label
-                            }
-                        }
-                    },
+                    // The title's thirty-odd branches are a helper: this composable
+                    // is at the JVM's 64 KB method limit, and the `when` alone is
+                    // hundreds of bytes of it.
+                    title = topBarTitleFor(
+                        route = route,
+                        detailTitle = detail?.title,
+                        shelfTitle = detailActiveShelf?.title?.takeIf { detail != null },
+                        moodTitle = selectedMoodGenre?.title.orEmpty().takeIf { selectedMoodGenre != null },
+                        homeTitle = tabs[selectedTab].label.let { label ->
+                            if (label == "Play") stringResource(R.string.listen_now) else label
+                        },
+                    ),
                     // Every page, in either material, uses separated floating
                     // circles over the shared gradient — no full-width pane.
                     transparentBackdrop = true,
@@ -4068,6 +4177,17 @@ private fun BitChordApp(
                                 onQueryChange = viewModel::onQueryChange,
                                 onSubmit = viewModel::submitSearch,
                                 focusRequester = searchFieldFocus,
+                                onMic = {
+                                    if (ContextCompat.checkSelfPermission(
+                                            context,
+                                            Manifest.permission.RECORD_AUDIO,
+                                        ) == PackageManager.PERMISSION_GRANTED
+                                    ) {
+                                        voiceOpen = true
+                                    } else {
+                                        microphonePermission.launch(Manifest.permission.RECORD_AUDIO)
+                                    }
+                                },
                                 placeholder = org.jetbrains.compose.resources.stringResource(
                                     if (searchSource == SearchSource.LIBRARY) {
                                         SharedRes.string.search_library_hint
@@ -4078,6 +4198,17 @@ private fun BitChordApp(
                                     },
                                 ),
                             )
+                            if (voiceOpen) {
+                                VoiceInputDialog(
+                                    onDismiss = { voiceOpen = false },
+                                    onPausePlayback = { controller?.pause() },
+                                    onQuery = { spoken ->
+                                        voiceOpen = false
+                                        viewModel.onQueryChange(spoken)
+                                        viewModel.submitSearch()
+                                    },
+                                )
+                            }
                         }
                     } else null,
                     actions = {
@@ -5406,9 +5537,45 @@ private fun BitChordApp(
             // One of the offline player's own playlists, which are the user's
             // to rename and delete — all but Liked, which is the app's.
             val offlineEditable = OfflinePlaylists.get(target.browseId)?.takeUnless { it.isLiked }
+            val localPlaylistForCover = target.browseId?.let(LocalPlaylistStore::getPlaylist)
+            // Same editability rule as Rename/Delete, applied to the cover
+            // rows: a cover belongs to a local playlist, an offline player
+            // playlist, or an account playlist the page reports as owned.
+            // Computed inside `remember` lambdas: BitChordApp is the largest
+            // composable in the app and its bytecode sits right under the JVM's
+            // 64 KB method limit, so work that does not need to be inlined here
+            // lives in its own synthetic method instead.
+            val coverTargetKey = remember(
+                target.browseId,
+                target.type,
+                playlist,
+                offlineEditable,
+                localPlaylistForCover,
+            ) {
+                coverKeyForTarget(target, playlist, offlineEditable?.browseId, localPlaylistForCover)
+            }
+            // Reads the collected map rather than the store directly, so the
+            // menu observes a cover being written or removed.
+            val storedCover = remember(coverTargetKey, playlistCovers) {
+                storedCoverFor(coverTargetKey, playlistCovers)
+            }
+            val hasCustomCover = localPlaylistForCover?.customCoverPath
+                ?.let { File(it).isFile } == true || storedCover != null
             // A playlist imported onto this device (signed out, or YouTube
             // refused it) is the user's to rename and delete as well.
-            val importEditable = localPlaylists.firstOrNull { it.browseId == target.browseId }
+            val importEditable = remember(target.browseId, localPlaylists) {
+                localPlaylists.firstOrNull { it.browseId == target.browseId }
+            }
+            // Locking is offered for the two things a lock protects: a playlist
+            // and an album. Collected rather than read, so the row flips to
+            // Unlock the moment the lock is applied.
+            val lockedCollections by CollectionLocks.locked.collectAsStateWithLifecycle()
+            val lockableId = remember(target.browseId, target.type) {
+                target.browseId?.takeIf {
+                    target.type == BrowseType.PLAYLIST || target.type == BrowseType.ALBUM
+                }
+            }
+            val menuLocked = lockableId?.let { CollectionLocks.normalize(it) in lockedCollections } == true
             BrowseActionsMenu(
                 // The live answer, not the one the target was built with.
                 target = target.copy(
@@ -5452,13 +5619,15 @@ private fun BitChordApp(
                     ?.let { id ->
                         {
                             browseActions = null
-                            viewModel.openDetail(
-                                browseId = id,
-                                title = target.title,
-                                subtitle = target.subtitle,
-                                thumbnailUrl = target.thumbnailUrl,
-                                type = target.type,
-                            )
+                            lockFlow.guard(id, target.title) {
+                                viewModel.openDetail(
+                                    browseId = id,
+                                    title = target.title,
+                                    subtitle = target.subtitle,
+                                    thumbnailUrl = target.thumbnailUrl,
+                                    type = target.type,
+                                )
+                            }
                         }
                     },
                 // The one place a whole release is asked for, from a card and
@@ -5522,6 +5691,42 @@ private fun BitChordApp(
                             ).show()
                         }
                         browseActions = null
+                    }
+                },
+                isLocked = menuLocked,
+                onToggleLock = lockableId?.let { id ->
+                    {
+                        browseActions = null
+                        lockFlow.toggleLock(id, target.title)
+                    }
+                },
+                hasCustomCover = hasCustomCover,
+                onSetCustomCover = coverTargetKey?.let { key ->
+                    {
+                        browseActions = null
+                        pendingPlaylistCoverKey = key
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+                            ActivityResultContracts.PickVisualMedia.isPhotoPickerAvailable(context)
+                        ) {
+                            playlistCoverPicker.launch(
+                                PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly),
+                            )
+                        } else {
+                            // The system picker is not on every 13+ device; the
+                            // document picker is the same one-image flow when
+                            // it is missing.
+                            playlistCoverContentPicker.launch("image/*")
+                        }
+                    }
+                },
+                onRemoveCustomCover = coverTargetKey?.takeIf { hasCustomCover }?.let { key ->
+                    {
+                        browseActions = null
+                        scope.launch {
+                            if (removeCustomCover(key) != null) {
+                                Toast.makeText(context, context.getString(R.string.failed), Toast.LENGTH_SHORT).show()
+                            }
+                        }
                     }
                 },
                 onRename = playlist?.let { p ->
@@ -5798,6 +6003,8 @@ private fun BitChordApp(
             }
         }
 
+        LockFlowHost(lockFlow)
+
         if (showLyricsSources) {
             BackHandler { showLyricsSources = false }
             LyricsSourcesDialog(
@@ -5914,6 +6121,10 @@ private fun BitChordApp(
                 },
                 onDismiss = { showListenBrainzLogin = false },
             )
+        }
+
+        if (showAcrCloudEditor) {
+            AcrCloudEditorHost(hazeState = hazeState, onDismiss = { showAcrCloudEditor = false })
         }
 
         if (showLastfmLogin) {
@@ -6669,3 +6880,156 @@ private suspend fun LazyListState.scrollToTopEased() {
 
 /** Safely converts a nullable Float to non-null, defaulting to 0f for null. */
 private fun Float?.orZero(): Float = this ?: 0f
+
+/**
+ * The ACRCloud project editor.
+ *
+ * Kept out of [BitChordApp] rather than inlined: that composable is the app's
+ * largest, its bytecode sits under the JVM's 64 KB method limit, and every
+ * field this dialog holds is local to it.
+ */
+@Composable
+private fun AcrCloudEditorHost(
+    hazeState: HazeState,
+    onDismiss: () -> Unit,
+) {
+    var hostInput by remember { mutableStateOf(AppSettings.acrCloudHost.value) }
+    var accessKeyInput by remember { mutableStateOf(AppSettings.acrCloudAccessKey.value) }
+    var accessSecretInput by remember { mutableStateOf(AppSettings.acrCloudAccessSecret.value) }
+    val hasStored = AppSettings.acrCloudHost.value.isNotBlank() ||
+        AppSettings.acrCloudAccessKey.value.isNotBlank() ||
+        AppSettings.acrCloudAccessSecret.value.isNotBlank()
+    AcrCloudEditorAlert(
+        hazeState = hazeState,
+        host = hostInput,
+        accessKey = accessKeyInput,
+        accessSecret = accessSecretInput,
+        onHostChange = { hostInput = it },
+        onAccessKeyChange = { accessKeyInput = it },
+        onAccessSecretChange = { accessSecretInput = it },
+        canSave = hostInput.isNotBlank() &&
+            accessKeyInput.isNotBlank() &&
+            accessSecretInput.isNotBlank(),
+        onSave = {
+            AppSettings.setAcrCloudConfig(hostInput, accessKeyInput, accessSecretInput)
+            onDismiss()
+        },
+        onClear = if (hasStored) {
+            {
+                AppSettings.clearAcrCloud()
+                onDismiss()
+            }
+        } else {
+            null
+        },
+        onDismiss = onDismiss,
+    )
+}
+
+/**
+ * The registry key a browse target's cover lives under, or null when the menu
+ * offers no cover action for it.
+ *
+ * An album is keyed in the registry's album namespace by its browse id, which
+ * is the same key its own page reads — so a cover set from a card is drawn the
+ * moment the page opens.
+ */
+private fun coverKeyForTarget(
+    target: BrowseTarget,
+    playlist: UserPlaylist?,
+    offlineEditableId: String?,
+    localPlaylist: LocalPlaylist?,
+): String? {
+    val id = target.browseId ?: return null
+    return when {
+        target.type == BrowseType.ALBUM -> PlaylistCoverStore.albumKeyFor(id)
+        target.type != BrowseType.PLAYLIST -> null
+        localPlaylist != null -> localPlaylist.browseId
+        playlist != null -> playlist.browseId
+        offlineEditableId != null -> offlineEditableId
+        else -> null
+    }
+}
+
+/** The stored cover for [key], read through the collected map so a write is seen. */
+private fun storedCoverFor(key: String?, covers: Map<String, PlaylistCover>): PlaylistCover? {
+    if (key == null) return null
+    return if (PlaylistCoverStore.isAlbumKey(key)) {
+        covers[key]?.takeIf { File(it.path).isFile }
+    } else {
+        PlaylistCoverStore.coverFor(key)
+    }
+}
+
+/**
+ * Writes a picked image as [key]'s cover, returning the failure to show or null.
+ *
+ * An album has no local entity to carry the file: its cover lives in the
+ * registry under the album namespace, keyed by the same browse id its page
+ * reads. A local playlist keeps its own copy of both fields as well.
+ */
+private suspend fun applyCustomCover(key: String, source: String): Throwable? =
+    if (PlaylistCoverStore.isAlbumKey(key)) {
+        PlaylistCoverStore.setAlbumCover(PlaylistCoverStore.albumIdOf(key), source).exceptionOrNull()
+    } else {
+        val local = com.music.bitchord.data.spotify.LocalPlaylistStore.getPlaylist(key)
+        if (local != null) {
+            com.music.bitchord.data.spotify.LocalPlaylistStore
+                .setCustomPlaylistCover(local.id, source)
+                .exceptionOrNull()
+        } else {
+            PlaylistCoverStore.setCover(key, source).exceptionOrNull()
+        }
+    }
+
+/** Removes [key]'s cover from wherever it was stored, returning the failure or null. */
+private suspend fun removeCustomCover(key: String): Throwable? =
+    if (PlaylistCoverStore.isAlbumKey(key)) {
+        PlaylistCoverStore.removeAlbumCover(PlaylistCoverStore.albumIdOf(key)).exceptionOrNull()
+    } else {
+        val local = com.music.bitchord.data.spotify.LocalPlaylistStore.getPlaylist(key)
+        if (local != null) {
+            com.music.bitchord.data.spotify.LocalPlaylistStore
+                .removeCustomPlaylistCover(local.id)
+                .exceptionOrNull()
+        } else {
+            PlaylistCoverStore.removeCover(key).exceptionOrNull()
+        }
+    }
+
+/**
+ * The floating bar's title for whatever is on screen.
+ *
+ * Every pushed route names itself; over a tab, the open page or shelf does,
+ * and otherwise the tab does. Kept out of `BitChordApp` because that `when` is
+ * a large slice of a composable already at the JVM's 64 KB method limit.
+ */
+@Composable
+private fun topBarTitleFor(
+    route: AppRoute?,
+    detailTitle: String?,
+    shelfTitle: String?,
+    moodTitle: String?,
+    homeTitle: String,
+): String = when (route) {
+    AppRoute.Spotify -> stringResource(R.string.spotify)
+    AppRoute.Downloads -> stringResource(R.string.downloads)
+    AppRoute.Discord -> "Discord"
+    AppRoute.History -> stringResource(R.string.history)
+    is AppRoute.LibraryShowAll -> route.shelf.title
+    is AppRoute.ArtistShelf -> route.shelf.title
+    AppRoute.Moods -> stringResource(R.string.find_your_mood)
+    AppRoute.AccountScrobbling -> stringResource(R.string.account_scrobbling)
+    AppRoute.Sources -> stringResource(R.string.sources)
+    AppRoute.ListenTogether -> stringResource(R.string.listen_together)
+    AppRoute.WearOs -> stringResource(R.string.wear_os_page_title)
+    AppRoute.DriveBackup -> stringResource(R.string.drive_backup_title)
+    AppRoute.DriveDevices -> stringResource(R.string.drive_devices_title)
+    AppRoute.Equalizer -> stringResource(R.string.equalizer)
+    AppRoute.Settings -> stringResource(R.string.settings)
+    is AppRoute.SettingsSection -> stringResource(route.category.title)
+    is AppRoute.SettingsChoice -> stringResource(route.choice.title)
+    AppRoute.EqualizerPresets -> stringResource(R.string.equalizer_preset)
+    AppRoute.Replay -> stringResource(R.string.replay)
+    null -> shelfTitle ?: detailTitle ?: moodTitle ?: homeTitle
+}

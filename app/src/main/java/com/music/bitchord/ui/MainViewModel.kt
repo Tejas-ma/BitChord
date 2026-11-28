@@ -19,6 +19,7 @@ import com.music.bitchord.data.TopPicks
 import com.music.bitchord.data.AppleArtistPhotos
 import com.music.bitchord.data.model.ArtistRef
 import com.music.bitchord.data.model.TopPick
+import com.music.bitchord.data.security.CollectionLocks
 import com.music.bitchord.data.stats.ListeningStats
 import com.music.bitchord.data.stats.ReplayPeriod
 import android.util.Log
@@ -87,17 +88,27 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.debounce
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.flowOn
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
+import com.music.bitchord.data.search.UnifiedSearchBatch
+import com.music.bitchord.data.search.UnifiedSearchEngine
+import com.music.bitchord.data.search.UnifiedSearchEvent
+import com.music.bitchord.data.search.UnifiedSearchFailure
+import com.music.bitchord.data.search.UnifiedSearchHit
+import com.music.bitchord.data.search.UnifiedSearchSource
 import com.music.bitchord.data.sources.AddonSource
+import com.music.bitchord.data.sources.UnifiedSourceSearch
 import com.music.bitchord.data.sources.SourceKind
 import com.music.bitchord.data.sources.SourceRegistry
 import com.music.bitchord.data.sources.SourceResolver
@@ -245,6 +256,89 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private val _addonResults = MutableStateFlow<UiState<List<Song>>?>(null)
     val addonResults: StateFlow<UiState<List<Song>>?> = _addonResults.asStateFlow()
     private var addonSearchJob: Job? = null
+
+    /**
+     * Every configured source's answer to the committed query, as one stream
+     * of batches — see [UnifiedSourceSearch].
+     *
+     * The YouTube tab used to be YouTube's; these rows are the rest of the
+     * catalogues, each tagged with the source it came from so a tap plays that
+     * exact copy. Batches land as each source replies, so the first catalogue
+     * to answer paints instead of the page waiting for the slowest addon.
+     */
+    private val _unifiedSources = MutableStateFlow<List<UnifiedSearchSource>>(emptyList())
+    val unifiedSources: StateFlow<List<UnifiedSearchSource>> = _unifiedSources.asStateFlow()
+
+    private val _unifiedHits = MutableStateFlow<List<UnifiedSearchHit>>(emptyList())
+    val unifiedHits: StateFlow<List<UnifiedSearchHit>> = _unifiedHits.asStateFlow()
+
+    private val _unifiedFailures = MutableStateFlow<List<UnifiedSearchFailure>>(emptyList())
+    val unifiedFailures: StateFlow<List<UnifiedSearchFailure>> = _unifiedFailures.asStateFlow()
+
+    /** Source ids the chips narrow the unified rows to; empty means all of them. */
+    private val _unifiedSelected = MutableStateFlow<Set<String>>(emptySet())
+    val unifiedSelected: StateFlow<Set<String>> = _unifiedSelected.asStateFlow()
+
+    private val _unifiedLoading = MutableStateFlow(false)
+    val unifiedLoading: StateFlow<Boolean> = _unifiedLoading.asStateFlow()
+
+    private var unifiedSearchJob: Job? = null
+
+    /** Adds or removes one source from the chips' filter. */
+    fun toggleUnifiedSource(sourceId: String) {
+        _unifiedSelected.value = _unifiedSelected.value.let { selected ->
+            if (sourceId in selected) selected - sourceId else selected + sourceId
+        }
+    }
+
+    fun clearUnifiedSources() {
+        _unifiedSelected.value = emptySet()
+    }
+
+    /**
+     * Asks every configured source for [query] at once, merging each batch as
+     * it arrives. A source that fails or times out costs its own rows only.
+     */
+    private fun runUnifiedSearch(query: String) {
+        unifiedSearchJob?.cancel()
+        _unifiedHits.value = emptyList()
+        _unifiedFailures.value = emptyList()
+        _unifiedSources.value = emptyList()
+        _unifiedLoading.value = true
+        unifiedSearchJob = viewModelScope.launch {
+            val batches = mutableListOf<UnifiedSearchBatch>()
+            val failures = mutableListOf<UnifiedSearchFailure>()
+            try {
+                UnifiedSourceSearch.engine.search(query).collect { event ->
+                    when (event) {
+                        is UnifiedSearchEvent.Started -> _unifiedSources.value = event.sources
+                        is UnifiedSearchEvent.Batch -> {
+                            batches += event.batch
+                            _unifiedHits.value = UnifiedSearchEngine.interleave(batches)
+                        }
+                        is UnifiedSearchEvent.Failed -> {
+                            failures += event.failure
+                            _unifiedFailures.value = failures.toList()
+                        }
+                        is UnifiedSearchEvent.Done -> {
+                            _unifiedHits.value = event.hits
+                            _unifiedFailures.value = event.failures
+                        }
+                    }
+                }
+            } finally {
+                _unifiedLoading.value = false
+            }
+        }
+    }
+
+    private fun clearUnifiedSearch() {
+        unifiedSearchJob?.cancel()
+        _unifiedSources.value = emptyList()
+        _unifiedHits.value = emptyList()
+        _unifiedFailures.value = emptyList()
+        _unifiedLoading.value = false
+    }
 
     /** The words typed into the Addons search before, newest first. */
     val addonSearchHistory: StateFlow<List<String>> = SearchHistory.addonRecent
@@ -632,6 +726,19 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
      */
     private val _detailStack = MutableStateFlow<List<DetailPage>>(emptyList())
     val detailStack: StateFlow<List<DetailPage>> = _detailStack.asStateFlow()
+
+    init {
+        // An unlock granted while Locked Timer is "Immediately" ends when the
+        // page it was granted for leaves this stack. Every way a playlist or
+        // album closes — Back, a tab, the playlist being deleted — shrinks the
+        // stack, so the relock lives here once rather than at each caller.
+        viewModelScope.launch {
+            detailStack
+                .map { pages -> pages.map(DetailPage::browseId) }
+                .distinctUntilChanged()
+                .collect { open -> CollectionLocks.retainExitGrants(open) }
+        }
+    }
 
     /**
      * The app's back stack: the routes pushed over the tabs, interleaved with
@@ -2258,6 +2365,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         searchSubmitted = true
         _suggestions.value = emptyList()
         _typeaheadResults.value = emptyList()
+        runUnifiedSearch(term)
         // Signed in, like any search the user commits to: an anonymous search
         // ranks by what is popular, not by what this account listens to. A
         // term picked here is a whole query, the same one YouTube Music's own
@@ -2278,6 +2386,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             _results.value = null
             addonSearchJob?.cancel()
             _addonResults.value = null
+            clearUnifiedSearch()
             // The list is about to switch from search results to recent
             // searches (or the empty state) — without this it can keep
             // whatever scroll offset the results list was left at, landing
@@ -2310,6 +2419,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             return
         }
         runSearch(refresh = true)
+        runUnifiedSearch(q)
     }
 
     /**
@@ -2657,7 +2767,10 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         filter: SearchFilter,
     ): Pair<List<SearchResult>, List<SearchResult>> = coroutineScope {
         if (filter != SearchFilter.SONGS) return@coroutineScope emptyList<SearchResult>() to emptyList()
-        val active = SourceRegistry.activeForPlayback()
+        // Addons are asked here even when automatic addon usage is off: the
+        // listener typed this query, which makes showing its addon rows manual
+        // use. Playback of one still takes the explicit-pick path.
+        val active = SourceRegistry.activeForPlayback(includeAddons = true)
         val youtubeRank = active.indexOfFirst { it.kind == SourceKind.YOUTUBE }
             .let { if (it < 0) active.size else it }
 
@@ -2865,12 +2978,60 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    /**
+     * A locked playlist or album something asked to open, waiting on the PIN.
+     *
+     * Published rather than fetched: the page request is what would reveal the
+     * tracks, so it must not start until the prompt has passed. The UI hosts the
+     * prompt and re-opens with [openDetail] once it has.
+     */
+    data class LockedOpen(
+        val browseId: String,
+        val title: String,
+        val subtitle: String,
+        val thumbnailUrl: String?,
+        val type: BrowseType,
+    )
+
+    private val _lockedOpen = MutableStateFlow<LockedOpen?>(null)
+
+    /** The collection whose PIN is owed, or null when none is. */
+    val lockedOpen: StateFlow<LockedOpen?> = _lockedOpen.asStateFlow()
+
+    /** Called once the prompt has taken the request, so it is not offered twice. */
+    fun clearLockedOpen() {
+        _lockedOpen.value = null
+    }
+
+    /**
+     * Opens a release page, or asks for its PIN first when it is locked.
+     *
+     * The gate is here, not only at each card, because every way in — a shelf
+     * card, a search hit, a link from outside, the menu's Open, a restore — ends
+     * in this one function. A caller that has already collected the PIN in this
+     * run passes straight through (see [CollectionLocks.isGated]).
+     */
     fun openDetail(
         browseId: String,
         title: String,
         subtitle: String = "",
         thumbnailUrl: String? = null,
         type: BrowseType = BrowseType.OTHER,
+    ) {
+        if (CollectionLocks.isGated(browseId)) {
+            _lockedOpen.value = LockedOpen(browseId, title, subtitle, thumbnailUrl, browseTypeOf(browseId, type))
+            return
+        }
+        openDetailNow(browseId, title, subtitle, thumbnailUrl, type)
+    }
+
+    /** [openDetail] once the lock gate is satisfied. */
+    private fun openDetailNow(
+        browseId: String,
+        title: String,
+        subtitle: String,
+        thumbnailUrl: String?,
+        type: BrowseType,
     ) {
         // A fast double tap used to push two identical loading pages and launch
         // two identical browse requests. Besides wasting the connection, both

@@ -22,7 +22,7 @@ class LocaleStringsTest(private val tag: String) {
         @Parameterized.Parameters(name = "{0}")
         fun locales(): List<String> = SUPPORTED_LANGUAGES.map { it.tag }.filter { it != "en" }
 
-        private val resDir: File by lazy {
+        internal val resDir: File by lazy {
             val projectRoot = File(".").canonicalFile
             if (File(projectRoot, "app/src/main/res").exists()) {
                 File(projectRoot, "app/src/main/res")
@@ -31,11 +31,11 @@ class LocaleStringsTest(private val tag: String) {
             }
         }
 
-        private fun parse(file: File): Document =
+        internal fun parse(file: File): Document =
             DocumentBuilderFactory.newInstance().newDocumentBuilder().parse(file)
 
         /** Keys that need translating: `translatable="false"` entries are excluded. */
-        private fun translatableKeys(doc: Document): Set<String> {
+        internal fun translatableKeys(doc: Document): Set<String> {
             val keys = mutableSetOf<String>()
             for (tagName in listOf("string", "plurals", "string-array")) {
                 val nodes = doc.getElementsByTagName(tagName)
@@ -49,7 +49,7 @@ class LocaleStringsTest(private val tag: String) {
             return keys
         }
 
-        private val baseKeys: Set<String> by lazy {
+        internal val baseKeys: Set<String> by lazy {
             translatableKeys(parse(File(resDir, "values/strings.xml")))
         }
 
@@ -76,6 +76,40 @@ class LocaleStringsTest(private val tag: String) {
         assertTrue(
             "values-$qualifier/strings.xml (language $tag) is missing ${missingKeys.size} keys from values/strings.xml: $missingKeys",
             missingKeys.isEmpty(),
+        )
+    }
+}
+
+/**
+ * The same completeness check, over every translated catalogue on disk rather
+ * than only the languages the picker offers.
+ *
+ * `values-zh-rHK` and `values-b+zh+Hant` are what Android resolves for a device
+ * set to those locales, but neither is in [SUPPORTED_LANGUAGES], so the
+ * parameterised test above never read them — and both were six keys short,
+ * which is a Hong Kong or Traditional-Chinese device seeing those settings fall
+ * back to a different script mid-screen. Walking the directories keeps a future
+ * catalogue from shipping half translated the same way.
+ */
+class AllLocaleCataloguesTest {
+
+    @Test
+    fun everyTranslatedCatalogueHasAllBaseKeys() {
+        val resDir = LocaleStringsTest.resDir
+        val catalogues = resDir.listFiles { file ->
+            file.isDirectory && file.name.startsWith("values-") && File(file, "strings.xml").isFile
+        }.orEmpty().sortedBy { it.name }
+
+        assertTrue("no translated catalogues found under $resDir", catalogues.isNotEmpty())
+
+        val incomplete = catalogues.mapNotNull { dir ->
+            val missing = LocaleStringsTest.baseKeys -
+                LocaleStringsTest.translatableKeys(LocaleStringsTest.parse(File(dir, "strings.xml")))
+            if (missing.isEmpty()) null else "${dir.name}: ${missing.sorted()}"
+        }
+        assertTrue(
+            "translated catalogues are missing keys from values/strings.xml:\n${incomplete.joinToString("\n")}",
+            incomplete.isEmpty(),
         )
     }
 }

@@ -7,6 +7,8 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.music.bitchord.data.backup.BackupCipher
 import com.music.bitchord.R
 import com.music.bitchord.data.backup.DriveBackup
 import com.music.bitchord.data.backup.RemoteDevice
@@ -28,6 +30,9 @@ class DriveBackupAlerts {
 
     /** This phone's device name being edited, or null. */
     var renaming by mutableStateOf<String?>(null)
+
+    /** The backup passphrase being typed, or null when its alert is closed. Empty opens it. */
+    var settingPassphrase by mutableStateOf<String?>(null)
 }
 
 /**
@@ -91,6 +96,55 @@ fun DriveBackupAlertsHost(
                 onRestoreStarted()
             },
             onDismiss = { alerts.restore = null },
+        )
+    }
+
+    // A backup that is encrypted asks for the passphrase that opens it, and
+    // carries on with the restore or sync once it is given.
+    val prompt by DriveBackup.passphrasePrompt.collectAsStateWithLifecycle()
+    prompt?.let { waiting ->
+        var typed by androidx.compose.runtime.remember(waiting) { mutableStateOf("") }
+        TextValueAlert(
+            hazeState = hazeState,
+            title = stringResource(R.string.backup_passphrase_set_title),
+            message = stringResource(
+                if (waiting.rejected) R.string.backup_passphrase_wrong else R.string.backup_passphrase_required,
+            ),
+            placeholder = stringResource(R.string.backup_passphrase_hint),
+            value = typed,
+            onValueChange = { typed = it },
+            onSave = { if (typed.isNotBlank()) DriveBackup.submitPassphrase(typed) },
+            onDismiss = { DriveBackup.dismissPassphrasePrompt() },
+            saveEnabled = typed.length >= BackupCipher.MIN_PASSPHRASE_LENGTH,
+            masked = true,
+        )
+    }
+
+    alerts.settingPassphrase?.let { typed ->
+        val enabled = DriveBackup.hasPassphrase()
+        TextValueAlert(
+            hazeState = hazeState,
+            title = stringResource(R.string.backup_passphrase_set_title),
+            message = stringResource(R.string.backup_passphrase_set_body),
+            placeholder = stringResource(R.string.backup_passphrase_hint),
+            value = typed,
+            onValueChange = { alerts.settingPassphrase = it },
+            onSave = {
+                if (DriveBackup.setBackupPassphrase(typed)) alerts.settingPassphrase = null
+            },
+            // A blank passphrase turns encryption off; the button says so.
+            onRemove = if (enabled) {
+                {
+                    DriveBackup.setBackupPassphrase(null)
+                    alerts.settingPassphrase = null
+                }
+            } else {
+                null
+            },
+            onDismiss = { alerts.settingPassphrase = null },
+            // Off (blank) is allowed to save; a one-character passphrase is not.
+            saveEnabled = typed.isBlank() || typed.length >= BackupCipher.MIN_PASSPHRASE_LENGTH,
+            masked = true,
         )
     }
 

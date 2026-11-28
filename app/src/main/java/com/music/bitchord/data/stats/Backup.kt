@@ -149,6 +149,8 @@ object Backup {
     data class Summary(
         val months: Int,
         val settings: Int,
+        /** Custom covers written back into this device's cover directory. */
+        val covers: Int = 0,
         val from: String,
         val at: String,
     )

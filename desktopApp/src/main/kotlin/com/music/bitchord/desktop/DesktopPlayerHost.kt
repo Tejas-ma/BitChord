@@ -1,0 +1,366 @@
+package com.music.bitchord.desktop
+
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
+import androidx.compose.ui.Modifier
+import com.music.bitchord.data.canvas.CanvasArtwork
+import com.music.bitchord.data.lyrics.LyricLine
+import com.music.bitchord.data.lyrics.LyricsSource
+import com.music.bitchord.data.lyrics.LyricsTranslation
+import com.music.bitchord.data.model.Song
+import com.music.bitchord.data.settings.AudioQuality
+import com.music.bitchord.data.settings.LastPlayerScreen
+import com.music.bitchord.data.settings.MixBlend
+import com.music.bitchord.data.settings.MixTransitionView
+import com.music.bitchord.data.settings.PlayerTheme
+import com.music.bitchord.data.settings.SmartAnalysis
+import com.music.bitchord.data.settings.TransitionWindow
+import com.music.bitchord.ui.player.AudioOutputDevice
+import com.music.bitchord.ui.player.AudioOutputKind
+import com.music.bitchord.ui.player.CanvasVideoSpec
+import com.music.bitchord.ui.player.LyricsRomanizationResult
+import com.music.bitchord.ui.player.LyricsTranslationResult
+import com.music.bitchord.ui.player.MAX_LYRICS_OFFSET_MS
+import com.music.bitchord.ui.player.MIN_LYRICS_OFFSET_MS
+import com.music.bitchord.ui.player.OutputFormatUi
+import com.music.bitchord.ui.player.PartyUi
+import com.music.bitchord.data.innertube.InnerTubeXResolver
+import com.music.bitchord.ui.player.MusicVideoQualityUi
+import com.music.bitchord.ui.player.PlayerFrost
+import com.music.bitchord.ui.player.PlayerHost
+import com.music.bitchord.ui.player.PlayerSettingsSource
+import com.music.bitchord.ui.player.SystemVolume
+import dev.chrisbanes.haze.HazeState
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.withContext
+import java.util.Locale
+
+/**
+ * The desktop's answers to the shared player's [PlayerHost].
+ *
+ * The player itself is the phone's, line for line; this is only what sits
+ * under it here — the desktop's settings, its FFmpeg Canvas decoder, its mixers
+ * as outputs, its party, its translation client. The window keeps the few
+ * pieces of live state it owns ([volumeLevel], [pipelineDialog]) up to date.
+ */
+/** What a music video is laid out at before its own stream says otherwise. */
+private const val VIDEO_AUTO_ASPECT = 16f / 9f
+
+/** The height Auto opens a video at. */
+private const val VIDEO_AUTO_HEIGHT = 1080
+
+internal object DesktopPlayerHost : PlayerHost {
+
+    /** One frost for the whole session: a still of the player, drawn under its panels. */
+    private val playerFrost = DesktopPlayerFrost()
+
+    /** The phone's panels frost the player on every target but the one that asked not to. */
+    @Composable
+    override fun rememberPlayerFrost(): PlayerFrost? = playerFrost
+
+    /** A music video is a video-only stream FFmpeg decodes — see [DesktopMusicVideo]. */
+    override val musicVideoSupported: Boolean = true
+
+    /** Whether the audio transport is playing: the music video holds its last frame with it. */
+    val transportPlaying = MutableStateFlow(false)
+
+    /** Where the audio transport is, in milliseconds: the music video seeks to it. */
+    val transportPositionMs = MutableStateFlow(0L)
+
+    private val videoAspect = MutableStateFlow(VIDEO_AUTO_ASPECT)
+    override val musicVideoAspect: StateFlow<Float> = videoAspect
+
+    private val videoQuality = MutableStateFlow(MusicVideoQualityUi())
+    override val musicVideoQuality: StateFlow<MusicVideoQualityUi> = videoQuality
+
+    override fun setMusicVideoQuality(height: Int?) {
+        videoQuality.value = videoQuality.value.copy(held = height)
+    }
+
+    /** [DesktopMusicVideo]'s own report, so the sleeve can lay itself out at the video's shape. */
+    fun publishVideoAspect(aspect: Float) {
+        if (aspect > 0f) videoAspect.value = aspect
+    }
+
+    /**
+     * The video-only stream behind a music video, at the height the listener picked — Auto takes
+     * 1080. The picker's list comes back with it, off the same response.
+     */
+    suspend fun videoStream(videoId: String): InnerTubeXResolver.VideoStream? {
+        val held = videoQuality.value.held
+        val height = held ?: VIDEO_AUTO_HEIGHT
+        return runCatching { InnerTubeXResolver.extractVideo(videoId, height) }.getOrNull()
+            ?.also { stream ->
+                videoQuality.value = MusicVideoQualityUi(
+                    heights = stream.heights,
+                    held = held,
+                    activeHeight = stream.height,
+                )
+            }
+    }
+
+    @Composable
+    override fun MusicVideo(
+        videoId: String,
+        fit: Boolean,
+        onRenderedChanged: (Boolean) -> Unit,
+        modifier: Modifier,
+    ) = DesktopMusicVideo(videoId, fit, onRenderedChanged, modifier)
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+
+    override val settings: DesktopPlayerSettings = DesktopPlayerSettings
+
+    override fun cachedCanvas(song: Song): CanvasArtwork? = DesktopCanvasClient.cached(song)?.toShared()
+
+    override suspend fun canvasFor(song: Song): CanvasArtwork? =
+        withContext(Dispatchers.IO) { DesktopCanvasClient.lookup(song) }?.toShared()
+
+    @Composable
+    override fun CanvasVideo(spec: CanvasVideoSpec, modifier: Modifier) = DesktopCanvasVideo(spec, modifier)
+
+    // Local files carry their art on the row already; there is no remote store to ask.
+    @Composable
+    override fun rememberRemoteArtworkUrl(song: Song?): String? = song?.thumbnailUrl
+
+    /** The player's volume, 0..1, as the window holds it. */
+    val volumeLevel = MutableStateFlow(1f)
+
+    /** Where a drag on the player's volume bar goes — set by the window. */
+    @Volatile
+    var onVolumeChange: (Float) -> Unit = { volumeLevel.value = it }
+
+    override val volume: SystemVolume = object : SystemVolume {
+        override val level: StateFlow<Float> = volumeLevel.asStateFlow()
+        override fun set(level: Float) = onVolumeChange(level.coerceIn(0f, 1f))
+        override fun refresh() = Unit
+    }
+
+    /** The last list handed to the drawer, for turning a row's id back into a mixer. */
+    @Volatile
+    private var listed: List<String> = emptyList()
+
+    @Composable
+    override fun rememberAudioOutputs(): List<AudioOutputDevice> {
+        val selected by DesktopAudioDevices.selected.collectAsState()
+        val changes by DesktopAudioDevices.changes.collectAsState()
+        val devices = remember(changes) { DesktopAudioDevices.available() }
+        return remember(selected, devices) {
+            val ids = listOf(DesktopAudioDevices.SYSTEM_DEFAULT) + devices.map { it.id }
+            listed = ids
+            ids.mapIndexed { index, id ->
+                val name = if (id == DesktopAudioDevices.SYSTEM_DEFAULT) {
+                    DesktopStrings["d_system_default", "System default"]
+                } else {
+                    devices.first { it.id == id }.name
+                }
+                AudioOutputDevice(
+                    id = index,
+                    name = name,
+                    kind = kindOf(name),
+                    isActive = id == selected,
+                )
+            }
+        }
+    }
+
+    @Composable
+    override fun rememberOutputPicker(onOpen: () -> Unit): () -> Unit = onOpen
+
+    override fun selectAudioOutput(id: Int?) {
+        val device = id?.let { listed.getOrNull(it) } ?: DesktopAudioDevices.SYSTEM_DEFAULT
+        DesktopAudioDevices.select(device)
+    }
+
+    /** The engine's output stage, kept current by the window. */
+    val pipeline = MutableStateFlow(DesktopAudioPipeline())
+
+    override val outputFormat: StateFlow<OutputFormatUi> = pipeline
+        .map { it.toOutputFormat() }
+        .stateIn(scope, SharingStarted.Eagerly, OutputFormatUi())
+
+    override val party: StateFlow<PartyUi> = DesktopListenTogether.state
+        .map {
+            PartyUi(
+                inParty = it.inParty,
+                controlsLocked = it.controlsLocked,
+                members = it.members,
+                you = it.you,
+                code = it.code,
+            )
+        }
+        .stateIn(scope, SharingStarted.Eagerly, PartyUi())
+
+    override suspend fun translateLyrics(
+        trackId: String,
+        lines: List<LyricLine>,
+        targetLanguageTag: String,
+    ): LyricsTranslationResult =
+        when (val result = LyricsTranslation.translate(trackId, lines, targetLanguageTag)) {
+            is LyricsTranslation.Result.Translated -> LyricsTranslationResult.Translated(result.lines)
+            is LyricsTranslation.Result.SameLanguage -> LyricsTranslationResult.SameLanguage(result.language)
+            LyricsTranslation.Result.Unavailable -> LyricsTranslationResult.Unavailable
+        }
+
+    override suspend fun romanizeLyrics(
+        trackId: String,
+        lines: List<LyricLine>,
+        targetLanguageTag: String,
+    ): LyricsRomanizationResult =
+        when (val result = LyricsTranslation.romanize(trackId, lines, targetLanguageTag)) {
+            is LyricsTranslation.RomanizationResult.Romanized -> LyricsRomanizationResult.Romanized(result.lines)
+            LyricsTranslation.RomanizationResult.AlreadyRomanized -> LyricsRomanizationResult.AlreadyRomanized
+            LyricsTranslation.RomanizationResult.Unavailable -> LyricsRomanizationResult.Unavailable
+        }
+
+    /** The newest notice, for the window to show and clear. */
+    val messages = MutableStateFlow<String?>(null)
+
+    override fun showMessage(message: String) {
+        messages.value = message
+    }
+
+    /** The desktop's signal-chain readout, supplied by the window that has the engine. */
+    @Volatile
+    var pipelineDialog: (@Composable (onDismiss: () -> Unit) -> Unit)? = null
+
+    @Composable
+    override fun AudioPipelineDialog(hazeState: HazeState, isPlaying: Boolean, onDismiss: () -> Unit) {
+        pipelineDialog?.invoke(onDismiss)
+    }
+}
+
+/**
+ * The shared player's settings, as flows the desktop window feeds from its own
+ * state. What the desktop has no setting for keeps the phone's default.
+ */
+internal object DesktopPlayerSettings : PlayerSettingsSource {
+    private val persistence by lazy { DesktopPersistence() }
+
+    override val animatedCanvas = MutableStateFlow(true)
+    override val audioQualityCellular = MutableStateFlow(AudioQuality.LOSSLESS)
+    override val audioQualityWifi = MutableStateFlow(AudioQuality.LOSSLESS)
+    override val canvasOverCellular = MutableStateFlow(true)
+    override val fullBleedArtwork = MutableStateFlow(false)
+    override val hideSongStatus = MutableStateFlow(false)
+    override val showQueueHistory = MutableStateFlow(false)
+    override val hideVolumeBar = MutableStateFlow(false)
+    // A desktop window has no status bar to hide.
+    override val hideStatusBar = MutableStateFlow(false)
+    override val lastPlayerScreen = MutableStateFlow(
+        runCatching { LastPlayerScreen.valueOf(persistence.string(KEY_LAST_SCREEN, "MAIN")) }
+            .getOrDefault(LastPlayerScreen.MAIN),
+    )
+    /**
+     * v1.5's four drifting blobs or the current meshes. The desktop's settings
+     * row is a switch between exactly those two, so [PlayerTheme.SIMPLE] is
+     * reachable on the phone only. The old boolean is still read, so nobody
+     * loses the choice they had made.
+     */
+    override val playerTheme = MutableStateFlow(
+        if (persistence.boolean("legacy_mesh_gradient", false)) PlayerTheme.LEGACY else PlayerTheme.DEFAULT,
+    )
+    override val lyricsBlur = MutableStateFlow(true)
+    override val lyricsOffsetMs = MutableStateFlow(
+        persistence.int(KEY_LYRICS_OFFSET, 0).coerceIn(MIN_LYRICS_OFFSET_MS, MAX_LYRICS_OFFSET_MS),
+    )
+    override val lyricsSourceOrder = MutableStateFlow<List<LyricsSource>>(LyricsSource.offered)
+
+    // A desktop is never on a metered link as far as this app can tell.
+    override val meteredConnection = MutableStateFlow<Boolean?>(false)
+    override val preferUsbDac = MutableStateFlow(false)
+    override val prioritizeSpotifyCanvas = MutableStateFlow(false)
+    // No desktop control for this one; the player's mix pulse keeps the phone's default.
+    override val reduceAnimation = MutableStateFlow(false)
+    // "Reduce blur" is the window's own setting: the Settings sheet writes
+    // [DesktopAppearanceSettings], and the player's drawers and frost read it here.
+    override val reduceDynamicBlur: StateFlow<Boolean> = DesktopAppearanceSettings.reduceDynamicBlur
+    override val showNerdStats = MutableStateFlow(false)
+    override val smartAnalysis = MutableStateFlow(SmartAnalysis())
+    override val smartFadeEnabled = MutableStateFlow(false)
+    override val smartMixInProgress = MutableStateFlow(false)
+    override val smartMixBlend = MutableStateFlow<MixBlend?>(null)
+    override val smartTransitionWindow = MutableStateFlow<TransitionWindow?>(null)
+    override val spotifyCanvasAutoHide = MutableStateFlow(true)
+    override val syncedLyrics = MutableStateFlow(true)
+    override val translationLanguage = MutableStateFlow("")
+    override val versionAlignmentInProgress = MutableStateFlow(false)
+
+    // No watch on a desktop, so nothing caps the stream below the ceilings above.
+    override val streamCeilingOverride = MutableStateFlow<AudioQuality?>(null)
+    override val disableBlendEffects = MutableStateFlow(false)
+    override val showListenTogetherButton = MutableStateFlow(true)
+    override val automixDetail = MutableStateFlow<String?>(null)
+    override val smartMixView = MutableStateFlow<MixTransitionView?>(null)
+    override val smartMixProgress = MutableStateFlow(0f)
+    override val smartMixPreview = MutableStateFlow<MixTransitionView?>(null)
+
+    /** Whether the mix popup is up; the player's engine reads it to lay the next plan out for it. */
+    val mixViewOpen = MutableStateFlow(false)
+
+    override fun setLastPlayerScreen(value: LastPlayerScreen) {
+        lastPlayerScreen.value = value
+        persistence.saveString(KEY_LAST_SCREEN, value.name)
+    }
+
+    override fun setLyricsOffsetMs(value: Int) {
+        val clamped = value.coerceIn(MIN_LYRICS_OFFSET_MS, MAX_LYRICS_OFFSET_MS)
+        lyricsOffsetMs.value = clamped
+        persistence.saveInt(KEY_LYRICS_OFFSET, clamped)
+    }
+
+    /** The popup is the only reader of the plan it was opened on, so closing it lets that go. */
+    override fun setMixViewOpen(open: Boolean) {
+        mixViewOpen.value = open
+        if (open) return
+        smartMixView.value = null
+        smartMixPreview.value = null
+        smartMixProgress.value = 0f
+    }
+
+    private const val KEY_LAST_SCREEN = "last_player_screen"
+    private const val KEY_LYRICS_OFFSET = "lyrics_offset_ms"
+}
+
+/** Which glyph a mixer gets, from the only thing Java Sound says about it: its name. */
+private fun kindOf(name: String): AudioOutputKind {
+    val n = name.lowercase(Locale.ROOT)
+    return when {
+        "bluetooth" in n || "airpods" in n || "buds" in n -> AudioOutputKind.BLUETOOTH
+        "usb" in n || "dac" in n -> AudioOutputKind.USB
+        "hdmi" in n || "display" in n || "nvidia" in n -> AudioOutputKind.HDMI
+        "headphone" in n || "headset" in n -> AudioOutputKind.WIRED
+        else -> AudioOutputKind.OTHER
+    }
+}
+
+private fun DesktopAudioPipeline.toOutputFormat(): OutputFormatUi {
+    val depth = when {
+        outputIsFloat == true -> "32-bit float"
+        outputBytesPerSample != null -> "${outputBytesPerSample * 8}-bit PCM"
+        else -> null
+    }
+    val rate = outputSampleRateHz?.takeIf { it > 0 }
+        ?.let { "${"%.1f".format(Locale.ROOT, it / 1000f).removeSuffix(".0")} kHz" }
+    return OutputFormatUi(
+        summary = listOfNotNull(depth, rate).joinToString(" · "),
+        // Java Sound and WASAPI shared mode both convert to the Windows mix
+        // format, so no desktop route is bit-perfect and none is a DAC's own.
+        bitPerfect = false,
+        dacLimited = false,
+    )
+}
+
+/** The shared provider a desktop source name refers to, matched on its label. */
+internal fun lyricsSourceNamed(name: String): LyricsSource? =
+    LyricsSource.entries.firstOrNull { it.label.equals(name, ignoreCase = true) }
+        ?: LyricsSource.entries.firstOrNull { it.name.equals(name.replace(' ', '_'), ignoreCase = true) }

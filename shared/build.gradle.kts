@@ -35,6 +35,12 @@ kotlin {
                 api("io.ktor:ktor-client-core:3.5.2")
                 api("io.ktor:ktor-client-okhttp:3.5.2")
                 api("io.ktor:ktor-client-websockets:3.5.2")
+                // LAN sync: the phone advertises and serves its queue over a WebSocket,
+                // the desktop finds it over DNS-SD and follows it.
+                api("io.ktor:ktor-server-core:3.5.2")
+                api("io.ktor:ktor-server-cio:3.5.2")
+                api("io.ktor:ktor-server-websockets:3.5.2")
+                api("org.jmdns:jmdns:3.5.12")
                 api("io.ktor:ktor-client-content-negotiation:3.5.2")
                 api("io.ktor:ktor-serialization-kotlinx-json:3.5.2")
                 api("org.jetbrains.kotlinx:kotlinx-serialization-json:1.11.0")

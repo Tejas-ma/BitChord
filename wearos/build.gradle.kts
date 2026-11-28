@@ -18,9 +18,8 @@ plugins {
  * Wearable Data Layer only delivers between apps that match on both. So:
  *   dev  -> com.dev.bitchord   pairs only with the phone's dev build
  *   prod -> com.music.bitchord pairs only with the phone's prod build
- * and each build type is signed exactly the way the phone's is (debug key for
- * debug, the release keystore for release), so a watch build pairs with the
- * phone build of the same variant.
+ * and every build type is signed with the same shared key the phone's is, so a
+ * watch build pairs with the phone build of the same variant.
  */
 
 val signing = Properties().apply {
@@ -64,9 +63,11 @@ android {
 
     signingConfigs {
         // The phone's keystore, found the same way app/build.gradle.kts finds it.
+        // Both halves have to be on disk: the properties file only names the
+        // keystore, and a config pointing at a missing file fails validation.
         val store = signing.getProperty("storeFile")?.let { rootProject.file(it) }
         if (store != null && store.exists()) {
-            create("release") {
+            create("shared") {
                 storeFile = store
                 storePassword = signing.getProperty("storePassword")
                 keyAlias = signing.getProperty("keyAlias")
@@ -77,14 +78,15 @@ android {
 
     buildTypes {
         /*
-         * Debug is shrunk and non-debuggable too, unlike the phone's. It still
-         * signs with the debug key — that is the part pairing depends on — but a
-         * debuggable, un-R8'd Compose app is the slow kind, and on a watch CPU
-         * that is the difference between a smooth crown and a stuttering one.
-         * Pass -Pbitchord.wearDebuggable=true to get a debugger back.
+         * Debug is shrunk and non-debuggable too, unlike the phone's. It signs
+         * with the same shared key the phone does — that is the part pairing
+         * depends on — but a debuggable, un-R8'd Compose app is the slow kind,
+         * and on a watch CPU that is the difference between a smooth crown and a
+         * stuttering one. Pass -Pbitchord.wearDebuggable=true to get a debugger back.
          */
         debug {
             if (betaSuffix.isNotEmpty()) versionNameSuffix = "-$betaSuffix"
+            signingConfig = signingConfigs.findByName("shared") ?: signingConfigs.getByName("debug")
             val debuggable = providers.gradleProperty("bitchord.wearDebuggable").orNull == "true"
             isDebuggable = debuggable
             isMinifyEnabled = !debuggable
@@ -102,9 +104,9 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro",
             )
-            // Null without a keystore, like the phone: an unsigned APK rather
-            // than a build failure.
-            signingConfig = signingConfigs.findByName("release")
+            // The shared key, or AGP's debug key on a checkout without one, so
+            // the watch app still pairs with a locally built phone app.
+            signingConfig = signingConfigs.findByName("shared") ?: signingConfigs.getByName("debug")
         }
     }
 

@@ -2,8 +2,11 @@ package com.music.bitchord.data.backup
 
 import android.content.Context
 import com.music.bitchord.BuildConfig
+import com.music.bitchord.data.PlaylistCoverStore
+import com.music.bitchord.data.security.CollectionLocks
 import com.music.bitchord.data.settings.AppSettings
 import com.music.bitchord.data.settings.SearchHistory
+import com.music.bitchord.data.spotify.LocalPlaylistStore
 import com.music.bitchord.data.stats.Backup
 import com.music.bitchord.data.stats.BucketMath
 import com.music.bitchord.data.stats.ListeningStats
@@ -57,6 +60,22 @@ data class DeviceManifest(
     val months: Map<String, String> = emptyMap(),
     /** That device's settings, restored only by restoring as it. */
     val settings: Map<String, Backup.PrefValue> = emptyMap(),
+    /**
+     * Cover registry key → SHA-256 of its file: the custom playlist and album
+     * covers this device has uploaded. A manifest written before covers were
+     * backed up has none, and a restore of one simply finds no covers to bring
+     * back — the rest of it is read exactly as before.
+     */
+    val covers: Map<String, String> = emptyMap(),
+    /**
+     * The collection ids this device has locked behind its PIN.
+     *
+     * The PIN itself deliberately never travels — only the list of what it
+     * guards. A restore re-applies the list, so a locked playlist comes back
+     * locked and asks the restoring device's own PIN; a manifest written
+     * before locks existed has none and restores as it always did.
+     */
+    val locked: List<String> = emptyList(),
 ) {
     companion object {
         const val SCHEMA = 1
@@ -71,6 +90,12 @@ data class RemoteDevice(
     val months: Int,
     val sizeBytes: Long,
     val manifest: DeviceManifest,
+    /**
+     * Whether its manifest arrived sealed — an account envelope or the older
+     * passphrase header. Auto-restore counts only these, since a snapshot in
+     * the clear is one any install of the app could have written.
+     */
+    val encrypted: Boolean = false,
 )
 
 /**
@@ -105,6 +130,16 @@ internal object SyncPlanner {
         )
     }
 
+    /**
+     * Which covers this device has to upload — every one whose hash its
+     * manifest does not already record — and which to delete, pruned here but
+     * still in Drive.
+     */
+    fun covers(local: Map<String, String>, recorded: Map<String, String>): Push = Push(
+        upload = local.filter { (key, hash) -> recorded[key] != hash }.keys.sorted(),
+        delete = (recorded.keys - local.keys).sorted(),
+    )
+
     /** Whether another install has restored as this device since this one took it. */
     fun supersededBy(identity: DeviceIdentity, manifest: DeviceManifest?, manifestAt: String?): Boolean =
         manifest != null &&
@@ -127,8 +162,10 @@ object ReplaySync {
     private const val KIND = "kind"
     private const val KIND_DEVICE = "device"
     private const val KIND_REPLAY = "replay"
+    private const val KIND_COVER = "cover"
     private const val DEVICE_ID = "deviceId"
     private const val MONTH = "month"
+    private const val TARGET = "target"
     private const val SYNCED_DIR = "listening-synced"
 
     private val json = Json {
@@ -167,10 +204,34 @@ object ReplaySync {
             .groupBy { it.properties[DEVICE_ID].orEmpty() }
             .filterKeys { it.isNotEmpty() }
             .mapValues { (_, list) -> list.mapNotNull { f -> f.properties[MONTH]?.let { it to f } }.toMap() }
+
+        /** Device → cover key → file. */
+        val covers: Map<String, Map<String, DriveApi.DriveFile>> = files
+            .filter { it.properties[KIND] == KIND_COVER }
+            .groupBy { it.properties[DEVICE_ID].orEmpty() }
+            .filterKeys { it.isNotEmpty() }
+            .mapValues { (_, list) -> list.mapNotNull { f -> f.properties[TARGET]?.let { it to f } }.toMap() }
     }
 
-    private suspend fun readManifest(token: String, file: DriveApi.DriveFile): DeviceManifest =
-        json.decodeFromString(DeviceManifest.serializer(), gunzip(DriveApi.download(token, file.id)).decodeToString())
+    /** A manifest, and whether the bytes it came from were sealed. */
+    private class ManifestRead(val manifest: DeviceManifest, val sealed: Boolean)
+
+    /**
+     * One device's manifest, decrypted when it carries a header and read as it
+     * is when it is one of the older unencrypted files. A manifest sealed with a
+     * passphrase this device has not been given throws
+     * [BackupCipher.PassphraseRequired], which the screen turns into a prompt.
+     */
+    private suspend fun readManifest(token: String, file: DriveApi.DriveFile): ManifestRead {
+        val raw = DriveApi.download(token, file.id)
+        return ManifestRead(
+            manifest = json.decodeFromString(
+                DeviceManifest.serializer(),
+                gunzip(BackupCipher.open(raw)).decodeToString(),
+            ),
+            sealed = BackupCipher.isSealed(raw),
+        )
+    }
 
     /** Every device in Drive, this one included, newest sync first. */
     suspend fun devices(token: String): List<RemoteDevice> {
@@ -180,15 +241,19 @@ object ReplaySync {
 
     private suspend fun devicesOf(token: String, listing: Listing): List<RemoteDevice> =
         listing.manifests.mapNotNull { (id, file) ->
-            val manifest = runCatching { readManifest(token, file) }.getOrNull() ?: return@mapNotNull null
+            val read = runCatching { readManifest(token, file) }.getOrNull() ?: return@mapNotNull null
+            val manifest = read.manifest
             val files = listing.months[id].orEmpty()
             RemoteDevice(
                 deviceId = id,
                 name = manifest.name,
                 updatedAt = manifest.updatedAt,
                 months = manifest.months.keys.count { it in files },
-                sizeBytes = files.values.sumOf { it.sizeBytes } + file.sizeBytes,
+                sizeBytes = files.values.sumOf { it.sizeBytes } +
+                    listing.covers[id].orEmpty().values.sumOf { it.sizeBytes } +
+                    file.sizeBytes,
                 manifest = manifest,
+                encrypted = read.sealed,
             )
         }.sortedByDescending { it.updatedAt }
 
@@ -216,7 +281,7 @@ object ReplaySync {
         // phone's alone, so it carries on as a device of its own with exactly
         // that — not the whole history, which is now the other phone's.
         val ownManifestFile = listing.manifests[deviceId]
-        val ownManifest = ownManifestFile?.let { runCatching { readManifest(token, it) }.getOrNull() }
+        val ownManifest = ownManifestFile?.let { runCatching { readManifest(token, it) }.getOrNull() }?.manifest
         if (SyncPlanner.supersededBy(me, ownManifest, ownManifestFile?.modifiedAt)) {
             val unsynced = ListeningStats.exportAll().mapNotNull { month ->
                 val before = synced(context, month.month)
@@ -244,10 +309,15 @@ object ReplaySync {
             )
             plan.upload.forEachIndexed { index, month ->
                 onStep(Step.Uploading(index, plan.upload.size))
+                val unsealed = gzip(bytes.getValue(month))
+                val payload = BackupCipher.seal(unsealed)
+                // The gzipped month is the only unencrypted copy that ever
+                // leaves memory's owner; it is wiped once it has been sealed.
+                if (payload !== unsealed) unsealed.fill(0)
                 DriveApi.put(
                     token = token,
                     name = "replay-$myId-$month.json.gz",
-                    bytes = gzip(bytes.getValue(month)),
+                    bytes = payload,
                     properties = mapOf(KIND to KIND_REPLAY, DEVICE_ID to myId, MONTH to month),
                     existingId = remoteOwn[month]?.id,
                 )
@@ -258,6 +328,42 @@ object ReplaySync {
                 remoteOwn[month]?.let { DriveApi.delete(token, it.id) }
                 File(syncedDir(context), "$month.json").delete()
             }
+            // Covers go up before the manifest for the same reason the months
+            // do: the manifest is what tells another device they exist. Only
+            // the ones whose bytes changed are sent, so editing one playlist's
+            // artwork does not re-upload the rest.
+            val localCovers = PlaylistCoverStore.exportCovers()
+            val remoteCovers = listing.covers[myId].orEmpty()
+            val coverPlan = SyncPlanner.covers(
+                local = localCovers.mapValues { it.value.hash },
+                recorded = ownManifest?.covers.orEmpty(),
+            )
+            val manifestCovers = buildMap {
+                coverPlan.upload.forEach { key ->
+                    val cover = localCovers[key] ?: return@forEach
+                    val bytes = runCatching { File(cover.path).readBytes() }.getOrNull()
+                        ?: return@forEach
+                    val unsealed = gzip(bytes)
+                    val payload = BackupCipher.seal(unsealed)
+                    if (payload !== unsealed) unsealed.fill(0)
+                    val written = runCatching {
+                        DriveApi.put(
+                            token = token,
+                            name = "cover-$myId-${cover.hash.take(16)}.webp.gz",
+                            bytes = payload,
+                            properties = mapOf(KIND to KIND_COVER, DEVICE_ID to myId, TARGET to key),
+                            existingId = remoteCovers[key]?.id,
+                        )
+                    }.getOrNull() ?: return@forEach
+                    if (written.id.isNotEmpty()) put(key, cover.hash)
+                }
+                // Unchanged covers stay claimed, so the manifest keeps naming
+                // every cover this device has rather than only this run's.
+                localCovers.forEach { (key, cover) ->
+                    if (key !in coverPlan.upload) put(key, cover.hash)
+                }
+            }
+            coverPlan.delete.forEach { key -> remoteCovers[key]?.let { DriveApi.delete(token, it.id) } }
             // Last, so a peer never reads a month list ahead of its months.
             onStep(Step.Uploading(plan.upload.size, plan.upload.size))
             val manifest = DeviceManifest(
@@ -268,11 +374,18 @@ object ReplaySync {
                 versionName = BuildConfig.VERSION_NAME,
                 months = hashes,
                 settings = AppSettings.exportPrefs().mapNotNull { (k, v) -> Backup.PrefValue.of(v)?.let { k to it } }.toMap(),
+                covers = manifestCovers,
+                locked = CollectionLocks.exportLocked().sorted(),
             )
+            // The manifest names the covers and the locked collections, so it
+            // is sealed the same way the months and covers are.
+            val unsealed = gzip(json.encodeToString(DeviceManifest.serializer(), manifest).toByteArray())
+            val payload = BackupCipher.seal(unsealed)
+            if (payload !== unsealed) unsealed.fill(0)
             val written = DriveApi.put(
                 token = token,
                 name = "device-$myId.json.gz",
-                bytes = gzip(json.encodeToString(DeviceManifest.serializer(), manifest).toByteArray()),
+                bytes = payload,
                 properties = mapOf(KIND to KIND_DEVICE, DEVICE_ID to myId),
                 existingId = listing.manifests[myId]?.id,
             )
@@ -314,7 +427,7 @@ object ReplaySync {
             plan.download.forEachIndexed { index, month ->
                 onStep(Step.Downloading(device.name, index, plan.download.size))
                 val file = files.getValue(month)
-                val bytes = gunzip(DriveApi.download(token, file.id, file.sizeBytes))
+                val bytes = gunzip(BackupCipher.open(DriveApi.download(token, file.id, file.sizeBytes)))
                 // Parsed before it is kept: a month this build can't read is
                 // left out rather than breaking the Replay it would be added to.
                 if (runCatching { BucketMath.decode(bytes) }.isSuccess) {
@@ -354,13 +467,13 @@ object ReplaySync {
     ): Pair<DeviceIdentity, Backup.Summary> = withContext(Dispatchers.IO) {
         val listing = Listing(DriveApi.listAll(token))
         val manifestFile = listing.manifests[device.deviceId] ?: error("That device is no longer in Google Drive")
-        val manifest = readManifest(token, manifestFile)
+        val manifest = readManifest(token, manifestFile).manifest
         val files = listing.months[device.deviceId].orEmpty()
         val months = manifest.months.keys.filter { it in files }.sorted()
 
         val remote = months.mapIndexed { index, month ->
             onStep(Step.Downloading(manifest.name, index, months.size))
-            val bytes = gunzip(DriveApi.download(token, files.getValue(month).id))
+            val bytes = gunzip(BackupCipher.open(DriveApi.download(token, files.getValue(month).id)))
             month to BucketMath.decode(bytes)
         }.toMap()
         onStep(Step.Restoring)
@@ -384,6 +497,35 @@ object ReplaySync {
         AppSettings.importPrefs(manifest.settings.mapValues { it.value.decoded() })
         SearchHistory.reload()
 
+        // Covers come last and never fail the restore on their own: a file
+        // that will not decode, or a manifest naming one Drive no longer has,
+        // is skipped so the listening and settings that did come down are kept.
+        var restoredCovers = 0
+        val coverFiles = listing.covers[device.deviceId].orEmpty()
+        manifest.covers.keys.sorted().forEachIndexed { index, key ->
+            val file = coverFiles[key] ?: return@forEachIndexed
+            onStep(Step.Downloading(manifest.name, index, manifest.covers.size))
+            val bytes = runCatching {
+                gunzip(BackupCipher.open(DriveApi.download(token, file.id, file.sizeBytes)))
+            }.getOrNull() ?: return@forEachIndexed
+            val cover = PlaylistCoverStore.restoreCover(key, bytes).getOrNull()
+                ?: return@forEachIndexed
+            // An album's cover is read straight from the registry, so writing
+            // and registering it is the whole job. A local playlist keeps a
+            // copy of the path on its own model, which has to be re-pointed at
+            // this device's file for the list to draw it.
+            if (!PlaylistCoverStore.isAlbumKey(key)) {
+                LocalPlaylistStore.applyRestoredCover(key, cover)
+            }
+            restoredCovers++
+        }
+
+        // The lock list is the last of the overlay: applying it turns the
+        // restored playlists back into the locked ones they were, guarded by
+        // the PIN this device has (which is never the one the backup came
+        // from, since the PIN itself is not in it).
+        CollectionLocks.restoreLocked(manifest.locked)
+
         // What is in Drive for this partition is exactly what came down, so
         // the next sync uploads only what this phone adds to it.
         clearSynced(context)
@@ -399,6 +541,7 @@ object ReplaySync {
         adopted to Backup.Summary(
             months = combined.size,
             settings = manifest.settings.size,
+            covers = restoredCovers,
             from = manifest.versionName,
             at = manifest.updatedAt.toString(),
         )

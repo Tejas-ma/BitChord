@@ -10,12 +10,17 @@ concurrency:
   group: deploy-backend
   cancel-in-progress: false
 
+# Only a repository that actually runs the party server should deploy it: the
+# deploy key and host are not secrets a fork has, and this job used to run on
+# every push to main. Set the ENABLE_BACKEND_DEPLOY repository variable to true
+# on the repository that owns the VM.
 jobs:
   test:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    if: vars.ENABLE_BACKEND_DEPLOY == 'true'
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
         with:
           go-version-file: backend/go.mod
           cache-dependency-path: backend/go.sum
@@ -24,7 +29,8 @@ jobs:
 
   deploy:
     needs: test
-    runs-on: ubuntu-latest
+    if: vars.ENABLE_BACKEND_DEPLOY == 'true'
+    runs-on: ubuntu-24.04
     steps:
       - name: Deploy to the Oracle VM
         env:

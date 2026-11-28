@@ -85,6 +85,8 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatDelegate
 import com.music.bitchord.data.lyrics.translationLanguageName
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -92,7 +94,10 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
+import com.music.bitchord.ui.components.BiometricGate
 import com.music.bitchord.ui.components.IosSwitch
+import com.music.bitchord.data.security.CollectionLocks
+import com.music.bitchord.data.security.LockTimeout
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -228,6 +233,13 @@ fun SettingsScreen(
     onOpenSection: (SettingsCategory) -> Unit = {},
     /** Opens a choice with more options than its row can show, as a page. */
     onOpenChoice: (SettingsChoiceKind) -> Unit = {},
+    /**
+     * Security & Privacy: the PIN verifier is raised by the app root, so the
+     * same gate that opens a locked playlist also guards these two rows.
+     */
+    onChangeLockPin: () -> Unit = {},
+    /** Asks for the PIN/biometric before the switch is allowed to move. */
+    onToggleBiometricUnlock: () -> Unit = {},
 ) {
     val context = LocalContext.current
 
@@ -290,6 +302,7 @@ fun SettingsScreen(
     val showCacheFolder by AppSettings.showCacheFolder.collectAsStateWithLifecycle()
     val downloadQuality by AppSettings.downloadQuality.collectAsStateWithLifecycle()
     val wifiOnlyDownloads by AppSettings.wifiOnlyDownloads.collectAsStateWithLifecycle()
+    val lanSyncEnabled by AppSettings.lanSyncEnabled.collectAsStateWithLifecycle()
     val exportDownloads by AppSettings.exportDownloads.collectAsStateWithLifecycle()
     val syncDownloadedPlaylists by AppSettings.syncDownloadedPlaylists.collectAsStateWithLifecycle()
     val downloadLikedSongs by AppSettings.downloadLikedSongs.collectAsStateWithLifecycle()
@@ -507,6 +520,17 @@ fun SettingsScreen(
                         } ?: stringResource(R.string.listen_together_subtitle),
                         badge = party.members.size.takeIf { party.inParty && it > 1 }?.toString(),
                         onClick = onListenTogether,
+                    )
+                }
+                // The account is the pairing: two devices signed into the same one find
+                // each other on the Wi-Fi, so there is no code or PIN to enter here.
+                val lanSyncTitle = stringResource(R.string.lan_sync)
+                row(lanSyncTitle, "wi-fi", "sync", "devices", "lan", "queue") {
+                    SettingsSubRow(
+                        title = lanSyncTitle,
+                        checked = lanSyncEnabled,
+                        onCheckedChange = AppSettings::setLanSyncEnabled,
+                        subtitle = stringResource(R.string.lan_sync_subtitle),
                     )
                 }
             }
@@ -1691,6 +1715,92 @@ fun SettingsScreen(
 
         // No footer: it only restated the stop-on-close row's own subtitle,
         // which sits four rows above it and says the same thing in fewer words.
+        if (shows(SettingsCategory.SECURITY)) SearchableSettingsGroup(
+            search,
+            header = stringResource(R.string.security_privacy),
+        ) {
+            // The biometric switch is read from the same registry the menus
+            // write to, and its row states plainly why it is unavailable
+            // rather than moving a switch that cannot do anything.
+            val pinRecord by CollectionLocks.pin.collectAsStateWithLifecycle()
+            val biometricEnabled by CollectionLocks.biometricEnabled.collectAsStateWithLifecycle()
+            val biometricHardware = remember(context) { BiometricGate.isAvailable(context) }
+            val biometricTitle = stringResource(R.string.enable_biometric_unlock)
+            row(biometricTitle, "biometric", "fingerprint", "face", "security", "privacy") {
+                SettingsRow(
+                    icon = SfIcons.Lock,
+                    title = biometricTitle,
+                    subtitle = when {
+                        !biometricHardware -> stringResource(R.string.security_biometric_unavailable)
+                        pinRecord == null -> stringResource(R.string.security_biometric_needs_pin)
+                        else -> stringResource(R.string.security_biometric_subtitle)
+                    },
+                    trailing = {
+                        IosSwitch(
+                            checked = biometricEnabled && biometricHardware && pinRecord != null,
+                            onCheckedChange = {
+                                if (biometricHardware && pinRecord != null) onToggleBiometricUnlock()
+                            },
+                        )
+                    },
+                    onClick = {
+                        if (biometricHardware && pinRecord != null) onToggleBiometricUnlock()
+                    },
+                )
+            }
+            RowDivider()
+            val changePinTitle = stringResource(R.string.change_pin)
+            row(changePinTitle, "pin", "security", "privacy") {
+                SettingsRow(
+                    icon = SfIcons.Lock,
+                    title = changePinTitle,
+                    subtitle = if (pinRecord == null) {
+                        stringResource(R.string.no_pin_set)
+                    } else {
+                        stringResource(R.string.change_pin_subtitle)
+                    },
+                    onClick = onChangeLockPin,
+                )
+            }
+            // How long an unlock lasts. A dropdown rather than a page of its
+            // own: four presets are one glance, and the row already names the
+            // choice it is on.
+            RowDivider()
+            val lockTimeout by CollectionLocks.lockTimeout.collectAsStateWithLifecycle()
+            val lockTimerTitle = stringResource(R.string.locked_timer)
+            var timerMenuOpen by remember { mutableStateOf(false) }
+            row(lockTimerTitle, "timer", "relock", "auto", "security", "privacy") {
+                Box {
+                    SettingsRow(
+                        icon = SfIcons.Clock,
+                        title = lockTimerTitle,
+                        subtitle = stringResource(R.string.locked_timer_subtitle),
+                        value = lockTimeout.label(),
+                        onClick = { timerMenuOpen = true },
+                    )
+                    DropdownMenu(
+                        expanded = timerMenuOpen,
+                        onDismissRequest = { timerMenuOpen = false },
+                    ) {
+                        LockTimeout.entries.forEach { option ->
+                            DropdownMenuItem(
+                                text = { Text(option.label()) },
+                                trailingIcon = if (option == lockTimeout) {
+                                    { Icon(SfIcons.Check, contentDescription = null) }
+                                } else {
+                                    null
+                                },
+                                onClick = {
+                                    CollectionLocks.setLockTimeout(option)
+                                    timerMenuOpen = false
+                                },
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
         if (shows(SettingsCategory.MISCELLANEOUS)) SearchableSettingsGroup(search, header = stringResource(R.string.miscellaneous)) {
             val playNextOnSwipeTitle = stringResource(R.string.play_next_on_swipe)
             row(playNextOnSwipeTitle, "swipe", "queue") {
@@ -3057,6 +3167,7 @@ internal fun SegmentedControl(
 enum class SettingsCategory(@param:StringRes val title: Int) {
     DOWNLOADS(R.string.downloads),
     PLAYBACK(R.string.playback),
+    SECURITY(R.string.security_privacy),
     CONTENT_PREFERENCES(R.string.content_preferences),
     APPEARANCE(R.string.appearance),
     PERFORMANCE(R.string.performance),
@@ -3071,6 +3182,7 @@ enum class SettingsCategory(@param:StringRes val title: Int) {
         get() = when (this) {
             DOWNLOADS -> SfIcons.Download
             PLAYBACK -> SfIcons.PlayCircle
+            SECURITY -> SfIcons.Lock
             CONTENT_PREFERENCES -> SfIcons.Video
             APPEARANCE -> SfIcons.Appearance
             PERFORMANCE -> SfIcons.Performance
@@ -3083,6 +3195,17 @@ enum class SettingsCategory(@param:StringRes val title: Int) {
 }
 
 /** The settings whose options are a page of their own — see [SettingsChoicePage]. */
+/** The Locked Timer's presets, as its row and its dropdown read them. */
+@Composable
+private fun LockTimeout.label(): String = stringResource(
+    when (this) {
+        LockTimeout.IMMEDIATE -> R.string.locked_timer_immediately
+        LockTimeout.FIVE_SECONDS -> R.string.locked_timer_5s
+        LockTimeout.TEN_SECONDS -> R.string.locked_timer_10s
+        LockTimeout.THIRTY_SECONDS -> R.string.locked_timer_30s
+    },
+)
+
 enum class SettingsChoiceKind(@param:StringRes val title: Int) {
     AUDIO_QUALITY_WIFI(R.string.on_wifi),
     AUDIO_QUALITY_CELLULAR(R.string.on_mobile_data),

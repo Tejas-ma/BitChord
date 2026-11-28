@@ -20,6 +20,7 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Close
+import androidx.compose.material.icons.rounded.Mic
 import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -62,6 +63,12 @@ fun SearchField(
     /** What the empty field says it is for — the one part that changes per screen. */
     placeholder: String = stringResource(Res.string.search_hint),
     modifier: Modifier = Modifier,
+    /**
+     * Voice search and Identify Song, behind one microphone. Null leaves the
+     * field without one — every other place this field is reused (settings,
+     * the language picker) has nothing to listen for.
+     */
+    onMic: (() -> Unit)? = null,
 ) {
     val focusManager = LocalFocusManager.current
     val keyboardController = LocalSoftwareKeyboardController.current
@@ -153,6 +160,22 @@ fun SearchField(
                     contentDescription = stringResource(Res.string.clear_search),
                     tint = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.size(18.dp),
+                )
+            }
+        }
+        if (onMic != null) {
+            Box(
+                modifier = Modifier
+                    .size(32.dp)
+                    .clip(CircleShape)
+                    .clickable(onClick = onMic),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    Icons.Rounded.Mic,
+                    contentDescription = stringResource(Res.string.search),
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.size(19.dp),
                 )
             }
         }

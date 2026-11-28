@@ -44,11 +44,13 @@
 
 #### Playback
 - **Search, browse and play** anything available on YouTube Music.
+- **One search, every source** — YouTube Music, JioSaavn, configured module and addon sources and your local library answer together, each row badged with where it came from.
+- **Podcasts** — shows and episodes sit alongside your music, with a filter for when you only want music.
 - **Hi-Res lossless audio** — FLAC/ALAC from a configured module source, with YouTube Music as fallback.
 - **Gapless playback with true crossfade**, adjustable 0–12s.
 - **Automix [Beta]** — DJ-style transitions with beat-matching and tempo-stretching.
-- **Offline downloads** — save tracks with embedded metadata.
-- **Local music library** integration.
+- **Offline downloads** — save tracks with embedded metadata. A finished download is recorded once, in place, and shows up in the device's library and in search without a second copy or a re-encode; partial `.part`/`.tmp` files are ignored.
+- **Local music library** integration, indexed as files land — on Android through MediaStore, on desktop by watching the music folders — so an offline track is found by text or voice search with no connection.
 - **Background playback** via a proper foreground media session.
 - **Apple-like lyrics animation** — credit to [binimum](https://github.com/binimum/am-lyrics).
 
@@ -57,24 +59,30 @@
 - **Spotify integration** — connect your account to play your playlists and Liked Songs.
 - **Discord Rich Presence** — in-app login, live track/artist/album and progress.
 - **Scrobbling** to Last.fm and ListenBrainz.
+- **Listen Together** — host or join a synced listening party, with same-account LAN sync and hand-off between devices on the same network.
 - **Pluggable sources** — add, edit, test and health-check module sources.
+- **Google Drive backup** (Android) — your listening history, settings and custom covers sync between your own devices through BitChord's hidden app folder in your Drive. Restoring as a device writes its custom playlist and album covers back into this device's own cover directory and re-applies them, so they appear straight away; older backups without covers still restore.
 
     </td>
     <td width="50%" valign="top">
 
 #### Experience
+- **Voice search and Identify Song** — speak a request, or let the microphone name the track playing around you, with a live waveform while it listens; on desktop the same sheet names a track from the microphone.
+- **Every screen** — a remote-first Android TV interface, a Wear OS remote-and-speaker app, and Windows, macOS and Linux desktop builds from the same code.
+- **Command palette** (desktop) — a fuzzy keyboard jump to any song, playlist, output or player action.
 - **Animated album canvas** — motion artwork on the now-playing screen.
 - **Word-synced lyrics** — word/syllable-level highlighting from multiple sources.
 - **Lyrics providers** — credit to [lrc.red](https://lrc.red), [BiniLyrics](https://github.com/binimum), [BetterLyrics](https://github.com/better-lyrics/better-lyrics), [PaxSenix](https://lyrics.paxsenix.org), [LyricsPlus](https://github.com/ibratabian17/YouLyPlus), [SimpMusic](https://github.com/maxrave-dev/SimpMusic), [Unison](https://unison.boidu.dev), [Megalobiz](https://www.megalobiz.com), [KuGou](https://www.kugou.com), [LRCLIB](https://lrclib.net), [Musixmatch](https://www.musixmatch.com) and [Genius](https://genius.com).
 - **Dynamic, artwork-driven theming** — Material palette extracted from album art.
 - **Frosted-glass UI** — Telegram-style translucent bars via Haze, Material 3 theming.
+- **Custom covers** — give a playlist or an album your own artwork from its header, overflow menu or bottom sheet on Android and desktop alike; it is stored on the device, drawn on its header and cards ahead of any fetched thumbnail, and the stored hash changes with it so an open page and the library behind it redraw instead of showing the previous image. It falls back to the embedded or fetched image when the file is missing or unreadable.
 
 #### Controls & Tweaks
 - **Per-network audio quality** — separate quality ceilings for Wi-Fi and mobile data.
 - **Playback speed control** (0.5×–2.0×) and **skip silence**.
 - **Sleep timer** — fixed presets or "stop after this track".
 - **System equalizer** integration.
-- **Bit-perfect USB exclusive output** — sends lossless tracks to a USB DAC unchanged, at each track's own rate and bit depth. Thanks to [Mornye](https://github.com/mornyeapp/Mornye) for the reference.
+- **Bit-perfect output** — exclusive output to a USB DAC or the built-in DAC, sending lossless tracks unchanged at each track's own rate and bit depth. Thanks to [Mornye](https://github.com/mornyeapp/Mornye) for the reference.
 - **Stats for nerds** — codec, bit depth, sample rate, and more on the now-playing screen.
 
     </td>
@@ -92,6 +100,71 @@
 <a href="https://github.com/kushagrasinghx/BitChord/releases" target="_blank" rel="noopener noreferrer"><img src="https://cdn.jsdelivr.net/gh/JMcrafter26/badges@main/src/assets/supported/android/cozy.svg" alt="Download for Android" height="55"/></a>
 
 Grab the latest signed APK from the [Releases](https://github.com/kushagrasinghx/BitChord/releases) page. Sideloading requires enabling "Install unknown apps" for whichever app you download it with.
+
+Desktop builds for Windows, macOS and Linux are on the same page — `.exe`, `.msi` and portable `.zip`, `.pkg` and `.dmg`, and `.run`, `.deb`, `.rpm` and `.AppImage`. Every download carries its own Java runtime, FFmpeg and ONNX natives, so nothing else has to be installed first; see [DESKTOP.md](DESKTOP.md) for install notes.
+
+| Platform | File | Install |
+|---|---|---|
+| Android | `BitChord-<version>.apk` | Sideload it, with "Install unknown apps" enabled for the app you download it with. |
+| Windows | `BitChord-<version>-windows-x64-setup.exe` | Run the wizard. Per-user, no administrator rights needed. |
+| Windows | `BitChord-<version>-windows-x64.msi` | The same install, for deployment tools. |
+| Windows | `BitChord-<version>-windows-x64-portable.zip` | Unzip anywhere and run `BitChord.bat`; needs a Java 21 runtime. |
+| macOS | `BitChord-<version>-macos-<arch>.pkg` | Double-click: welcome page, macOS 12 check, installs to `/Applications`. |
+| macOS | `BitChord-<version>-macos-<arch>.dmg` | Drag BitChord onto Applications. |
+| Linux | `BitChord-<version>-linux-<arch>.run` | `chmod +x` and run it — GUI wizard, or `--cli` / `--unattended --prefix <dir>`; `--uninstall` removes it. |
+| Linux | `BitChord-<version>-linux-<arch>.deb` | `sudo apt install ./BitChord-<version>-linux-<arch>.deb` |
+| Linux | `BitChord-<version>-linux-<arch>.AppImage` | `chmod +x` and run it; nothing to install. |
+
+`<arch>` is `arm64` or `x64`, and each desktop artifact is built on a runner of that architecture.
+
+#### The Linux `.run` installer
+
+It needs no package manager and no root: it carries the whole app, verifies the payload's length and SHA-256 before extracting anything, and writes an `uninstall.sh` beside the app.
+
+```bash
+chmod +x BitChord-<version>-linux-<arch>.run
+./BitChord-<version>-linux-<arch>.run                       # wizard
+./BitChord-<version>-linux-<arch>.run --prefix ~/apps/bitchord
+./BitChord-<version>-linux-<arch>.run --unattended --prefix "$HOME/.local/opt/bitchord"
+./BitChord-<version>-linux-<arch>.run --uninstall
+```
+
+- **Graphical wizard** (default when `$DISPLAY` or `$WAYLAND_DISPLAY` is set): welcome, install scope and path, menu/shortcut options, a progress window during checksum verification and extraction, and a completion page that can launch BitChord. It uses `zenity`, `yad` or `kdialog`, whichever is installed; with none of them, or with `--cli`, the same steps run as terminal prompts.
+- **Scope:** user install goes to `~/.local/opt/bitchord`, with the launcher at `~/.local/bin/bitchord`, the menu entry under `$XDG_DATA_HOME/applications`, the icon under `$XDG_DATA_HOME/icons/hicolor`, and config/data in `$XDG_CONFIG_HOME/bitchord` and `$XDG_DATA_HOME/bitchord`. Choosing the system-wide scope, or running as root, installs to `/opt/bitchord` with `/usr/local/bin` and `/usr/share/applications`, asking for admin rights through `pkexec` (or `sudo`) when the session is not already root.
+- **Flags:** `--unattended` (also `-y`) for CI and scripts, `--cli` for the terminal wizard, `--prefix <dir>`, `--skip-integration`, `--desktop-shortcut`, `--quiet`, `--list`, `--uninstall`, `--help`.
+
+The Windows installers are built by the **Windows EXE** workflow and uploaded as the files themselves, not inside another archive: `BitChord-<version>-windows-x64-setup.exe`, `BitChord-<version>-windows-x64.msi` and the portable `BitChord-<version>-windows-x64-portable.zip`. When the repository has been accepted by the [SignPath Foundation](https://signpath.org/), the setup is submitted for signing during the build and the signed copy is the one published; without that approval the same build ships unsigned rather than failing.
+
+### Build from source
+
+A JDK 21 is the only requirement for the desktop app; the Android build also needs the Android SDK (compile SDK as configured in `app/build.gradle.kts`).
+
+```bash
+# Android: the unit tests, with the desktop modules left out
+./gradlew :app:testDevDebugUnitTest -Pbitchord.skipDesktop=true
+
+# Desktop: the shared, desktop-UI and desktop-app test suites
+./gradlew :shared:jvmTest :desktopUi:jvmTest :desktopApp:test -Pbitchord.skipAndroid=true
+
+# Desktop: a runnable image for the host platform
+./gradlew :desktopApp:createDistributable -Pbitchord.skipAndroid=true
+```
+
+Windows installers are produced with `:desktopApp:packageExe`, `:desktopApp:packageMsi` and `:desktopApp:windowsPortable` (see [desktopApp/BUILDING-WINDOWS.md](desktopApp/BUILDING-WINDOWS.md)); `.github/workflows/windows-exe.yml` does the same on a Windows runner and uploads the results.
+
+macOS and Linux are built the same way, on a runner of the target architecture (neither can be cross-packaged):
+
+```bash
+# macOS: BitChord.app, the .dmg, and the custom-installer .pkg
+./gradlew :desktopApp:packageDmg :desktopApp:packageMacInstaller -Pbitchord.skipAndroid=true
+
+# Linux: .deb, .rpm, the single-file .AppImage, and the self-extracting .run installer
+./gradlew :desktopApp:packageDeb :desktopApp:packageRpm :desktopApp:packageAppImage :desktopApp:packageLinuxRunInstaller -Pbitchord.skipAndroid=true
+```
+
+Signing and notarization are opt-in through `local.properties` or the environment (`MACOS_SIGN_IDENTITY`, `APPLE_ID`, `APPLE_APP_SPECIFIC_PASSWORD`, `APPLE_TEAM_ID`); without them the disk image still builds, unsigned. Details in [desktopApp/BUILDING-MACOS.md](desktopApp/BUILDING-MACOS.md) and [desktopApp/BUILDING-LINUX.md](desktopApp/BUILDING-LINUX.md).
+
+`BitChord-<version>-macos-arm64.pkg` and `-macos-arm64.dmg` (likewise `-macos-x64`) come from the **macOS** workflow (Apple Silicon and Intel runners); `BitChord-<version>-linux-x64.run`, `-linux-x64.deb`, `-linux-x64.AppImage` and their `-linux-arm64` counterparts come from the **Linux** workflow (`ubuntu-latest` and `ubuntu-24.04-arm`), which also installs the `.run` into a temporary prefix and uninstalls it as a smoke test.
 
 
 </div>

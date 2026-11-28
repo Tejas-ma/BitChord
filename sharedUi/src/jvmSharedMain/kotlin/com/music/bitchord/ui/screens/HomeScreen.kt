@@ -30,6 +30,8 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
 import com.music.bitchord.ui.components.ShelfRow
+import com.music.bitchord.ui.components.LockBadge
+import com.music.bitchord.ui.components.isCollectionLocked
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -994,13 +996,23 @@ internal fun ShelfCard(
                         .thumbnailBorder(RoundedCornerShape(12.dp))
                         .background(MaterialTheme.colorScheme.surfaceVariant),
                 ) {
+                    // The user's own cover wins over the fetched artwork, and
+                    // carries its hash so a replaced file is decoded again.
+                    val chosenCover by AppUi.host.collectionCoverUrls.collectAsStateWithLifecycle()
+                    val artwork = item.browseId?.let { chosenCover[it] } ?: item.thumbnailUrl
                     AsyncImage(
-                        model = item.thumbnailUrl.artworkAt(CARD_ART_PX),
+                        model = artwork.artworkAt(CARD_ART_PX),
                         contentDescription = null,
                         contentScale = androidx.compose.ui.layout.ContentScale.Crop,
                         modifier = Modifier.fillMaxSize(),
                     )
                     if (isCurrent && isPlaying) SearchPlayingBars(Modifier.align(Alignment.Center))
+                    // The lock marker every surface draws: the same registry the
+                    // collection's menu writes to, so a lock applied there shows
+                    // up on this card without a reload.
+                    if (isCollectionLocked(item.browseId)) {
+                        LockBadge(modifier = Modifier.align(Alignment.TopEnd))
+                    }
                 }
             }
         }

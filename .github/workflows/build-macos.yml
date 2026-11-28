@@ -1,0 +1,290 @@
+name: macOS
+
+# The macOS disk images, built on Apple's own runners so jpackage assembles a
+# native bundle: an arm64 runner for Apple Silicon, an Intel runner for x64.
+# Packaging cannot be cross-built — the JDK and the Skiko/FFmpeg natives in the
+# image are the host's architecture — which is why this is a matrix of real
+# machines rather than one job with a flag.
+#
+# Runner labels: libmacOS 13 and 14 images have been retired from GitHub Actions
+# (macOS 14 on 2 November 2026), so the Intel job runs on macos-15-intel, the
+# only remaining x86_64 label, and Apple Silicon on macos-15.
+#
+# Android modules are left out: settings.gradle.kts must not find an SDK and
+# configure :app on a build that has no use for it.
+
+on:
+  push:
+    branches: [Devlopment, main]
+    paths: &paths
+      - 'desktopApp/**'
+      - 'desktopUi/**'
+      - 'shared/**'
+      - 'native/**'
+      - 'build.gradle.kts'
+      - 'settings.gradle.kts'
+      - 'gradle.properties'
+      - 'gradle/**'
+      - 'gradlew'
+      - '.github/workflows/build-macos.yml'
+  pull_request:
+    branches: [Devlopment, main]
+    paths: *paths
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to stamp (defaults to the tag or bitchordVersionName)'
+        required: false
+        type: string
+      run_tests:
+        description: 'Run the JVM tests before packaging'
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: macos-${{ github.workflow }}-${{ github.ref }}
+  # Pull requests cancel superseded runs; a push queues, so a long DMG build is
+  # never thrown away by the next commit.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  ANDROID_HOME: /__disabled_android_sdk__
+  ANDROID_SDK_ROOT: /__disabled_android_sdk__
+  CMAKE_POLICY_VERSION_MINIMUM: '3.5'
+  GRADLE_OPTS: -Dorg.gradle.jvmargs=-Xmx4096m -Djava.awt.headless=true
+
+jobs:
+  macos:
+    name: macOS · ${{ matrix.arch }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15
+            arch: arm64
+          - runner: macos-15-intel
+            arch: x64
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v5
+        with:
+          java-version: '21'
+          distribution: temurin
+
+      - uses: gradle/actions/setup-gradle@v5
+
+      - name: Resolve the version
+        id: version
+        shell: bash
+        env:
+          REQUESTED: ${{ inputs.version }}
+        run: |
+          raw="${REQUESTED:-}"
+          if [ -z "$raw" ] && [ "${GITHUB_REF_TYPE}" = "tag" ]; then raw="${GITHUB_REF_NAME}"; fi
+          if [ -z "$raw" ]; then
+            raw=$(sed -n 's/.*bitchordVersionName"\]\s*=\s*"\([^"]*\)".*/\1/p' build.gradle.kts | head -1)
+          fi
+          [ -z "$raw" ] && raw="1.10"
+          raw="${raw#v}"
+          echo "raw='$raw'"
+          echo "value=$raw" >> "$GITHUB_OUTPUT"
+
+      # Signing and notarization are optional: with none of these set the job
+      # still makes a working unsigned DMG, which is what a fork or a pull
+      # request should get. The names are read by desktopApp/build.gradle.kts.
+      - name: Write local.properties
+        shell: bash
+        env:
+          LASTFM_API_KEY: ${{ secrets.LASTFM_API_KEY }}
+          LASTFM_SECRET: ${{ secrets.LASTFM_SECRET }}
+          LISTEN_TOGETHER_SERVER: ${{ secrets.LISTEN_TOGETHER_SERVER }}
+          MACOS_SIGN_IDENTITY: ${{ secrets.MACOS_SIGN_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          : > local.properties
+          for name in LASTFM_API_KEY LASTFM_SECRET LISTEN_TOGETHER_SERVER \
+                      MACOS_SIGN_IDENTITY APPLE_ID APPLE_APP_SPECIFIC_PASSWORD \
+                      APPLE_TEAM_ID; do
+            eval "value=\$$name"
+            [ -n "$value" ] && printf '%s=%s\n' "$name" "$value" >> local.properties
+          done
+          exit 0
+
+      - name: Make the wrapper executable
+        run: chmod +x gradlew
+
+      # Its own step so a C++/CMake failure is named as one, rather than
+      # appearing inside "Run the JVM tests" (processResources pulls the
+      # analyser in) and skipping packaging behind it.
+      - name: Build the native libraries
+        run: |
+          ./gradlew :desktopApp:windowsNatives \
+            "-Pbitchord.skipAndroid=true" "-Pbitchord.arch=${{ matrix.arch }}" \
+            --no-daemon --stacktrace
+
+      - name: Run the JVM tests
+        if: ${{ github.event_name != 'workflow_dispatch' || inputs.run_tests }}
+        run: |
+          ./gradlew :shared:jvmTest :desktopUi:jvmTest :desktopApp:test \
+            "-Pbitchord.skipAndroid=true" "-Pbitchord.arch=${{ matrix.arch }}" \
+            "-Pbitchord.version=${{ steps.version.outputs.value }}" \
+            --no-daemon --stacktrace
+
+      - name: Show failing test reports
+        if: failure()
+        shell: bash
+        run: |
+          find shared desktopUi desktopApp -path '*/build/test-results/*/*.xml' -print 2>/dev/null | sort
+          while IFS= read -r report; do
+            echo "::group::$report"
+            sed -n '1,120p' "$report"
+            echo "::endgroup::"
+          done < <(find shared desktopUi desktopApp -path '*/build/test-results/*/*.xml' -print 2>/dev/null | sort)
+
+      - name: Upload the test reports
+        if: failure()
+        uses: actions/upload-artifact@v6
+        with:
+          name: macos-${{ matrix.arch }}-test-reports
+          path: |
+            shared/build/reports/tests/
+            shared/build/test-results/
+            desktopUi/build/reports/tests/
+            desktopUi/build/test-results/
+            desktopApp/build/reports/tests/
+            desktopApp/build/test-results/
+          if-no-files-found: ignore
+          retention-days: 14
+
+      - name: Build the disk image
+        run: |
+          ./gradlew :desktopApp:packageDmg \
+            "-Pbitchord.skipAndroid=true" "-Pbitchord.arch=${{ matrix.arch }}" \
+            "-Pbitchord.version=${{ steps.version.outputs.value }}" \
+            --no-daemon --stacktrace
+
+      # The .pkg wraps the same bundle with BitChord's own wizard pages. It is a
+      # separate task rather than a target format because productbuild, not
+      # jpackage, is what can put the welcome/conclusion pages and the macOS 12
+      # floor into the archive.
+      - name: Build the installer package
+        run: |
+          ./gradlew :desktopApp:packageMacInstaller \
+            "-Pbitchord.skipAndroid=true" "-Pbitchord.arch=${{ matrix.arch }}" \
+            "-Pbitchord.version=${{ steps.version.outputs.value }}" \
+            --no-daemon --stacktrace
+
+      # A DMG that exists but has no microphone description, no analyser and
+      # no models is worse than none: sound search would be refused by macOS
+      # and Automix would silently be missing from the shipped app.
+      - name: Verify the bundle
+        shell: bash
+        run: |
+          set -euo pipefail
+          APP="desktopApp/build/compose/binaries/main/app/BitChord.app"
+          [ -d "$APP" ] || { echo "::error::packageDmg produced no BitChord.app"; exit 1; }
+          /usr/libexec/PlistBuddy -c "Print :NSMicrophoneUsageDescription" "$APP/Contents/Info.plist"
+          /usr/libexec/PlistBuddy -c "Print :CFBundleIdentifier" "$APP/Contents/Info.plist"
+          # The installer's own minimum, and the one the .app advertises, agree.
+          /usr/libexec/PlistBuddy -c "Print :LSMinimumSystemVersion" "$APP/Contents/Info.plist" \
+            | grep -q '^12\.' || { echo "::error::LSMinimumSystemVersion is not 12.x"; exit 1; }
+
+          JAR=$(find "$APP/Contents/app" -maxdepth 1 -name 'desktopApp*.jar' -print -quit)
+          [ -n "$JAR" ] || { echo "::error::no desktopApp jar in the bundle"; exit 1; }
+          entries=$(/usr/bin/unzip -Z1 "$JAR")
+          echo "$entries" | grep -q '^native/libbitchord_analysis.dylib$' \
+            || { echo "::error::the Automix analyser (libbitchord_analysis.dylib) is missing"; echo "$entries" | grep '^native/' || true; exit 1; }
+          echo "$entries" | grep -q '^models/.*\.onnx$' \
+            || { echo "::error::no .onnx models were bundled"; exit 1; }
+
+          # The bundled runtime must be this runner's architecture, not the other one.
+          launcher="$APP/Contents/MacOS/BitChord"
+          /usr/bin/file "$launcher"
+          case "${{ matrix.arch }}" in
+            arm64) /usr/bin/file "$launcher" | grep -q 'arm64' ;;
+            x64)   /usr/bin/file "$launcher" | grep -q 'x86_64' ;;
+          esac
+
+      - name: Stage the disk image
+        id: stage
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p out
+          dmg=$(find desktopApp/build/compose/binaries/main/dmg -name '*.dmg' -print -quit)
+          [ -n "$dmg" ] || { echo "::error::packageDmg wrote no .dmg"; exit 1; }
+          target="out/BitChord-${{ steps.version.outputs.value }}-macos-${{ matrix.arch }}.dmg"
+          cp "$dmg" "$target"
+          ls -l "$target"
+          echo "file=$target" >> "$GITHUB_OUTPUT"
+
+      # archive: false uploads the .dmg itself, so a download is the disk image
+      # and not a zip around it. It only accepts one file per step.
+      - name: Upload the disk image
+        uses: actions/upload-artifact@v7
+        with:
+          path: ${{ steps.stage.outputs.file }}
+          if-no-files-found: error
+          archive: false
+          retention-days: 14
+
+      # A package that opens and installs nothing is the failure worth catching
+      # here, so the payload is listed out of the archive and the launcher it
+      # contains is read for its architecture.
+      - name: Verify the installer package
+        shell: bash
+        run: |
+          set -euo pipefail
+          pkg=$(find desktopApp/build/distributions -name '*.pkg' -print -quit)
+          [ -n "$pkg" ] || { echo "::error::packageMacInstaller wrote no .pkg"; exit 1; }
+          pkgutil --payload-files "$pkg" > pkg-payload.txt
+          for entry in \
+            "Applications/BitChord.app/Contents/MacOS/BitChord" \
+            "Applications/BitChord.app/Contents/Info.plist"; do
+            grep -q "$entry" pkg-payload.txt \
+              || { echo "::error::the .pkg payload is missing $entry"; sed -n '1,40p' pkg-payload.txt; exit 1; }
+          done
+
+          rm -rf pkg-verify && mkdir -p pkg-verify
+          pkgutil --expand-full "$pkg" pkg-verify/expanded
+          launcher="pkg-verify/expanded/Applications/BitChord.app/Contents/MacOS/BitChord"
+          [ -x "$launcher" ] || launcher=$(find pkg-verify -path '*Contents/MacOS/BitChord' -type f -print -quit)
+          /usr/bin/file "$launcher"
+          case "${{ matrix.arch }}" in
+            arm64) /usr/bin/file "$launcher" | grep -q 'arm64' ;;
+            x64)   /usr/bin/file "$launcher" | grep -q 'x86_64' ;;
+          esac
+          # The distribution refuses an older macOS, not just the app.
+          grep -q '12\.0' pkg-verify/expanded/Distribution
+
+      - name: Stage the installer package
+        id: stage_pkg
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p out
+          pkg=$(find desktopApp/build/distributions -name '*.pkg' -print -quit)
+          [ -n "$pkg" ] || { echo "::error::packageMacInstaller wrote no .pkg"; exit 1; }
+          target="out/BitChord-${{ steps.version.outputs.value }}-macos-${{ matrix.arch }}.pkg"
+          cp "$pkg" "$target"
+          ls -l "$target"
+          echo "file=$target" >> "$GITHUB_OUTPUT"
+
+      - name: Upload the installer package
+        uses: actions/upload-artifact@v7
+        with:
+          path: ${{ steps.stage_pkg.outputs.file }}
+          if-no-files-found: error
+          archive: false
+          retention-days: 14

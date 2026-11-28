@@ -11,8 +11,8 @@ plugins {
 /**
  * Signing details, kept out of the repository in `keystore.properties`
  * (see keystore.properties.example). Absent on a fresh checkout, in which case
- * the release build still runs and simply comes out unsigned rather than
- * failing — only whoever holds the key can produce a shippable APK.
+ * every build falls back to AGP's debug key rather than failing — only whoever
+ * holds the key can produce a shippable APK.
  */
 val signing = Properties().apply {
     val file = rootProject.file("keystore.properties")
@@ -168,16 +168,20 @@ android {
     }
 
     signingConfigs {
+        // The same single key app/build.gradle.kts uses: the TV app shares the
+        // phone's sources and ships in the same release, so there is no reason
+        // for a second signing identity.
+        //
         // Both halves have to be there, not just the properties file: it *names*
         // the keystore rather than containing it, and both are gitignored
         // separately, so a checkout can easily end up with the one and not the
         // other. A signing config pointing at a keystore that is not on disk
-        // fails the release build outright at validateSigningRelease — which is
-        // exactly the failure the unsigned fallback above exists to avoid, so
-        // the keystore has to be looked for rather than assumed.
+        // fails the build outright at validateSigning, so the keystore has to be
+        // looked for rather than assumed; without it every build falls back to
+        // AGP's debug key below.
         val store = signing.getProperty("storeFile")?.let { rootProject.file(it) }
         if (store != null && store.exists()) {
-            create("release") {
+            create("shared") {
                 storeFile = store
                 storePassword = signing.getProperty("storePassword")
                 keyAlias = signing.getProperty("keyAlias")
@@ -189,6 +193,7 @@ android {
     buildTypes {
         debug {
             if (betaSuffix.isNotEmpty()) versionNameSuffix = "-$betaSuffix"
+            signingConfig = signingConfigs.findByName("shared") ?: signingConfigs.getByName("debug")
         }
         release {
             // Carried here too — see [betaSuffix]. A sideloaded beta is a
@@ -213,9 +218,9 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "../app/proguard-rules.pro"
             )
-            // Null without a keystore to sign with: fallback to debug signing
-            // so the release build is fully R8 optimized and directly installable.
-            signingConfig = signingConfigs.findByName("release") ?: signingConfigs.getByName("debug")
+            // The shared key, or AGP's debug key on a checkout without one, so
+            // the release build is fully R8 optimized and directly installable.
+            signingConfig = signingConfigs.findByName("shared") ?: signingConfigs.getByName("debug")
         }
         /*
          * The release build, installable next to the dev and prod apps: same R8,
