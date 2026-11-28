@@ -56,7 +56,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - runner: ubuntu-24.04
+          - runner: ubuntu-latest
             arch: x64
             appimage_arch: x86_64
             appimagetool: appimagetool-x86_64.AppImage
@@ -88,7 +88,7 @@ jobs:
           if [ -z "$raw" ]; then
             raw=$(sed -n 's/.*bitchordVersionName"\]\s*=\s*"\([^"]*\)".*/\1/p' build.gradle.kts | head -1)
           fi
-          [ -z "$raw" ] && raw="1.9.1"
+          [ -z "$raw" ] && raw="1.10"
           raw="${raw#v}"
           echo "raw='$raw'"
           echo "value=$raw" >> "$GITHUB_OUTPUT"
@@ -110,12 +110,17 @@ jobs:
       - name: Make the wrapper executable
         run: chmod +x gradlew
 
-      # rpm and fakeroot for the two package formats, binutils/file for the
-      # AppImage, and the arch-matched appimagetool for the wrapper step.
+      # fakeroot/dpkg-dev for the .deb, rpm for an .rpm, and appimagetool for the
+      # single-file AppImage. libfuse2 is the runtime a mounted AppImage needs;
+      # the build itself extracts rather than mounts, so a missing package here
+      # never breaks the run.
       - name: Install the packaging tools
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends rpm fakeroot binutils file
+          sudo apt-get install -y --no-install-recommends \
+            fakeroot dpkg-dev binutils file rpm libfuse2t64 || \
+          sudo apt-get install -y --no-install-recommends \
+            fakeroot dpkg-dev binutils file rpm libfuse2
           curl -fsSL -o appimagetool \
             "https://github.com/AppImage/appimagetool/releases/download/continuous/${{ matrix.appimagetool }}"
           chmod +x appimagetool
@@ -134,6 +139,17 @@ jobs:
             "-Pbitchord.version=${{ steps.version.outputs.value }}" \
             --no-daemon --stacktrace
 
+      - name: Show failing test reports
+        if: failure()
+        shell: bash
+        run: |
+          find shared desktopUi desktopApp -path '*/build/test-results/*/*.xml' -print 2>/dev/null | sort
+          while IFS= read -r report; do
+            echo "::group::$report"
+            sed -n '1,120p' "$report"
+            echo "::endgroup::"
+          done < <(find shared desktopUi desktopApp -path '*/build/test-results/*/*.xml' -print 2>/dev/null | sort)
+
       - name: Upload the test reports
         if: failure()
         uses: actions/upload-artifact@v6
@@ -150,23 +166,13 @@ jobs:
           retention-days: 14
 
       - name: Build the packages
+        env:
+          APPIMAGE_TOOL: ./appimagetool
         run: |
-          ./gradlew :desktopApp:packageDeb :desktopApp:packageRpm :desktopApp:createDistributable \
+          ./gradlew :desktopApp:packageAppImage :desktopApp:packageDeb \
             "-Pbitchord.skipAndroid=true" "-Pbitchord.arch=${{ matrix.arch }}" \
             "-Pbitchord.version=${{ steps.version.outputs.value }}" \
             --no-daemon --stacktrace
-
-      # Gradle has no AppImage target; the script wraps the app image jpackage
-      # produced, and APPIMAGE_ARCH is what stops an arm64 tree being labelled
-      # x86_64.
-      - name: Wrap the AppImage
-        env:
-          APPIMAGE_ARCH: ${{ matrix.appimage_arch }}
-        run: |
-          ./desktopApp/packaging/appimage.sh \
-            desktopApp/build/compose/binaries/main/app/BitChord \
-            "desktopApp/build/distributions/BitChord-${{ steps.version.outputs.value }}-linux-${{ matrix.appimage_arch }}.AppImage" \
-            ./appimagetool
 
       - name: Verify the packages
         shell: bash
@@ -180,26 +186,43 @@ jobs:
           echo "$entries" | grep -q '^models/.*\.onnx$' \
             || { echo "::error::no .onnx models were bundled"; exit 1; }
           case "${{ matrix.arch }}" in
-            arm64) file desktopApp/build/compose/binaries/main/app/BitChord/bin/BitChord | tee /dev/stderr | grep -q 'aarch64' ;;
-            x64)   file desktopApp/build/compose/binaries/main/app/BitChord/bin/BitChord | tee /dev/stderr | grep -q 'x86-64' ;;
+            arm64) file desktopApp/build/compose/binaries/main/app/BitChord/bin/BitChord | grep -q 'aarch64' ;;
+            x64)   file desktopApp/build/compose/binaries/main/app/BitChord/bin/BitChord | grep -q 'x86-64' ;;
           esac
-          ls -l desktopApp/build/compose/binaries/main/deb desktopApp/build/compose/binaries/main/rpm
-          ls -l desktopApp/build/distributions
+          ls -l desktopApp/build/compose/binaries/main/deb desktopApp/build/distributions
 
-      - name: Collect
+      - name: Stage the packages
+        id: stage
         shell: bash
         run: |
+          set -euo pipefail
           mkdir -p out
-          cp desktopApp/build/compose/binaries/main/deb/*.deb out/ 2>/dev/null || true
-          cp desktopApp/build/compose/binaries/main/rpm/*.rpm out/ 2>/dev/null || true
-          cp desktopApp/build/distributions/*.AppImage out/ 2>/dev/null || true
+          ver="${{ steps.version.outputs.value }}"
+          arch="${{ matrix.arch }}"
+          appimage=$(find desktopApp/build/distributions -name '*.AppImage' -print -quit)
+          [ -n "$appimage" ] || { echo "::error::packageAppImage wrote no .AppImage"; exit 1; }
+          deb=$(find desktopApp/build/compose/binaries/main/deb -name '*.deb' -print -quit)
+          [ -n "$deb" ] || { echo "::error::packageDeb wrote no .deb"; exit 1; }
+          cp "$appimage" "out/BitChord-$ver-linux-$arch.AppImage"
+          cp "$deb" "out/BitChord-$ver-linux-$arch.deb"
           ls -l out
-          [ -n "$(ls -A out)" ] || { echo "::error::no Linux artifact was produced"; exit 1; }
+          echo "appimage=out/BitChord-$ver-linux-$arch.AppImage" >> "$GITHUB_OUTPUT"
+          echo "deb=out/BitChord-$ver-linux-$arch.deb" >> "$GITHUB_OUTPUT"
 
-      - name: Upload the packages
-        uses: actions/upload-artifact@v6
+      # One step per file: archive: false takes exactly one path and names the
+      # artifact after the file, so both arrive as the package, not a zip of it.
+      - name: Upload the AppImage
+        uses: actions/upload-artifact@v7
         with:
-          name: linux-${{ matrix.arch }}
-          path: out/*
+          path: ${{ steps.stage.outputs.appimage }}
           if-no-files-found: error
+          archive: false
+          retention-days: 14
+
+      - name: Upload the deb
+        uses: actions/upload-artifact@v7
+        with:
+          path: ${{ steps.stage.outputs.deb }}
+          if-no-files-found: error
+          archive: false
           retention-days: 14

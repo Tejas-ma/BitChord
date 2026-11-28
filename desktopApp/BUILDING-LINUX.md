@@ -27,17 +27,19 @@ Run it from source with:
 ## Packaging
 
 ```bash
-./gradlew :desktopApp:packageDeb :desktopApp:packageRpm :desktopApp:createDistributable \
+./gradlew :desktopApp:packageDeb :desktopApp:packageRpm :desktopApp:packageAppImage \
   -Pbitchord.skipAndroid=true -Pbitchord.arch=x64
-
-APPIMAGE_ARCH=x86_64 ./desktopApp/packaging/appimage.sh \
-  desktopApp/build/compose/binaries/main/app/BitChord \
-  "desktopApp/build/distributions/BitChord-1.9.1-linux-x86_64.AppImage" \
-  ./appimagetool
 ```
 
-On arm64 the same commands take `-Pbitchord.arch=arm64` and
-`APPIMAGE_ARCH=aarch64`, and the arch-matched `appimagetool-aarch64.AppImage`.
+`packageAppImage` depends on `createDistributable` and wraps the app image with
+`appimagetool`, writing `desktopApp/build/distributions/BitChord-<version>-linux-x64.AppImage`.
+`appimagetool` must be on `PATH`, or named by `APPIMAGE_TOOL` / `-Pbitchord.appimageTool`.
+Compose's own `TargetFormat.AppImage` only produces the app-image directory, which is why
+the last step is a task of its own; `packaging/appimage.sh` remains usable directly for a
+release build that wants a different output name.
+
+On arm64 the same commands take `-Pbitchord.arch=arm64` and the arch-matched
+`appimagetool-aarch64.AppImage`, and the AppImage is named `-linux-arm64`.
 `-Pbitchord.arch` selects FFmpeg `linux-arm64`/`linux-x86_64`, JavaFX
 `linux-aarch64`/`linux`, and Skiko `linux_arm64`/`linux_x64`.
 

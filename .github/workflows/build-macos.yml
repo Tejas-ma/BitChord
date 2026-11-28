@@ -6,9 +6,12 @@ name: macOS
 # image are the host's architecture — which is why this is a matrix of real
 # machines rather than one job with a flag.
 #
-# Android modules are left out for the same reason the Windows job does:
-# settings.gradle.kts must not find an SDK and configure :app on a build that
-# has no use for it.
+# Runner labels: libmacOS 13 and 14 images have been retired from GitHub Actions
+# (macOS 14 on 2 November 2026), so the Intel job runs on macos-15-intel, the
+# only remaining x86_64 label, and Apple Silicon on macos-15.
+#
+# Android modules are left out: settings.gradle.kts must not find an SDK and
+# configure :app on a build that has no use for it.
 
 on:
   push:
@@ -90,7 +93,7 @@ jobs:
           if [ -z "$raw" ]; then
             raw=$(sed -n 's/.*bitchordVersionName"\]\s*=\s*"\([^"]*\)".*/\1/p' build.gradle.kts | head -1)
           fi
-          [ -z "$raw" ] && raw="1.9.1"
+          [ -z "$raw" ] && raw="1.10"
           raw="${raw#v}"
           echo "raw='$raw'"
           echo "value=$raw" >> "$GITHUB_OUTPUT"
@@ -104,15 +107,15 @@ jobs:
           LASTFM_API_KEY: ${{ secrets.LASTFM_API_KEY }}
           LASTFM_SECRET: ${{ secrets.LASTFM_SECRET }}
           LISTEN_TOGETHER_SERVER: ${{ secrets.LISTEN_TOGETHER_SERVER }}
-          MACOS_SIGNING_IDENTITY: ${{ secrets.MACOS_SIGNING_IDENTITY }}
-          MACOS_NOTARY_APPLE_ID: ${{ secrets.MACOS_NOTARY_APPLE_ID }}
-          MACOS_NOTARY_PASSWORD: ${{ secrets.MACOS_NOTARY_PASSWORD }}
-          MACOS_NOTARY_TEAM_ID: ${{ vars.MACOS_NOTARY_TEAM_ID }}
+          MACOS_SIGN_IDENTITY: ${{ secrets.MACOS_SIGN_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
           : > local.properties
           for name in LASTFM_API_KEY LASTFM_SECRET LISTEN_TOGETHER_SERVER \
-                      MACOS_SIGNING_IDENTITY MACOS_NOTARY_APPLE_ID \
-                      MACOS_NOTARY_PASSWORD MACOS_NOTARY_TEAM_ID; do
+                      MACOS_SIGN_IDENTITY APPLE_ID APPLE_APP_SPECIFIC_PASSWORD \
+                      APPLE_TEAM_ID; do
             eval "value=\$$name"
             [ -n "$value" ] && printf '%s=%s\n' "$name" "$value" >> local.properties
           done
@@ -137,6 +140,17 @@ jobs:
             "-Pbitchord.skipAndroid=true" "-Pbitchord.arch=${{ matrix.arch }}" \
             "-Pbitchord.version=${{ steps.version.outputs.value }}" \
             --no-daemon --stacktrace
+
+      - name: Show failing test reports
+        if: failure()
+        shell: bash
+        run: |
+          find shared desktopUi desktopApp -path '*/build/test-results/*/*.xml' -print 2>/dev/null | sort
+          while IFS= read -r report; do
+            echo "::group::$report"
+            sed -n '1,120p' "$report"
+            echo "::endgroup::"
+          done < <(find shared desktopUi desktopApp -path '*/build/test-results/*/*.xml' -print 2>/dev/null | sort)
 
       - name: Upload the test reports
         if: failure()
@@ -170,6 +184,7 @@ jobs:
           APP="desktopApp/build/compose/binaries/main/app/BitChord.app"
           [ -d "$APP" ] || { echo "::error::packageDmg produced no BitChord.app"; exit 1; }
           /usr/libexec/PlistBuddy -c "Print :NSMicrophoneUsageDescription" "$APP/Contents/Info.plist"
+          /usr/libexec/PlistBuddy -c "Print :CFBundleIdentifier" "$APP/Contents/Info.plist"
 
           JAR=$(find "$APP/Contents/app" -maxdepth 1 -name 'desktopApp*.jar' -print -quit)
           [ -n "$JAR" ] || { echo "::error::no desktopApp jar in the bundle"; exit 1; }
@@ -178,8 +193,6 @@ jobs:
             || { echo "::error::the Automix analyser (libbitchord_analysis.dylib) is missing"; echo "$entries" | grep '^native/' || true; exit 1; }
           echo "$entries" | grep -q '^models/.*\.onnx$' \
             || { echo "::error::no .onnx models were bundled"; exit 1; }
-          echo "$entries" | grep -q '^skiko-macos' \
-            || echo "::warning::Skiko is nested in its own jar; the runtime check below covers it"
 
           # The bundled runtime must be this runner's architecture, not the other one.
           launcher="$APP/Contents/MacOS/BitChord"
@@ -189,21 +202,25 @@ jobs:
             x64)   /usr/bin/file "$launcher" | grep -q 'x86_64' ;;
           esac
 
-      - name: Collect
+      - name: Stage the disk image
+        id: stage
         shell: bash
         run: |
+          set -euo pipefail
           mkdir -p out
-          for dmg in desktopApp/build/compose/binaries/main/dmg/*.dmg; do
-            [ -e "$dmg" ] || continue
-            cp "$dmg" "out/BitChord-${{ steps.version.outputs.value }}-macos-${{ matrix.arch }}.dmg"
-          done
-          ls -l out
-          [ -n "$(ls -A out)" ] || { echo "::error::no DMG was produced"; exit 1; }
+          dmg=$(find desktopApp/build/compose/binaries/main/dmg -name '*.dmg' -print -quit)
+          [ -n "$dmg" ] || { echo "::error::packageDmg wrote no .dmg"; exit 1; }
+          target="out/BitChord-${{ steps.version.outputs.value }}-macos-${{ matrix.arch }}.dmg"
+          cp "$dmg" "$target"
+          ls -l "$target"
+          echo "file=$target" >> "$GITHUB_OUTPUT"
 
+      # archive: false uploads the .dmg itself, so a download is the disk image
+      # and not a zip around it. It only accepts one file per step.
       - name: Upload the disk image
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
-          name: macos-${{ matrix.arch }}
-          path: out/*
+          path: ${{ steps.stage.outputs.file }}
           if-no-files-found: error
+          archive: false
           retention-days: 14

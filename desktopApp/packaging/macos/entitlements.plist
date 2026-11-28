@@ -6,8 +6,9 @@
   Skiko and JavaFX execute JIT-compiled code and map memory the hardened
   runtime otherwise forbids; without the first two keys the player renders a
   blank window once the app is signed. The microphone entitlement is what the
-  system sheet for sound search checks, and the network entitlement is what
-  NewPipeExtractor, Google Drive backup and Listen Together need.
+  system sheet for sound search checks. Network client is NewPipeExtractor,
+  Drive backup and Listen Together; network server is the local callback
+  listener the browser sign-in flow hands its cookie back to.
 -->
 <plist version="1.0">
 <dict>
@@ -20,6 +21,8 @@
     <key>com.apple.security.device.audio-input</key>
     <true/>
     <key>com.apple.security.network.client</key>
+    <true/>
+    <key>com.apple.security.network.server</key>
     <true/>
 </dict>
 </plist>

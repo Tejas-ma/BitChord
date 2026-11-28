@@ -45,21 +45,21 @@ any Mac without a developer certificate still produce a usable DMG. To sign,
 put these in `local.properties` (or the environment, which CI uses):
 
 ```properties
-MACOS_SIGNING_IDENTITY=Developer ID Application: Your Name (TEAMID)
+MACOS_SIGN_IDENTITY=Developer ID Application: Your Name (TEAMID)
 # Only needed for notarization, and only once signing works:
-MACOS_NOTARY_APPLE_ID=you@example.com
-MACOS_NOTARY_PASSWORD=app-specific-password
-MACOS_NOTARY_TEAM_ID=TEAMID
+APPLE_ID=you@example.com
+APPLE_APP_SPECIFIC_PASSWORD=app-specific-password
+APPLE_TEAM_ID=TEAMID
 ```
 
 `security find-identity -v -p codesigning` lists what the machine can use. The
 password is an app-specific password from appleid.apple.com, not the Apple ID
 password, and notarization additionally needs the identity above.
 
-`packaging/macos/Entitlements.plist` is applied to the bundle. It grants the
+`packaging/macos/entitlements.plist` is applied to the bundle. It grants the
 hardened runtime JIT and unsigned executable memory (Skiko and JavaFX render
-with both), the microphone for sound search, and outbound networking for
-NewPipeExtractor, Drive backup and Listen Together.
+with both), the microphone for sound search, and networking for NewPipeExtractor, Drive
+backup, Listen Together and the local callback the browser sign-in returns to.
 
 An unsigned build is quarantined by Gatekeeper on first launch:
 
