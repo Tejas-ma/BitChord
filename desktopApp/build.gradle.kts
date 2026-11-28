@@ -109,20 +109,34 @@ dependencies {
     implementation(project(":desktopUi"))
     // BotGuard, for the PoTokens YouTube's web clients need: the phone runs it in an Android
     // WebView, the desktop in JavaFX's (WebKit). Per-platform jars carry the natives.
+    //
+    // The classifier alone is not enough. OpenJFX publishes a `linux-aarch64` build only from 22
+    // onwards — the 21 LTS line is Linux x86_64, Windows x86_64 and both Macs — so asking 21.0.10
+    // for `linux-aarch64` resolves nothing and fails the whole Linux arm64 job before it compiles.
+    // The arm64 Linux package therefore takes 22.0.2 (which needs JDK 21, so the toolchain still
+    // matches) while every other host keeps the 21.0.10 it already ships.
+    val javafxVersion = if (targetOs == "linux" && isArm64) "22.0.2" else "21.0.10"
     val javafxClassifier = when (targetOs) {
         "windows" -> "win"
         "macos" -> if (isArm64) "mac-aarch64" else "mac"
         else -> if (isArm64) "linux-aarch64" else "linux"
     }
     listOf("base", "graphics", "controls", "media", "web").forEach { module ->
-        implementation("org.openjfx:javafx-$module:21.0.10:$javafxClassifier")
+        implementation("org.openjfx:javafx-$module:$javafxVersion:$javafxClassifier")
     }
 
     // The shared player loads artwork through Coil, as the phone does.
     implementation("io.coil-kt.coil3:coil-network-okhttp:3.0.4")
 
     // Automix runs the same two models the Android build does.
-    implementation("com.microsoft.onnxruntime:onnxruntime:1.29.0")
+    //
+    // 1.20.0 rather than the newest release, for one concrete reason: later jars dropped the
+    // osx-x64 natives (1.29.0 carries linux-x64, linux-aarch64, osx-aarch64 and win-x64 only), so
+    // on an Intel Mac `OrtSession.SessionOptions` cannot initialise and every beat-model load
+    // fails with "no onnxruntime in java.library.path". 1.20.0 ships all five desktop natives,
+    // and it is also the version :shared compiles against, so the compile-time and runtime
+    // links are the same one.
+    implementation("com.microsoft.onnxruntime:onnxruntime:1.20.0")
 
     // Decoding, resampling and demuxing for the audio engine.
     implementation("org.bytedeco:javacpp:$javacppVersion")
@@ -691,6 +705,10 @@ val packageAppImage by tasks.registering(Exec::class) {
     group = "distribution"
     description = "Bundles the Linux app image into BitChord-<version>-linux-<arch>.AppImage."
     dependsOn("createDistributable")
+    // CI downloads appimagetool at the repository root and passes it as a relative path; running
+    // from here means that path means the same thing as it does in the workflow. appimage.sh also
+    // resolves it, so a shell elsewhere behaves the same way.
+    workingDir = rootProject.projectDir
 
     val archLabel = if (isArm64) "arm64" else "x64"
     val appImageArch = if (isArm64) "aarch64" else "x86_64"
